@@ -1,0 +1,28 @@
+[Unit]
+Description=Starpost bot relay
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=starpost
+Group=starpost
+WorkingDirectory=/opt/starpost
+Environment=BOT_KEYS_FILE=/etc/starpost/keys.json
+Environment=STARPOST_REGISTRATION_SECRET_FILE=/etc/starpost/registration-secret
+Environment=STARPOST_DATA_FILE=/var/lib/starpost/data.json
+Environment=STARPOST_HOST=127.0.0.1
+Environment=STARPOST_PORT=8787
+Environment=STARPOST_TIMEZONE=Asia/Shanghai
+ExecStart=/usr/bin/node /opt/starpost/server/server.mjs
+Restart=on-failure
+RestartSec=5
+StateDirectory=starpost
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/starpost
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
