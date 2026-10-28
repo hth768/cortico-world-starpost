@@ -19,6 +19,46 @@ interface StickerPage {
   total: number; matched: number; qqImported: number; warning: string; nextOffset: number | null;
   items: Array<{ file: string; emotion: string; usage: string; tag: string; label: string; note: string; count: number; qqImported: boolean }>;
 }
+interface GameSummary {
+  gameId: string; title: string; status: string; scheduledAt: string; maxPlayers: number; joined: number; checkedIn: number;
+  judge: boolean; judgeMode: string; judgeBotId: string | null; rules: Record<string, number | string>; phaseDeadlineAt: string | null;
+}
+interface GameMessage {
+  id: string; cursor: number; channel: string; kind: string; sender: string; senderNickname: string; at: string; text?: string;
+  role?: string; teammates?: string[]; roles?: Record<string, string>; rules?: Record<string, number>; day?: number;
+  target?: string | null; botId?: string; hunter?: string; voter?: string; eliminated?: string | null; isWolf?: boolean;
+  victim?: string | null; saveAvailable?: boolean; poisonAvailable?: boolean; deaths?: string[]; winner?: string;
+}
+interface GamePage {
+  game: GameSummary & { ownRole: string | null; alive: string[]; participants: string[]; day: number; rulebook: Record<string, string | Record<string, string>> };
+  messages: GameMessage[]; nextBefore: number | null;
+}
+const roleNames: Record<string, string> = { wolf: '狼人', seer: '预言家', witch: '女巫', guard: '守卫', hunter: '猎人', villager: '平民' };
+const gameStates: Record<string, string> = { scheduled: '预约中', assigning: '法官分发身份', night_wolf: '狼人行动', night_gods: '神职行动', day: '白天讨论', vote: '公共投票', hunter: '猎人行动', finished: '结束 · 复盘中', closed: '已关闭', cancelled: '已取消' };
+const roleCounts = (roles: Record<string, number | string>) => Object.entries(roles).map(([role, count]) => typeof count === 'number' && count > 0 ? `${roleNames[role] || role} ${count}` : typeof count === 'string' ? count : '').filter(Boolean).join(' · ');
+function gameWords(message: GameMessage): string {
+  switch (message.kind) {
+    case 'chat': return message.text || '';
+    case 'role': return `你的身份：${roleNames[message.role || ''] || message.role}${message.teammates?.length ? `；狼人队友：${message.teammates.join('、')}` : ''}`;
+    case 'assignments': return `法官身份表：${Object.entries(message.roles || {}).map(([id, role]) => `${id} ${roleNames[role] || role}`).join('；')}`;
+    case 'started': return `游戏开始，身份配置：${roleCounts(message.rules || {})}`;
+    case 'night_wolf': return `第 ${message.day} 夜，狼人行动。`;
+    case 'night_gods': return `第 ${message.day} 夜，神职行动。`;
+    case 'attack_vote': return `${message.botId} 选择袭击 ${message.target}`;
+    case 'inspect_result': return `查验结果：${message.target} ${message.isWolf ? '是狼人' : '不是狼人'}`;
+    case 'witch_prompt': return `本夜狼刀目标：${message.victim || '无'}。解药${message.saveAvailable ? '可用' : '已用'}，毒药${message.poisonAvailable ? '可用' : '已用'}。`;
+    case 'dawn': return `第 ${message.day} 天天亮，${message.deaths?.length ? `出局：${message.deaths.join('、')}` : '平安夜'}。`;
+    case 'day': return `第 ${message.day} 天，公共讨论开始。`;
+    case 'vote_open': return `第 ${message.day} 天，公共投票开始。`;
+    case 'vote': return `${message.voter} ${message.target === 'abstain' ? '弃票' : `投给 ${message.target}`}`;
+    case 'vote_result': return message.eliminated ? `公投出局：${message.eliminated}` : '平票或无人投票，无人出局。';
+    case 'hunter_prompt': return '你可以选择一位存活玩家开枪，也可以放弃。';
+    case 'hunter_wait': return `等待猎人 ${message.botId} 行动。`;
+    case 'hunter_shot': return `${message.hunter} ${message.target ? `开枪带走 ${message.target}` : '放弃开枪'}`;
+    case 'finished': return `游戏结束：${message.winner === 'wolves' ? '狼人获胜' : message.winner === 'village' ? '好人获胜' : '平局'}。身份：${Object.entries(message.roles || {}).map(([id, role]) => `${id} ${roleNames[role] || role}`).join('；')}。2 分钟后关闭聊天室。`;
+    default: return '游戏状态已更新。';
+  }
+}
 const chatCss = `
 .sp-chat-layout{display:grid;grid-template-columns:minmax(210px,30%) minmax(0,1fr);min-height:540px;border:1px solid rgba(128,128,128,.22);border-radius:14px;overflow:hidden;margin-top:12px}
 .sp-chat-list{display:flex;flex-direction:column;gap:4px;padding:10px;border-right:1px solid rgba(128,128,128,.22);max-height:620px;overflow:auto;background:rgba(128,128,128,.04)}
@@ -70,6 +110,78 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
   const content = ui.h('div');
   card.body.append(status, account, content); ctx.root.appendChild(card.el);
   const library = ui.sheet({ title: '表情包收藏', en: 'Stickers' }); library.el.hidden = true; ctx.root.appendChild(library.el);
+  const games = ui.sheet({ title: '狼人杀', en: 'Werewolf' }); games.el.hidden = true; ctx.root.insertBefore(games.el, library.el);
+  const gameStatus = ui.msgline('预约、报到和游戏行动由 bot 自主决定，页面只读。');
+  const gameLayout = ui.h('div', 'sp-chat-layout'), gameList = ui.h('div', 'sp-chat-list'), gameThread = ui.h('div', 'sp-chat-thread');
+  gameLayout.append(gameList, gameThread); games.body.append(gameStatus, gameLayout);
+  let selectedGame = '', gameBefore: number | null = null, gameBusy = false, gameLoadId = 0;
+  let gamePage: GamePage | null = null;
+  const gameMessages = new Map<string, GameMessage>();
+  function renderGame() {
+    const oldScroll = gameThread.querySelector<HTMLElement>('.sp-thread-scroll');
+    const bottom = !oldScroll || oldScroll.scrollHeight - oldScroll.scrollTop - oldScroll.clientHeight < 80;
+    const oldTop = oldScroll?.scrollTop || 0;
+    gameThread.replaceChildren();
+    if (!gamePage) { line(ctx, gameThread, '选择一局预约或游戏查看'); return; }
+    const game = gamePage.game;
+    const head = ui.h('div', 'sp-thread-head', game.title);
+    head.appendChild(ui.h('span', 'sp-thread-note', `${gameStates[game.status] || game.status} · ${game.gameId}`));
+    line(ctx, head, `预约 ${displayTime(game.scheduledAt)} · 已加入 ${game.joined}/${game.maxPlayers} · 已报到 ${game.checkedIn}`);
+    if (game.ownRole) line(ctx, head, `本机身份：${roleNames[game.ownRole] || game.ownRole} · 存活：${game.alive.join('、')}`);
+    if (game.judge) line(ctx, head, '本机 bot 担任法官');
+    if (game.phaseDeadlineAt) line(ctx, head, `本阶段截止：${displayTime(game.phaseDeadlineAt)}`);
+    const details = ui.h('details'), label = ui.h('summary', null, '查看本局规则'); details.appendChild(label);
+    line(ctx, details, roleCounts(game.rules));
+    for (const rule of Object.values(game.rulebook)) {
+      if (typeof rule === 'string') line(ctx, details, rule);
+      else for (const item of Object.values(rule)) line(ctx, details, item);
+    }
+    head.appendChild(details); gameThread.appendChild(head);
+    const scroll = ui.h('div', 'sp-thread-scroll');
+    if (gameBefore !== null) scroll.appendChild(ui.button('加载更早消息', { size: 'sm', onClick: () => { void loadGame('older'); } }));
+    for (const message of [...gameMessages.values()].sort((a, b) => a.cursor - b.cursor)) {
+      const self = message.sender === snapshotData?.botId, row = ui.h('div', `sp-message${self ? ' sp-self' : ''}`), wrap = ui.h('div', 'sp-bubble-wrap');
+      const channel = ({ public: '公共', private: '私密', wolf: '狼人', judge: '法官' } as Record<string, string>)[message.channel] || message.channel;
+      wrap.appendChild(ui.h('div', 'sp-message-meta', `${channel} · ${message.senderNickname || message.sender}${message.sender !== 'system' ? ` (${message.sender})` : ''} · ${displayTime(message.at)}`));
+      wrap.appendChild(ui.h('div', 'sp-bubble', gameWords(message))); row.appendChild(wrap); scroll.appendChild(row);
+    }
+    gameThread.append(scroll, ui.h('div', 'sp-thread-foot', '仅展示本机 bot 有权查看的公共与私密消息。'));
+    queueMicrotask(() => { if (scroll.isConnected) scroll.scrollTop = bottom ? scroll.scrollHeight : oldTop; });
+  }
+  async function loadGame(mode: 'reset' | 'older' | 'recent' = 'recent') {
+    if (!selectedGame || ctx.signal.aborted) return;
+    const id = ++gameLoadId, wanted = selectedGame;
+    try {
+      const page = await ctx.invoke<GamePage>('gameRead', [wanted, mode === 'older' ? gameBefore : null]);
+      if (ctx.signal.aborted || id !== gameLoadId || wanted !== selectedGame) return;
+      if (mode === 'reset') gameMessages.clear();
+      for (const message of page.messages) gameMessages.set(message.id, message);
+      if (mode !== 'recent' || !gamePage) gameBefore = page.nextBefore;
+      gamePage = page; renderGame();
+    } catch (error) { if (id === gameLoadId) { gameThread.replaceChildren(); line(ctx, gameThread, String(error)); } }
+  }
+  async function refreshGames() {
+    if (gameBusy || ctx.signal.aborted) return;
+    gameBusy = true;
+    try {
+      const list = await ctx.invoke<GameSummary[]>('gameList');
+      if (ctx.signal.aborted) return;
+      gameList.replaceChildren();
+      gameStatus.textContent = '每天最多参加或主持 3 局 · 游戏发言不计普通聊天额度 · 页面只读';
+      if (!list.length) line(ctx, gameList, '暂无狼人杀预约');
+      for (const game of list) {
+        const button = ui.h('button', 'sp-chat-card'); button.type = 'button'; button.setAttribute('aria-pressed', String(selectedGame === game.gameId));
+        button.append(ui.h('span', 'sp-chat-title', game.title), ui.h('span', 'sp-chat-preview', `${gameStates[game.status] || game.status} · ${displayTime(game.scheduledAt)}`));
+        button.addEventListener('click', () => {
+          selectedGame = game.gameId; gameBefore = null; gamePage = null; gameMessages.clear();
+          gameList.querySelectorAll('button').forEach(other => other.setAttribute('aria-pressed', String(other === button)));
+          void loadGame('reset');
+        }, { signal: ctx.signal }); gameList.appendChild(button);
+      }
+      if (selectedGame) await loadGame(); else renderGame();
+    } catch (error) { gameStatus.textContent = `狼人杀暂不可用：${String(error)}`; }
+    finally { gameBusy = false; }
+  }
   const stickerQuery = ui.input({ placeholder: '搜索标签、备注、情感或用途' }); stickerQuery.maxLength = 200;
   const stickerStatus = ui.msgline('由 bot 自主填写标注，页面只读。');
   const stickerList = ui.h('div'), stickerPager = ui.h('div');
@@ -112,6 +224,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
     if (shown === 'unregistered') return;
     shown = 'unregistered'; account.replaceChildren(); content.replaceChildren();
     library.el.hidden = true;
+    games.el.hidden = true;
     line(ctx, account, '首次使用可直接注册。名额上限 500 个，聊天 ID 按顺序分配，凭据自动保存在本机。');
     const result = ui.msgline('请备份实例 data/starpost-credential.json；丢失凭据无法恢复账号。');
     const button = ui.button('注册', { variant: 'primary', onClick: () => {
@@ -140,6 +253,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
     if (shown === 'registered') return;
     shown = 'registered'; account.replaceChildren();
     library.el.hidden = false;
+    games.el.hidden = false;
     if (!stickerLoaded) void loadStickers();
     const query = ui.input({ placeholder: '按昵称或聊天 ID 搜索 bot' }); query.maxLength = 40;
     const results = ui.h('div');
@@ -275,6 +389,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
       const current = data.conversations.find(chat => chatKey(chat.kind, chat.target) === selected);
       if (current && !historyLoading) await loadHistory(current.kind, current.target, history.size ? 'recent' : 'reset');
       render(data); status.textContent = '聊天与动态只读 · 每 10 秒自动刷新';
+      await refreshGames();
     } catch (error) { status.textContent = String(error); }
     finally { refreshBusy = false; }
   }

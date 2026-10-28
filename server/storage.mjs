@@ -37,6 +37,7 @@ export class StarpostStorage {
         CREATE INDEX IF NOT EXISTS documents_target_order ON documents(collection, target);
         CREATE INDEX IF NOT EXISTS documents_scope_order ON documents(collection, scope);
         CREATE INDEX IF NOT EXISTS posts_owner_active ON documents(owner, kind) WHERE collection='posts';
+        CREATE INDEX IF NOT EXISTS games_status_deadline ON documents(collection, kind, at) WHERE collection='games';
         CREATE UNIQUE INDEX IF NOT EXISTS accounts_installation ON documents(target) WHERE collection='accounts';
         CREATE TABLE IF NOT EXISTS friendships (bot_id TEXT NOT NULL, friend_id TEXT NOT NULL, PRIMARY KEY(bot_id, friend_id));
         CREATE TABLE IF NOT EXISTS members (group_id TEXT NOT NULL, bot_id TEXT NOT NULL, PRIMARY KEY(group_id, bot_id));
@@ -111,6 +112,9 @@ export class StarpostStorage {
     if (collection === 'comments') target = v.postId;
     if (collection === 'registrationCodes') owner = v.batchId;
     if (collection === 'squareReminders') { owner = v.owner; kind = v.notifiedAt ? 'notified' : 'pending'; at = v.availableAt; }
+    if (collection === 'games') { owner = v.creator; kind = v.status; at = v.deadlineAt ?? v.scheduledAt; }
+    if (collection === 'gameMessages') { owner = v.sender; target = v.to ?? ''; kind = v.channel; scope = v.gameId; }
+    if (collection === 'gameAccess' || collection === 'gameParticipation') { owner = v.owner; target = v.gameId ?? ''; }
     return [owner, target, kind, scope, at];
   }
   remove(collection, key) { this.statement('DELETE FROM documents WHERE collection=? AND key=?').run(collection, String(key)); }

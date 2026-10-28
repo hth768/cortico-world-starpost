@@ -8,6 +8,7 @@ import { SquareReminders } from './square-reminders.mjs';
 import { announceRelease, releaseNotesEvent } from './release.mjs';
 import { RelayMetrics } from './metrics.mjs';
 import { MessageQuota } from './message-quota.mjs';
+import { WerewolfGames } from './werewolf.mjs';
 
 const fail = (message, code = 400) => { const e = new Error(message); e.status = code; throw e; };
 const id = (v) => typeof v === 'string' && /^\d{5,12}$/.test(v) && Number(v) >= 10001 && Number.isSafeInteger(Number(v)) ? v : fail('聊天 ID 须是从 10001 起的数字');
@@ -138,6 +139,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     });
   };
   const group = (who, groupId) => { const g = store.get('groups', groupId); if (!g || !g.members.includes(who)) fail('群不存在或无权限', 404); return g; };
+  const games = new WerewolfGames(store, { isKnown, friends, group, nickname: who => profile(who).nickname, clock });
   const post = (postId) => { const p = store.get('posts', postId); if (!p || p.deleted) fail('动态不存在', 404); return p; };
   const canSeePost = (who, p) => p.author === who || friends(who).includes(p.author);
   const squareActive = (entry, now = clock()) => {
@@ -202,6 +204,19 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
   function rpc(who, action, args = {}) {
     const now = clock();
     switch (action) {
+      case 'game.rules': return games.rules(who);
+      case 'game.schedule': return games.schedule(who, args);
+      case 'game.invite': return games.invite(who, args);
+      case 'game.join': return games.join(who, args.gameId);
+      case 'game.checkin': return games.checkin(who, args.gameId);
+      case 'game.leave': return games.leave(who, args.gameId);
+      case 'game.list': return games.list(who);
+      case 'game.read': return games.read(who, args.gameId, args.before);
+      case 'game.assign': return games.assign(who, args);
+      case 'game.message': return games.message(who, args);
+      case 'game.act': return games.act(who, args);
+      case 'game.vote': return games.vote(who, args);
+      case 'game.cancel': return games.cancel(who, args.gameId);
       case 'snapshot': return snapshot(who, args.omitMessages === true);
       case 'chat.history': return chatHistory(who, args);
       case 'post.read': {
@@ -475,8 +490,9 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         if (previous?.private !== next.private || previous?.groups !== next.groups || previous?.maxMessagesPerDay !== next.maxMessagesPerDay
           || Object.keys(next.periods).some(key => previous?.periods?.[key] !== next.periods[key])) nextLimits = next;
       }
-      const readOnly = ['snapshot', 'events', 'release.latest', 'chat.history', 'post.read', 'square.list', 'directory.search'].includes(action);
+      const readOnly = ['snapshot', 'events', 'release.latest', 'chat.history', 'post.read', 'square.list', 'directory.search', 'game.rules', 'game.list', 'game.read'].includes(action);
       const run = () => {
+        if (typeof action === 'string' && action.startsWith('game.')) tickGames();
         const observedAt = clock(), ready = action === 'events' && reminders.hasDue(who, observedAt);
         const ackNeeded = action === 'events' && store.needsAck(who, since);
         const invoke = () => {
@@ -501,7 +517,9 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
   });
   let closed = false;
   let pruneTimer = null;
-  return { server, store, announceRelease: (version, changes = []) => announceRelease(store, version, knownIds(), new Date(clock()).toISOString(), changes),
+  let gameTimer = null;
+  const tickGames = () => store.transaction(() => games.tick(clock()));
+  return { server, store, tickGames, announceRelease: (version, changes = []) => announceRelease(store, version, knownIds(), new Date(clock()).toISOString(), changes),
     listen: () => new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, () => {
       server.removeListener('error', reject);
       pruneTimer = setInterval(() => {
@@ -509,10 +527,16 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         catch (error) { process.stderr.write(`星邮事件清理失败：${error.message}\n`); }
       }, 10 * 60 * 1000);
       pruneTimer.unref();
+      tickGames();
+      gameTimer = setInterval(() => {
+        try { tickGames(); } catch (error) { process.stderr.write(`星邮狼人杀推进失败：${error.message}\n`); }
+      }, 5000);
+      gameTimer.unref();
       resolve();
     }); }),
     close: () => new Promise((resolve, reject) => {
       if (pruneTimer) { clearInterval(pruneTimer); pruneTimer = null; }
+      if (gameTimer) { clearInterval(gameTimer); gameTimer = null; }
       for (const group of [...waiters.values()]) for (const done of [...group]) done();
       const finish = () => { try { if (!closed) { store.close(); closed = true; } resolve(); } catch (error) { reject(error); } };
       if (server.listening) server.close(finish); else finish();

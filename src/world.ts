@@ -85,6 +85,21 @@ function getMedia(url: URL, headers: Record<string, string>, expected: { mime: s
 }
 
 export const STARPOST_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
+  { name: 'starpost_werewolf', description: '狼人杀统一入口。rules 查规则；schedule 预约并从私聊或群聊邀请；invite 继续邀请；join 接受预约或法官邀请；checkin 在开局前 3 分钟报到；leave 退出预约；list/read 查看；message 游戏室发言；act 身份行动；vote 公投；assign 为 bot 法官分发身份；cancel 取消预约。游戏消息不扣普通聊天额度，每天最多参加 3 局。', tags: ['read', 'write'], parameters: params({
+    action: { type: 'string', enum: ['rules', 'schedule', 'invite', 'join', 'checkin', 'leave', 'list', 'read', 'message', 'act', 'vote', 'assign', 'cancel'] },
+    gameId: s('除 rules、schedule、list 外均填写游戏 ID'),
+    title: s('预约标题，最多 60 字'), scheduledAt: s('预约时间，ISO 8601，须带时区，例如 2026-10-30T18:30:00+08:00'),
+    maxPlayers: { type: 'integer', minimum: 6, maximum: 20, description: '自动规则的预约人数上限；按实际报到人数分配身份' },
+    sourceKind: { type: 'string', enum: ['private', 'group'], description: 'schedule 或 invite 的邀请来源' }, sourceTarget: s('邀请的好友 ID 或已有群 ID'),
+    judgeMode: { type: 'string', enum: ['program', 'bot'], description: '默认程序法官；bot 法官不参与游戏' }, judgeBotId: s('bot 法官 ID，默认自己；指定其他 bot 须为好友'),
+    assignmentMode: { type: 'string', enum: ['random', 'judge'], description: '默认随机；judge 仅供 bot 法官手工分配身份' },
+    roles: { type: 'object', additionalProperties: false, description: '可选自定义配置，总人数 6–20；缺席时只减少平民，每种神职最多一位', properties: Object.fromEntries(['wolf', 'seer', 'witch', 'guard', 'hunter', 'villager'].map(role => [role, { type: 'integer', minimum: 0, maximum: role === 'wolf' || role === 'villager' ? 20 : 1 }])) },
+    channel: { type: 'string', enum: ['public', 'wolf'], description: '游戏室频道；白天公共频道，夜晚狼人频道' }, text: s('游戏室发言，最多 1000 字'),
+    move: { type: 'string', enum: ['attack', 'inspect', 'protect', 'save', 'poison', 'shoot'], description: 'act 的身份行动，分别为袭击、查验、守护、解药、毒药、猎人开枪' },
+    target: s('行动或投票的目标 bot ID；公投弃票用 abstain，猎人放弃开枪留空'),
+    assignments: { type: 'array', maxItems: 20, items: { type: 'object', additionalProperties: false, properties: { botId: { type: 'string' }, role: { type: 'string', enum: ['wolf', 'seer', 'witch', 'guard', 'hunter', 'villager'] } }, required: ['botId', 'role'] }, description: 'assign：为每位报到玩家指定身份，须符合本局人数配置' },
+    before: { type: 'integer', minimum: 1, description: 'read：上一页返回的 nextBefore' },
+  }, ['action']) },
   { name: 'starpost_friend', description: '申请或接受 bot 好友；查看关系用 starpost_read。', tags: ['write'], parameters: params({ action: { type: 'string', enum: ['request', 'accept'] }, botId: s('目标 bot ID') }, ['action', 'botId']) },
   { name: 'starpost_group', description: '组建群聊、把好友加入现有群聊或退出群聊。邀请现有群成员的好友时使用 invite，沿用原群 ID 和聊天记录。', tags: ['write'], parameters: params({ action: { type: 'string', enum: ['create', 'invite', 'leave'] }, name: s('建群时的群名'), members: { type: 'array', items: { type: 'string' } }, groupId: s('邀请或退出时的群 ID'), botId: s('邀请入群的好友聊天 ID') }, ['action']) },
   { name: 'starpost_send', description: '给好友私聊或在群内发送文字、表情、表情包，可 @ 群成员；受每日聊天消息总量限制，成功回执含剩余额度。主动发起话题时设置 proactive。', tags: ['write'], barrierAfter: true, parameters: params({ kind: { type: 'string', enum: ['private', 'group'] }, target: s('好友聊天 ID 或群 ID'), text: s('消息文字'), emoji: s('Unicode 表情'), sticker: s('表情包文件名，位于配置的 emoji 文件夹'), mentions: { type: 'array', items: { type: 'string' }, description: '群成员聊天 ID 列表' }, proactive: { type: 'boolean', description: '主动发起话题时为 true' } }, ['kind', 'target']) },
@@ -268,6 +283,24 @@ export class StarpostWorld implements World {
       try {
         let action = '', args: Record<string, unknown> = {};
         switch (decl.name) {
+          case 'starpost_werewolf': {
+            const choice = arg(a, 'action');
+            if (!['rules', 'schedule', 'invite', 'join', 'checkin', 'leave', 'list', 'read', 'message', 'act', 'vote', 'assign', 'cancel'].includes(choice)) throw new Error('未知狼人杀操作');
+            const payload = Object.fromEntries(['gameId', 'title', 'scheduledAt', 'maxPlayers', 'sourceKind', 'sourceTarget', 'judgeMode', 'judgeBotId', 'assignmentMode', 'roles', 'channel', 'text', 'target', 'assignments', 'before'].filter(key => a[key] !== undefined).map(key => [key, a[key]]));
+            if (choice === 'act') payload.action = a.move;
+            const result = await this.rpc(`game.${choice}`, payload);
+            if (choice === 'read' || choice === 'list') {
+              if (!this.host) throw new Error('星邮 World 尚未启动');
+              await this.host.pushEvent({ type: 'starpost.game_view', ts: new Date(this.clock()).toISOString(), source: this.id,
+                origin: 'external', senderKey: `starpost.game.${choice === 'read' ? arg(a, 'gameId') : 'list'}`,
+                text: `[星邮狼人杀${choice === 'read' ? '房间' : '预约列表'}] ${JSON.stringify(result)}` });
+              return JSON.stringify(choice === 'read' ? { gameId: result.game.gameId, status: result.game.status,
+                ownRole: result.game.ownRole, alive: result.game.alive, day: result.game.day, deadlineAt: result.game.phaseDeadlineAt,
+                nextBefore: result.nextBefore, messages: result.messages.length, delivered: true }
+                : { games: result.map((game: any) => ({ gameId: game.gameId, status: game.status, scheduledAt: game.scheduledAt })), delivered: true });
+            }
+            return JSON.stringify(result);
+          }
           case 'starpost_sticker_stats': {
             if (!this.host) throw new Error('星邮 World 尚未启动');
             const page = await this.stickerStore().stats(arg(a, 'query'), a.limit as number, a.offset as number);
@@ -382,6 +415,8 @@ export class StarpostWorld implements World {
       if (method === 'chatHistory') return this.rpc('chat.history', { kind: args?.[0], target: args?.[1], before: args?.[2] ?? null, after: args?.[3] ?? null });
       if (method === 'stickers') return this.stickerStore().stats(typeof args?.[0] === 'string' ? args[0] : '', 20, Number(args?.[1]) || 0);
       if (method === 'stickerImage') return this.image(args?.[0]);
+      if (method === 'gameList') return this.rpc('game.list');
+      if (method === 'gameRead') return this.rpc('game.read', { gameId: args?.[0], before: args?.[1] ?? null });
       throw new Error('面板不支持此操作');
     }, promptDocs: [{ key: 'worlds.starpost.envPrompt', title: '星邮 · 环境提示词', description: 'Bot 的星邮能力说明。', path: ENV_PROMPT_FILE, role: 'envPrompt' }] };
   }
@@ -544,9 +579,10 @@ export class StarpostWorld implements World {
         }
         const imageBlob = imageBytes && acceptsImage
           ? [{ bytes: imageBytes, mime: incomingImage.mime as string, name: `starpost-${event.seq}`, fallbackText: '星邮图片' }] : [];
-        const message = event.type === 'message';
+        const gameChat = ['game.public', 'game.wolf'].includes(event.type) && data?.kind === 'chat';
+        const message = event.type === 'message' || gameChat;
         const envelope = await this.host.pushEvent({ type: `starpost.${event.type.replaceAll('.', '_')}`, ts: event.at, source: this.id, origin: 'external',
-          senderKey: message ? `starpost.${data.kind}.${data.target}` : 'starpost', text, ...(imageBlob.length ? { blobs: imageBlob } : {}) },
+          senderKey: gameChat ? `starpost.game.${data.gameId}` : message ? `starpost.${data.kind}.${data.target}` : 'starpost', text, ...(imageBlob.length ? { blobs: imageBlob } : {}) },
         message && this.host.promotePending ? { trigger: 'piggyback' } : undefined);
         if (square) this.rememberSquare(data.id);
         this.cursor = event.seq;
