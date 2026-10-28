@@ -12,6 +12,7 @@ export interface StarpostConfigSection {
   antiLoop: { maxConsecutiveBotTurns: number; idleToEndSec: number };
   proactive: { topicSimilarity: number };
   pollIntervalMs: number;
+  deliveryIntervalMs: number;
 }
 
 export const STARPOST_DEFAULTS: StarpostConfigSection = {
@@ -21,6 +22,7 @@ export const STARPOST_DEFAULTS: StarpostConfigSection = {
   antiLoop: { maxConsecutiveBotTurns: 5, idleToEndSec: 300 },
   proactive: { topicSimilarity: 0.6 },
   pollIntervalMs: 3000,
+  deliveryIntervalMs: 20000,
 };
 
 export const STARPOST_CONFIG_GROUP: ConfigGroup = {
@@ -37,5 +39,6 @@ export const STARPOST_CONFIG_GROUP: ConfigGroup = {
     'worlds.starpost.antiLoop.maxConsecutiveBotTurns': { type: 'integer', minimum: 1, maximum: 100, title: '连续发言上限', 'x-hot': true },
     'worlds.starpost.antiLoop.idleToEndSec': { type: 'integer', minimum: 0, maximum: 86400, title: '静默收尾秒数', 'x-hot': true },
     'worlds.starpost.proactive.topicSimilarity': { type: 'number', minimum: 0, maximum: 1, title: '主动话题相似度上限', description: '0 关闭；仅应用于标记为主动发送的消息。', 'x-hot': true },
+    'worlds.starpost.deliveryIntervalMs': { type: 'integer', minimum: 1000, maximum: 300000, title: '聊天消息合批投递间隔（毫秒）', description: '默认 20000 毫秒。星邮消息先积压，到期后一次唤醒；其他来源的唤醒可能提前带上积压消息。', 'x-hot': true },
   } },
 };

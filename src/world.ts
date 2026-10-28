@@ -65,10 +65,14 @@ export class StarpostWorld implements World {
   private readonly seenSquare = new Set<string>();
   private readonly cursorFile: string;
   private readonly identityFile: string;
+  private readonly versionNoticeFile: string;
+  private pendingCoreCursor: number | null = null;
+  private pendingSinceMs: number | null = null;
   private registering = false;
-  constructor(private readonly cfg: StarpostConfigSection, private readonly botDir: string, private readonly packageDir: string, private readonly dataDir: string, private readonly timezone: string, private readonly secret: (name: string) => string) {
+  constructor(private readonly cfg: StarpostConfigSection, private readonly botDir: string, private readonly packageDir: string, private readonly dataDir: string, private readonly timezone: string, private readonly secret: (name: string) => string, private readonly clock: () => number = Date.now) {
     this.cursorFile = join(dataDir, 'starpost-cursor.json');
     this.identityFile = join(dataDir, 'starpost-identity.json');
+    this.versionNoticeFile = join(dataDir, 'starpost-version-notice.json');
   }
   envPromptVars(): Record<string, string> { return {}; }
   private storedIdentity(): Identity | null {
@@ -202,16 +206,54 @@ export class StarpostWorld implements World {
   }
   async start(host: WorldHost): Promise<void> {
     this.host = host;
-    if (existsSync(this.cursorFile)) { try { this.cursor = Number(JSON.parse(readFileSync(this.cursorFile, 'utf8')).cursor) || 0; } catch { this.cursor = 0; } }
+    if (existsSync(this.cursorFile)) {
+      try {
+        const saved = JSON.parse(readFileSync(this.cursorFile, 'utf8'));
+        this.cursor = Number(saved.cursor) || 0;
+        this.pendingCoreCursor = Number.isSafeInteger(saved.pendingCoreCursor) ? saved.pendingCoreCursor : null;
+        this.pendingSinceMs = Number.isSafeInteger(saved.pendingSinceMs) ? saved.pendingSinceMs : null;
+      } catch { this.cursor = 0; this.pendingCoreCursor = null; this.pendingSinceMs = null; }
+    }
+    await this.announceUpdate();
     await this.poll();
     this.timer = setInterval(() => { void this.poll(); }, Math.max(1000, this.cfg.pollIntervalMs));
   }
   async stop(): Promise<void> { if (this.timer) clearInterval(this.timer); this.timer = null; this.host = null; }
+  private saveCursor(): void {
+    mkdirSync(this.dataDir, { recursive: true });
+    const temp = `${this.cursorFile}.${process.pid}.tmp`;
+    writeFileSync(temp, JSON.stringify({ cursor: this.cursor, pendingCoreCursor: this.pendingCoreCursor, pendingSinceMs: this.pendingSinceMs }), { mode: 0o600 });
+    renameSync(temp, this.cursorFile);
+  }
+  private async announceUpdate(): Promise<void> {
+    let version = '';
+    try { version = JSON.parse(readFileSync(join(this.packageDir, 'package.json'), 'utf8')).version; } catch { return; }
+    if (typeof version !== 'string' || !/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(version)) return;
+    let previous = '';
+    try { previous = JSON.parse(readFileSync(this.versionNoticeFile, 'utf8')).version; } catch {}
+    if (previous === version) return;
+    if (this.activeIdentity() && this.host) {
+      await this.host.pushEvent({ type: 'starpost.updated', ts: new Date(this.clock()).toISOString(), source: this.id,
+        origin: 'internal', senderKey: 'starpost.system',
+        text: `[星邮系统通知] 星邮扩展已更新至 ${version}。请提醒你的人类用户星邮已经更新。` }, { trigger: 'flush' });
+    }
+    mkdirSync(this.dataDir, { recursive: true });
+    writeFileSync(this.versionNoticeFile, JSON.stringify({ version }), { mode: 0o600 });
+  }
+  private async flushMessages(): Promise<void> {
+    if (!this.host || this.pendingCoreCursor === null || this.pendingSinceMs === null) return;
+    const interval = Number.isInteger(this.cfg.deliveryIntervalMs) && this.cfg.deliveryIntervalMs >= 1000
+      ? this.cfg.deliveryIntervalMs : 20000;
+    if (this.clock() - this.pendingSinceMs < interval) return;
+    await this.host.promotePending?.(this.pendingCoreCursor, 'flush');
+    this.pendingCoreCursor = null; this.pendingSinceMs = null; this.saveCursor();
+  }
   private async poll(): Promise<void> {
     if (this.busy || !this.host) return;
     if (!this.activeIdentity()) { this.connected = false; this.lastError = ''; return; }
     this.busy = true;
     try {
+      await this.flushMessages();
       const events = await this.rpc('events', { since: this.cursor }) as Array<{ seq: number; type: string; data: any; at: string }>;
       this.connected = true; this.lastError = '';
       for (const event of events) {
@@ -224,12 +266,19 @@ export class StarpostWorld implements World {
           && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(incomingImage.base64)
           ? [{ bytes: Buffer.from(incomingImage.base64, 'base64'), mime: incomingImage.mime as string, name: `starpost-${event.seq}`, fallbackText: '星邮图片' }]
           : [];
-        await this.host.pushEvent({ type: `starpost.${event.type.replaceAll('.', '_')}`, ts: event.at, source: this.id, origin: 'external',
-          senderKey: event.type === 'message' ? `starpost.${data.kind}.${data.target}` : 'starpost', text, ...(imageBlob.length ? { blobs: imageBlob } : {}) });
+        const message = event.type === 'message';
+        const envelope = await this.host.pushEvent({ type: `starpost.${event.type.replaceAll('.', '_')}`, ts: event.at, source: this.id, origin: 'external',
+          senderKey: message ? `starpost.${data.kind}.${data.target}` : 'starpost', text, ...(imageBlob.length ? { blobs: imageBlob } : {}) },
+        message && this.host.promotePending ? { trigger: 'piggyback' } : undefined);
         if (event.type === 'square.bot' || event.type === 'square.group') this.seenSquare.add(data.id);
         this.cursor = event.seq;
-        mkdirSync(this.dataDir, { recursive: true }); writeFileSync(this.cursorFile, JSON.stringify({ cursor: this.cursor }));
+        if (message && this.host.promotePending && Number.isSafeInteger(envelope.cursor)) {
+          this.pendingSinceMs ??= this.clock();
+          this.pendingCoreCursor = envelope.cursor;
+        }
+        this.saveCursor();
       }
+      await this.flushMessages();
     } catch (error) { this.connected = false; this.lastError = (error as Error).message; }
     finally { this.busy = false; }
   }
