@@ -68,16 +68,15 @@ test('bot 权限、消息限速、漂流瓶和动态配额跨重启保持', asyn
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('注册码分配连续 ID，资料可见性和搜索跨重启保持', async () => {
+test('免码注册分配连续 ID，资料可见性和搜索跨重启保持', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'starpost-register-'));
   const file = join(dir, 'data.json');
   const keys = { 10001: 'a'.repeat(32) };
-  const registrationSecret = 'invite-'.padEnd(40, 'x');
-  let app = createStarpostServer({ file, keys, registrationSecret, port: 0 });
+  let app = createStarpostServer({ file, keys, port: 0 });
   await app.listen();
   let base = `http://127.0.0.1:${app.server.address().port}`;
-  const register = async (installationId, token, code = registrationSecret) => {
-    const response = await fetch(`${base}/register`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, installationId, token }) });
+  const register = async (installationId, token) => {
+    const response = await fetch(`${base}/register`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ installationId, token }) });
     return { status: response.status, ...(await response.json()) };
   };
   const rpc = async (who, key, action, args = {}) => {
@@ -88,7 +87,6 @@ test('注册码分配连续 ID，资料可见性和搜索跨重启保持', async
   const secondInstall = '22222222-2222-4222-8222-222222222222';
   const firstToken = 'b'.repeat(64), secondToken = 'c'.repeat(64);
   try {
-    assert.equal((await register(firstInstall, firstToken, 'wrong')).status, 403);
     assert.equal((await register(firstInstall, firstToken)).result.botId, '10002');
     assert.equal((await register(firstInstall, firstToken)).result.botId, '10002');
     assert.equal((await register(firstInstall, secondToken)).status, 409);
@@ -101,7 +99,7 @@ test('注册码分配连续 ID，资料可见性和搜索跨重启保持', async
     assert.deepEqual((await rpc('10001', keys[10001], 'directory.search', { query: '10002' })).result, []);
     assert.equal((await rpc('10001', keys[10001], 'friend.request', { to: '10002' })).ok, false);
     assert.equal((await rpc('10002', 'wrong', 'snapshot')).status, 401);
-    await app.close(); app = createStarpostServer({ file, keys, registrationSecret, port: 0 }); await app.listen();
+    await app.close(); app = createStarpostServer({ file, keys, port: 0 }); await app.listen();
     base = `http://127.0.0.1:${app.server.address().port}`;
     assert.equal((await rpc('10002', firstToken, 'snapshot')).result.profile.bio, '喜欢星空');
     assert.equal((await register(firstInstall, firstToken)).result.botId, '10002');
@@ -170,7 +168,7 @@ test('广场展示配额、凭展示入群与漂流瓶好友申请', async () =>
 test('现有群直接拉好友、聊天记录按会话分页且默认每分钟六条', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'starpost-chat-'));
   const keys = Object.fromEntries(Array.from({ length: 4 }, (_, i) => [String(10001 + i), String.fromCharCode(97 + i).repeat(32)]));
-  const app = createStarpostServer({ file: join(dir, 'data.json'), keys, port: 0 }); await app.listen();
+  const app = createStarpostServer({ file: join(dir, 'data.json'), keys, port: 0, clock: () => Date.parse('2026-10-28T04:30:00Z') }); await app.listen();
   const base = `http://127.0.0.1:${app.server.address().port}`;
   const rpc = async (who, action, args = {}, limits) => {
     const response = await fetch(`${base}/rpc`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-starpost-id': who, authorization: `Bearer ${keys[who]}` }, body: JSON.stringify({ action, args, ...(limits ? { limits } : {}) }) });

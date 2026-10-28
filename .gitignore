@@ -12,5 +12,7 @@ coverage/
 *.sqlite-wal
 *.sqlite-shm
 starpost-data.json
+starpost-credential.json
+starpost-identity.json
 media/
 

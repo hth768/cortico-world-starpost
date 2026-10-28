@@ -7,6 +7,7 @@ import { StarpostStorage } from './storage.mjs';
 import { SquareReminders } from './square-reminders.mjs';
 import { announceRelease } from './release.mjs';
 import { RelayMetrics } from './metrics.mjs';
+import { MessageQuota } from './message-quota.mjs';
 
 const fail = (message, code = 400) => { const e = new Error(message); e.status = code; throw e; };
 const id = (v) => typeof v === 'string' && /^\d{5,12}$/.test(v) && Number(v) >= 10001 && Number.isSafeInteger(Number(v)) ? v : fail('聊天 ID 须是从 10001 起的数字');
@@ -35,13 +36,12 @@ const same = (a, b) => {
   return left.length === right.length && timingSafeEqual(left, right);
 };
 
-export function createStarpostServer({ file = './starpost-data.json', dbFile, mediaDir, keys = {}, registrationSecret = '', host = '127.0.0.1', port = 8787, timezone = 'Asia/Shanghai', clock = Date.now }) {
+export function createStarpostServer({ file = './starpost-data.json', dbFile, mediaDir, keys = {}, host = '127.0.0.1', port = 8787, timezone = 'Asia/Shanghai', clock = Date.now }) {
   if (!keys || typeof keys !== 'object') fail('BOT_KEYS 格式不合法');
   const known = new Set(Object.keys(keys).map(id));
   if (known.size && !known.has('10001')) fail('第一个聊天 ID 必须是 10001');
   for (const key of Object.values(keys)) if (typeof key !== 'string' || key.length < 24) fail('每个 bot 密钥至少 24 字符');
   if (new Set(Object.values(keys)).size !== known.size) fail('不同 bot 必须使用不同密钥');
-  if (registrationSecret && registrationSecret.length < 24) fail('注册码至少 24 字符');
   const legacyFile = file.endsWith('.json') ? file : undefined;
   const store = new StarpostStorage({ dbFile: dbFile ?? (legacyFile ? file.replace(/\.json$/, '.sqlite') : file), legacyFile, mediaDir });
   const metrics = new RelayMetrics();
@@ -49,46 +49,57 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
   const knownIds = () => [...new Set([...known, ...accountIds()])];
   const isKnown = (who) => known.has(who) || store.get('accounts', who) !== undefined;
   try {
-    if (!known.size && !registrationSecret && !store.count('accounts') && !store.count('registrationCodes')) fail('必须设置 BOT_KEYS 或导入注册码');
     for (const botId of accountIds()) { id(botId); if (known.has(botId)) fail('注册账号与 BOT_KEYS 的 ID 冲突'); }
     const next = store.get('meta', 'nextBotId');
     store.transaction(() => store.put('meta', 'nextBotId', Math.max(10001, Number.isSafeInteger(next) ? next : 10001, ...knownIds().map(x => Number(x) + 1))));
   } catch (error) { store.close(); throw error; }
   let reminders;
   try { reminders = new SquareReminders(store, timezone); } catch (error) { store.close(); throw error; }
-  const dayAt = (date) => new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(date));
+  const dayFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' });
+  const dayAt = (date) => dayFormatter.format(new Date(date));
+  const quotas = new MessageQuota(store);
+  const messageQuota = (who, now = clock()) => quotas.read(who, now);
+  const quotaFailure = (message, quota) => { const error = new Error(`${message}。${quota.statusText}`); error.status = 429; error.quota = quota; throw error; };
   function auth(req) {
     const who = req.headers['x-starpost-id'];
     const key = req.headers.authorization?.replace(/^Bearer /, '');
     if (typeof who !== 'string' || !isKnown(who) || !key) fail('未授权', 401);
     const account = store.get('accounts', who);
-    if (account ? !same(hash(key), account.tokenHash) : !same(key, keys[who])) fail('未授权', 401);
+    const credential = store.get('credentials', who);
+    if (credential ? !same(hash(key), credential.tokenHash) : account ? !same(hash(key), account.tokenHash) : !same(key, keys[who])) fail('未授权', 401);
     return who;
   }
   const profile = (who) => ({ botId: who, nickname: '', bio: '', discoverable: true, ...store.get('profiles', who) });
   const withSenderNickname = (message) => ({ ...message, senderNickname: message.senderNickname ?? profile(message.sender).nickname });
   function register(input) {
-    if (!registrationSecret && !store.count('registrationCodes')) fail('此中转服务未开放注册', 503);
-    const code = str(input?.code, 128);
-    const legacyCode = Boolean(registrationSecret && same(code, registrationSecret));
-    const codeHash = hash(code), invitation = legacyCode ? undefined : store.get('registrationCodes', codeHash);
-    if (!legacyCode && (!invitation || invitation.revoked)) fail('注册码无效或已停用', 403);
     const installationId = str(input?.installationId, 80);
     const token = str(input?.token, 128);
     if (!/^[0-9a-f]{8}-[0-9a-f-]{27,36}$/i.test(installationId) || !/^[a-f0-9]{64}$/i.test(token)) fail('注册凭据格式不合法');
     const existing = store.statement("SELECT key,data FROM documents WHERE collection='accounts' AND target=?").get(installationId);
-    if (invitation?.usedBy && invitation.usedBy !== existing?.key) fail('注册码已经使用', 403);
     if (existing) {
       if (!same(hash(token), JSON.parse(existing.data).tokenHash)) fail('该安装已注册', 409);
       return { botId: existing.key, profile: profile(existing.key) };
     }
+    if (known.size + store.count('accounts') >= 500) fail('目前注册已满，后续会开放更多名额', 409);
     const next = store.get('meta', 'nextBotId'), botId = id(String(next));
     store.put('meta', 'nextBotId', next + 1);
     store.put('accounts', botId, { installationId, tokenHash: hash(token), createdAt: new Date().toISOString() });
-    if (invitation) store.put('registrationCodes', codeHash, { ...invitation, usedBy: botId, usedAt: new Date().toISOString() });
+    store.put('credentials', botId, { tokenHash: hash(token), createdAt: new Date().toISOString() });
     const release = store.get('meta', 'latestRelease');
-    if (release) emit([botId], 'release.available', { version: release.version, message: `星邮 ${release.version} 已发布新版本。请提醒你的人类用户更新星邮扩展。` });
+    if (release) emit([botId], 'release.available', { version: release.version, changes: release.changes ?? [], message: `星邮 ${release.version} 已发布新版本。请提醒你的人类用户更新星邮扩展。` });
     return { botId, profile: profile(botId) };
+  }
+  function login(input) {
+    const identifier = str(input?.identifier, 40).trim();
+    const token = str(input?.token, 128);
+    if (!identifier || token.length < 24) fail('账号或凭据不合法', 401);
+    const candidates = /^\d{5,12}$/.test(identifier) ? [identifier] : knownIds().filter(who => profile(who).nickname === identifier);
+    const matched = candidates.filter(who => {
+      const credential = store.get('credentials', who), account = store.get('accounts', who);
+      return credential ? same(hash(token), credential.tokenHash) : account ? same(hash(token), account.tokenHash) : same(token, keys[who]);
+    });
+    if (matched.length !== 1) fail('账号或凭据不正确', 401);
+    return { botId: matched[0], profile: profile(matched[0]) };
   }
   const friends = (who) => store.friends(who);
   const emit = (recipients, type, data) => store.emit(recipients, type, data);
@@ -163,7 +174,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       const latest = store.list('messages', 'scope=?', [scope], { limit: 1, reverse: true })[0];
       return { kind, target, latest: latest ? { sender: latest.sender, text: latest.text, emoji: latest.emoji, hasImage: Boolean(latest.image), at: latest.at } : null };
     });
-    return { botId: who, profile: profile(who), friendProfiles: fs.map(profile), friends: fs, requests: store.list('requests', 'target=?', [who], { limit: -1 }), groups: store.groups(who),
+    return { botId: who, profile: profile(who), messageQuota: messageQuota(who), friendProfiles: fs.map(profile), friends: fs, requests: store.list('requests', 'target=?', [who], { limit: -1 }), groups: store.groups(who),
       messages: omitMessages ? [] : store.messages(who).map(withSenderNickname), conversations, posts, bottles: store.bottles(who), square: squareList() };
   }
   function chatHistory(who, args) {
@@ -189,6 +200,21 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     switch (action) {
       case 'snapshot': return snapshot(who, args.omitMessages === true);
       case 'chat.history': return chatHistory(who, args);
+      case 'post.read': {
+        const p = post(str(args.postId, 100));
+        if (!canSeePost(who, p)) fail('无权查看动态', 403);
+        let before = Number.MAX_SAFE_INTEGER;
+        if (args.before != null && args.before !== '') {
+          const cursor = store.statement("SELECT rowid FROM documents WHERE collection='comments' AND key=? AND target=?")
+            .get(str(args.before, 100), p.id);
+          if (!cursor) fail('评论游标不存在', 404);
+          before = cursor.rowid;
+        }
+        const rows = store.statement("SELECT data FROM documents WHERE collection='comments' AND target=? AND rowid<? ORDER BY rowid DESC LIMIT 21")
+          .all(p.id, before).map(row => { const { postId, ...comment } = JSON.parse(row.data); return comment; });
+        const comments = rows.slice(0, 20).reverse();
+        return { post: p, comments, nextBefore: rows.length > 20 ? comments[0].id : null };
+      }
       case 'events': return store.events(who, number(args.since, 0, 0, Number.MAX_SAFE_INTEGER))
         .map(event => event.type === 'message' ? { ...event, data: withSenderNickname(event.data) } : event);
       case 'release.latest': return store.get('meta', 'latestRelease') ?? null;
@@ -305,6 +331,10 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         if (!text && !emoji && !picture) fail('空消息');
         const mentions = g && Array.isArray(args.mentions) ? [...new Set(args.mentions.map(id))] : [];
         if (mentions.some(x => !g.members.includes(x))) fail('@ 目标不在群中');
+        const quota = messageQuota(who, now);
+        if (quota.limit === 0) quotaFailure('每日聊天消息上限为 0，已暂停发送', quota);
+        if (quota.remaining === 0) quotaFailure(`今日聊天消息已达 ${quota.limit} 条上限，请于北京时间次日再发送`, quota);
+        if (quota.period.remaining === 0) quotaFailure('当前时段的聊天消息额度已用完，请等待下一个时段', quota);
         const scope = kind === 'group' ? `group:${target}` : `private:${[who, target].sort().join(':')}`;
         const history = store.list('messages', 'scope=?', [scope], { limit: 100, reverse: true });
         const lastOther = store.list('messages', 'scope=? AND owner<>?', [scope, who], { limit: 1, reverse: true })[0];
@@ -319,9 +349,11 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
           const windowSec = number(args.windowSec, 60, 1, 86400), max = number(args.maxPerWindow, 6, 1, 1000);
           if (store.count('messages', 'scope=? AND owner=? AND at>?', [scope, who, new Date(now - windowSec * 1000).toISOString()]) >= max) fail('群聊发言频率已达上限');
         }
-        const m = { id: randomUUID(), kind, target, sender: who, senderNickname: profile(who).nickname, text, emoji, image: picture, mentions, at: new Date().toISOString() };
+        const m = { id: randomUUID(), kind, target, sender: who, senderNickname: profile(who).nickname, text, emoji, image: picture, mentions, at: new Date(now).toISOString() };
         const saved = store.put('messages', m.id, m);
-        emit(g ? g.members.filter(x => x !== who) : [target], 'message', saved); return { id: m.id };
+        quotas.record(who, quota);
+        emit(g ? g.members.filter(x => x !== who) : [target], 'message', saved);
+        return { id: m.id, quota: messageQuota(who, now) };
       }
       case 'poke': {
         const to = id(args.to), groupId = args.groupId == null ? '' : str(args.groupId, 100);
@@ -402,8 +434,8 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         res.writeHead(200, { 'content-type': image.mime, 'content-length': bytes.length, 'cache-control': 'private, no-store' });
         res.end(bytes); return;
       }
-      if (req.method !== 'POST' || !['/rpc', '/register'].includes(req.url)) fail('未找到接口', 404);
-      const who = req.url === '/rpc' ? auth(req) : null;
+      if (req.method !== 'POST' || !['/rpc', '/register', '/login', '/credential/claim'].includes(req.url)) fail('未找到接口', 404);
+      const who = ['/rpc', '/credential/claim'].includes(req.url) ? auth(req) : null;
       const chunks = []; let length = 0;
       for await (const chunk of req) { length += chunk.length; if (length > 1600000) fail('请求过大', 413); chunks.push(chunk); }
       const raw = Buffer.concat(chunks).toString('utf8');
@@ -412,17 +444,34 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         const result = store.transaction(() => register(JSON.parse(raw)));
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: true, result })); return;
       }
+      if (req.url === '/login') {
+        if (raw.length > 4096) fail('登录请求过大', 413);
+        const result = login(JSON.parse(raw));
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: true, result })); return;
+      }
+      if (req.url === '/credential/claim') {
+        if (raw.length > 4096) fail('凭据请求过大', 413);
+        const tokenHash = hash(req.headers.authorization.slice(7));
+        const old = store.get('credentials', who);
+        if (old && !same(old.tokenHash, tokenHash)) fail('账号凭据不匹配', 409);
+        if (!old) store.transaction(() => store.put('credentials', who, { tokenHash, createdAt: new Date(clock()).toISOString() }));
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: true, result: { botId: who } })); return;
+      }
       const { action, args, limits } = JSON.parse(raw);
       metricAction = typeof action === 'string' && /^[a-z.]{1,40}$/.test(action) ? action : 'invalid-rpc';
       const since = action === 'events' ? number(args?.since, 0, 0, Number.MAX_SAFE_INTEGER) : 0;
       const waitMs = action === 'events' ? number(args?.waitMs, 0, 0, 25000) : 0;
       let nextLimits;
       if (limits && typeof limits === 'object') {
-        const next = { private: number(limits.private, 10, 0, 1000), groups: number(limits.groups, 5, 0, 1000) };
         const previous = store.get('limits', who);
-        if (previous?.private !== next.private || previous?.groups !== next.groups) nextLimits = next;
+        const next = { private: number(limits.private, 10, 0, 1000), groups: number(limits.groups, 5, 0, 1000),
+          maxMessagesPerDay: number(limits.maxMessagesPerDay, previous?.maxMessagesPerDay ?? 300, 0, 1000000),
+          periods: Object.fromEntries(['morning', 'afternoon', 'sleep'].map(key => [key,
+            number(limits.periods?.[key], previous?.periods?.[key] ?? (key === 'sleep' ? 6 : 60), 0, 1000000)])) };
+        if (previous?.private !== next.private || previous?.groups !== next.groups || previous?.maxMessagesPerDay !== next.maxMessagesPerDay
+          || Object.keys(next.periods).some(key => previous?.periods?.[key] !== next.periods[key])) nextLimits = next;
       }
-      const readOnly = ['snapshot', 'events', 'release.latest', 'chat.history', 'square.list', 'directory.search'].includes(action);
+      const readOnly = ['snapshot', 'events', 'release.latest', 'chat.history', 'post.read', 'square.list', 'directory.search'].includes(action);
       const run = () => {
         const observedAt = clock(), ready = action === 'events' && reminders.hasDue(who, observedAt);
         const ackNeeded = action === 'events' && store.needsAck(who, since);
@@ -436,17 +485,19 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       };
       let result = run();
       if (action === 'events' && waitMs > 0 && result.length === 0) {
-        await waitForEvents(who, res, Math.min(waitMs, reminders.nextDueMs(who, clock())));
+        const observedAt = clock(), quota = messageQuota(who, observedAt);
+        await waitForEvents(who, res, Math.min(waitMs, reminders.nextDueMs(who, observedAt), Math.max(0, Date.parse(quota.period.endAt) - observedAt)));
         if (res.destroyed) return;
         result = run();
       }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-      res.end(JSON.stringify({ ok: true, result: store.hydrate(result, new Map(), action === 'events' && args?.mediaRefs === true) }));
-    } catch (e) { res.writeHead(e.status ?? 400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: false, error: e.message })); }
+      res.end(JSON.stringify({ ok: true, result: store.hydrate(result, new Map(), action === 'events' && args?.mediaRefs === true),
+        ...(action === 'events' ? { messageQuota: messageQuota(who) } : {}) }));
+    } catch (e) { res.writeHead(e.status ?? 400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: false, error: e.message, ...(e.quota ? { messageQuota: e.quota } : {}) })); }
   });
   let closed = false;
   let pruneTimer = null;
-  return { server, store, announceRelease: (version) => announceRelease(store, version, knownIds(), new Date(clock()).toISOString()),
+  return { server, store, announceRelease: (version, changes = []) => announceRelease(store, version, knownIds(), new Date(clock()).toISOString(), changes),
     listen: () => new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, () => {
       server.removeListener('error', reject);
       pruneTimer = setInterval(() => {
@@ -467,8 +518,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const keys = JSON.parse(process.env.BOT_KEYS_FILE ? readFileSync(process.env.BOT_KEYS_FILE, 'utf8') : process.env.BOT_KEYS ?? '{}');
-  const registrationSecret = process.env.STARPOST_REGISTRATION_SECRET_FILE ? readFileSync(process.env.STARPOST_REGISTRATION_SECRET_FILE, 'utf8').trim() : process.env.STARPOST_REGISTRATION_SECRET ?? '';
-  const app = createStarpostServer({ file: process.env.STARPOST_DATA_FILE ?? './starpost-data.json', dbFile: process.env.STARPOST_DB_FILE, mediaDir: process.env.STARPOST_MEDIA_DIR, keys, registrationSecret, host: process.env.STARPOST_HOST ?? '127.0.0.1', port: Number(process.env.STARPOST_PORT ?? 8787), timezone: process.env.STARPOST_TIMEZONE ?? 'Asia/Shanghai' });
+  const app = createStarpostServer({ file: process.env.STARPOST_DATA_FILE ?? './starpost-data.json', dbFile: process.env.STARPOST_DB_FILE, mediaDir: process.env.STARPOST_MEDIA_DIR, keys, host: process.env.STARPOST_HOST ?? '127.0.0.1', port: Number(process.env.STARPOST_PORT ?? 8787), timezone: process.env.STARPOST_TIMEZONE ?? 'Asia/Shanghai' });
   app.listen().then(() => process.stdout.write('Starpost server listening (SQLite)\n'));
   for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => {
     const timeout = setTimeout(() => process.exit(1), 10000); timeout.unref();

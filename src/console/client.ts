@@ -2,6 +2,7 @@ import type { WebUiClientBundle, WebUiPanelContext } from 'cortico/web/shared/cl
 
 interface Snapshot {
   botId: string; profile: Profile; friendProfiles: Profile[]; friends: string[]; requests: Array<{ from: string }>;
+  messageQuota?: { used: number; limit: number; remaining: number; timezone: string; statusText?: string };
   groups: Array<{ id: string; name: string; members: string[] }>;
   conversations: Array<{ kind: 'private' | 'group'; target: string; latest: { sender: string; text: string; emoji: string; hasImage: boolean; at: string } | null }>;
   posts: Array<{ id: string; author: string; text: string; image?: { mime: string; base64: string }; comments: Array<{ id: string; author: string; text: string; parentId?: string }>; at: string }>;
@@ -111,17 +112,29 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
     if (shown === 'unregistered') return;
     shown = 'unregistered'; account.replaceChildren(); content.replaceChildren();
     library.el.hidden = true;
-    line(ctx, account, '首次使用请注册。聊天 ID 将由中转服务依次分配。');
-    const code = ui.input({ placeholder: '输入服务器注册码' }); code.type = 'password'; code.autocomplete = 'off'; code.maxLength = 200;
-    const result = ui.msgline('注册码由中转服务管理员提供。');
+    line(ctx, account, '首次使用可直接注册。名额上限 500 个，聊天 ID 按顺序分配，凭据自动保存在本机。');
+    const result = ui.msgline('请备份实例 data/starpost-credential.json；丢失凭据无法恢复账号。');
     const button = ui.button('注册', { variant: 'primary', onClick: () => {
       button.disabled = true; result.textContent = '正在注册…';
-      void ctx.invoke<{ botId: string }>('register', [code.value]).then(async r => {
-        code.value = ''; result.textContent = `注册成功，聊天 ID：${r.botId}`;
+      void ctx.invoke<{ botId: string }>('register', []).then(async r => {
+        result.textContent = `注册成功，聊天 ID：${r.botId}。凭据已保存在本机。`;
         shown = ''; await refresh();
       }).catch((error: unknown) => { result.textContent = String(error); }).finally(() => { button.disabled = false; });
     } });
-    const row = ui.rowbar(); row.append(code, button); account.append(row, result);
+    const row = ui.rowbar(); row.append(button); account.append(row, result);
+    const loginLabel = ui.h('div'); loginLabel.textContent = '已有账号：输入聊天 ID 或昵称，并选择原实例保存的凭据文件登录。';
+    const identifier = ui.input({ placeholder: '聊天 ID 或昵称' }); identifier.maxLength = 40;
+    const file = ui.h('input') as HTMLInputElement; file.type = 'file'; file.accept = '.json,application/json';
+    const loginButton = ui.button('凭据登录', { onClick: () => {
+      loginButton.disabled = true;
+      void (async () => {
+        if (!file.files?.[0] || file.files[0].size > 4096) throw new Error('请选择有效的凭据文件');
+        const credential = await file.files[0].text();
+        const r = await ctx.invoke<{ botId: string }>('login', [identifier.value, credential]);
+        result.textContent = `已登录，聊天 ID：${r.botId}`; shown = ''; await refresh();
+      })().catch(error => { result.textContent = String(error); }).finally(() => { loginButton.disabled = false; });
+    } });
+    const loginRow = ui.rowbar(); loginRow.append(identifier, file, loginButton); account.append(loginLabel, loginRow);
   }
   function showSearch() {
     if (shown === 'registered') return;
@@ -164,6 +177,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
     content.replaceChildren();
     line(ctx, content, `Bot：${data.profile.nickname || '未设置昵称'} (${data.botId}) · 好友 ${data.friends.length} · 群聊 ${data.groups.length}`);
     line(ctx, content, `简介：${data.profile.bio || '未设置'} · 账号可见：${data.profile.discoverable ? '是' : '否'}`);
+    if (data.messageQuota) line(ctx, content, data.messageQuota.statusText || `今日聊天已发 ${data.messageQuota.used}/${data.messageQuota.limit} 条 · 剩余 ${data.messageQuota.remaining} 条 · ${data.messageQuota.timezone}`);
     if (data.requests.length) line(ctx, content, `待处理好友申请：${data.requests.map(r => r.from).join('、')}`);
     content.appendChild(ui.section('聊天记录', '点击好友或群聊查看记录。页面只读，消息由 bot 自己发送。'));
     const layout = ui.h('div', 'sp-chat-layout'), list = ui.h('div', 'sp-chat-list'), thread = ui.h('div', 'sp-chat-thread');

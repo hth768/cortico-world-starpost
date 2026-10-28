@@ -9,8 +9,7 @@ import { StarpostWorld } from '../src/world.ts';
 
 test('初始面板注册后，本机身份与 bot 资料工具可跨重启使用', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'starpost-world-'));
-  const code = 'invite-'.padEnd(40, 'x');
-  const app = createStarpostServer({ file: join(dir, 'relay.json'), keys: { 10001: 'a'.repeat(32) }, registrationSecret: code, port: 0 });
+  const app = createStarpostServer({ file: join(dir, 'relay.json'), keys: { 10001: 'a'.repeat(32) }, port: 0 });
   await app.listen();
   const config = { ...structuredClone(STARPOST_DEFAULTS), enabled: true, emojiDir: dir, serverUrl: `http://127.0.0.1:${(app.server.address() as { port: number }).port}` };
   const world = () => new StarpostWorld(config, dir, dir, dir, 'Asia/Shanghai', () => '');
@@ -18,10 +17,17 @@ test('初始面板注册后，本机身份与 bot 资料工具可跨重启使用
     const first = world();
     const panel = first.webUi().invoke!;
     assert.deepEqual(await panel('viewer', 'status', []), { registered: false, botId: null });
-    assert.deepEqual(await panel('viewer', 'register', [code]), { botId: '10002' });
+    assert.deepEqual(await panel('viewer', 'register', []), { botId: '10002' });
     const local = JSON.parse(readFileSync(join(dir, 'starpost-identity.json'), 'utf8'));
     assert.equal(local.botId, '10002');
     assert.match(local.token, /^[a-f0-9]{64}$/);
+    const credential = JSON.parse(readFileSync(join(dir, 'starpost-credential.json'), 'utf8'));
+    assert.deepEqual(credential, { version: 1, botId: '10002', token: local.token });
+    const restoredDir = join(dir, 'restored');
+    const restored = new StarpostWorld(config, restoredDir, dir, restoredDir, 'Asia/Shanghai', () => '');
+    assert.deepEqual(await restored.webUi().invoke!('viewer', 'login', ['10002', JSON.stringify(credential)]), { botId: '10002' });
+    assert.deepEqual(await restored.webUi().invoke!('viewer', 'status', []), { registered: true, botId: '10002' });
+    assert.equal(app.store.get('credentials', '10002').tokenHash.length, 64);
     const second = world();
     assert.deepEqual(await second.webUi().invoke!('viewer', 'status', []), { registered: true, botId: '10002' });
     const profileTool = second.tools().find(tool => tool.name === 'starpost_profile')!;
@@ -41,6 +47,8 @@ test('初始面板注册后，本机身份与 bot 资料工具可跨重启使用
     const external: Array<{ type: string; origin: string; text: string; blobs?: Array<{ bytes: Uint8Array; mime: string }> }> = [];
     const legacy = new StarpostWorld({ ...config, botId: '10001' }, dir, dir, join(dir, 'legacy'), 'Asia/Shanghai', () => 'a'.repeat(32));
     await legacy.start({ pushEvent: async (event: { type: string; origin: string; text: string; blobs?: Array<{ bytes: Uint8Array; mime: string }> }) => { external.push(event); } } as never);
+    assert.equal(JSON.parse(readFileSync(join(dir, 'legacy', 'starpost-credential.json'), 'utf8')).botId, '10001');
+    assert.equal(app.store.get('credentials', '10001').tokenHash.length, 64);
     const browse = await legacy.tools().find(tool => tool.name === 'starpost_square')!.handler({ action: 'browse' }, {} as never);
     assert.equal(JSON.parse(String(browse))[0].id, listingId);
     assert.equal(String(browse).includes('来看夜空'), false);
@@ -91,6 +99,7 @@ test('聊天消息先积压，满 20 秒只触发一次合批投递，重启可�
   const pushed: Array<{ type: string; trigger?: string }> = [], queued: string[] = [], delivered: string[] = [], promotions: number[] = [];
   const host = {
     pushEvent: async (event: { type: string; text: string }, opts?: { trigger?: string }) => {
+      if (event.type === 'starpost.quota_status') return { cursor: ++coreCursor };
       pushed.push({ type: event.type, trigger: opts?.trigger });
       if (opts?.trigger === 'piggyback') queued.push(event.text);
       return { cursor: ++coreCursor };
@@ -164,19 +173,21 @@ test('发布新版本只提醒未更新的 bot，同版本不重发，漏收时�
   const world = () => new StarpostWorld(config, dir, dir, dir, 'Asia/Shanghai', () => key, Date.now, () => extensionVersion);
   const notices: Array<{ type: string; origin: string; senderKey: string; text: string; trigger?: string }> = [];
   const host = { pushEvent: async (event: { type: string; origin: string; senderKey: string; text: string }, opts?: { trigger?: string }) => {
+    if (event.type === 'starpost.quota_status') return { cursor: notices.length };
     notices.push({ ...event, trigger: opts?.trigger }); return { cursor: notices.length };
   } } as never;
   let receiver = world();
   try {
     await receiver.start(host); await receiver.stop();
     assert.equal(notices.length, 0);
-    app.announceRelease('0.8.2');
+    app.announceRelease('0.8.2', ['新增凭据登录']);
     receiver = world(); await receiver.start(host); await receiver.stop();
     assert.equal(notices.length, 1);
     assert.equal(notices[0].type, 'starpost.update_available'); assert.equal(notices[0].origin, 'internal');
     assert.equal(notices[0].senderKey, 'starpost.system'); assert.equal(notices[0].trigger, 'flush');
     assert.match(notices[0].text, /提醒你的人类用户更新/);
     assert.match(notices[0].text, /0\.8\.2/);
+    assert.match(notices[0].text, /新增凭据登录/);
     receiver = world(); await receiver.start(host); await receiver.stop();
     assert.equal(notices.length, 1);
     app.announceRelease('0.8.3');

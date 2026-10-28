@@ -35,7 +35,7 @@ test('旧 JSON 完整迁移、图片去重、事件游标和身份跨重启保�
     events: [{ seq: 42, to: '10002', type: 'message', at: now, data: { id: 'oldmessage', image, text: '旧消息' } }], seq: 60, nextBotId: 10003,
   };
   const original = JSON.stringify(old); writeFileSync(file, original);
-  let app = createStarpostServer({ file, keys, registrationSecret: 'invite-'.padEnd(40, 'x'), port: 0 });
+  let app = createStarpostServer({ file, keys, port: 0 });
   try {
     await app.listen(); let rpc = client(app, { ...keys, 10002: token });
     const snapshot = (await rpc('10002', 'snapshot')).result;
@@ -56,11 +56,11 @@ test('旧 JSON 完整迁移、图片去重、事件游标和身份跨重启保�
     await app.close();
     // A stale old JSON must never overwrite the database on the next boot.
     writeFileSync(file, '{stale-invalid-json');
-    app = createStarpostServer({ file, keys, registrationSecret: 'invite-'.padEnd(40, 'x'), port: 0 });
+    app = createStarpostServer({ file, keys, port: 0 });
     await app.listen(); rpc = client(app, { ...keys, 10002: token });
     assert.equal((await rpc('10002', 'snapshot')).result.messages.length, 2);
     assert.equal(app.store.statement('PRAGMA integrity_check').get().integrity_check, 'ok');
-    const registration = await fetch(`http://127.0.0.1:${app.server.address().port}/register`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: 'invite-'.padEnd(40, 'x'), installationId: '22222222-2222-4222-8222-222222222222', token: 'c'.repeat(64) }) });
+    const registration = await fetch(`http://127.0.0.1:${app.server.address().port}/register`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ installationId: '22222222-2222-4222-8222-222222222222', token: 'c'.repeat(64) }) });
     assert.equal((await registration.json()).result.botId, '10003');
     assert.equal((await fetch(`http://127.0.0.1:${app.server.address().port}/media/${readdirSync(app.store.mediaDir)[0]}`)).status, 404);
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
