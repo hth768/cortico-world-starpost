@@ -126,6 +126,35 @@ test('聊天消息先积压，满 20 秒只触发一次合批投递，重启可�
   } finally { await receiver.stop(); await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('离线事件缺口提醒 bot，聊天历史工具可补看被清理的消息正文', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'starpost-world-gap-'));
+  const keys = { 10001: 'a'.repeat(32), 10002: 'b'.repeat(32) };
+  const app = createStarpostServer({ file: join(dir, 'relay.json'), keys, port: 0 });
+  await app.listen(); app.store.befriend('10001', '10002');
+  const base = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
+  const world = new StarpostWorld({ ...structuredClone(STARPOST_DEFAULTS), enabled: true, botId: '10001', serverUrl: base },
+    dir, dir, dir, 'Asia/Shanghai', () => keys[10001]);
+  const pushed: Array<{ type: string; origin: string; text: string }> = [];
+  const host = { pushEvent: async (event: { type: string; origin: string; text: string }) => {
+    pushed.push(event); return { cursor: pushed.length };
+  } } as never;
+  try {
+    for (let i = 1; i <= 3; i++) {
+      const response = await fetch(`${base}/rpc`, { method: 'POST', headers: {
+        'content-type': 'application/json', 'x-starpost-id': '10002', authorization: `Bearer ${keys[10002]}`,
+      }, body: JSON.stringify({ action: 'message.send', args: { kind: 'private', target: '10001', text: `补看第${i}条` } }) });
+      assert.equal((await response.json()).ok, true);
+    }
+    assert.equal(app.store.pruneEvents(Date.now(), 72 * 60 * 60 * 1000, 1), 2);
+    await world.start(host);
+    assert.equal(pushed.filter(event => event.type === 'starpost.delivery_gap').length, 1);
+    assert.equal(pushed.find(event => event.type === 'starpost.delivery_gap')?.origin, 'internal');
+    const history = await world.tools().find(tool => tool.name === 'starpost_history')!.handler({ kind: 'private', target: '10002' }, {} as never);
+    const messages = JSON.parse(String(history)).messages;
+    assert.deepEqual(messages.map((message: { text: string }) => message.text), ['补看第1条', '补看第2条', '补看第3条']);
+  } finally { await world.stop(); await app.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('发布新版本只提醒未更新的 bot，同版本不重发，漏收时能核对最新版本', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'starpost-world-update-'));
   const key = 'a'.repeat(32), app = createStarpostServer({ file: join(dir, 'relay.json'), keys: { 10001: key }, port: 0 });
@@ -159,7 +188,8 @@ test('发布新版本只提醒未更新的 bot，同版本不重发，漏收时�
     assert.equal(notices.length, 2);
     extensionVersion = '0.8.1';
     const missedDir = join(dir, 'missed'); mkdirSync(missedDir);
-    writeFileSync(join(missedDir, 'starpost-cursor.json'), JSON.stringify({ cursor: app.store.events('10001', 0).at(-1)!.seq }));
+    const latestSeq = app.store.statement("SELECT seq FROM sqlite_sequence WHERE name='events'").get().seq;
+    writeFileSync(join(missedDir, 'starpost-cursor.json'), JSON.stringify({ cursor: latestSeq }));
     receiver = new StarpostWorld(config, dir, dir, missedDir, 'Asia/Shanghai', () => key, Date.now, () => extensionVersion);
     await receiver.start(host); await receiver.stop();
     assert.equal(notices.length, 3); assert.match(notices[2].text, /0\.8\.3/);

@@ -1,11 +1,12 @@
 import http from 'node:http';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID, timingSafeEqual, createHash } from 'node:crypto';
 import { StarpostStorage } from './storage.mjs';
 import { SquareReminders } from './square-reminders.mjs';
 import { announceRelease } from './release.mjs';
+import { RelayMetrics } from './metrics.mjs';
 
 const fail = (message, code = 400) => { const e = new Error(message); e.status = code; throw e; };
 const id = (v) => typeof v === 'string' && /^\d{5,12}$/.test(v) && Number(v) >= 10001 && Number.isSafeInteger(Number(v)) ? v : fail('聊天 ID 须是从 10001 起的数字');
@@ -43,6 +44,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
   if (registrationSecret && registrationSecret.length < 24) fail('注册码至少 24 字符');
   const legacyFile = file.endsWith('.json') ? file : undefined;
   const store = new StarpostStorage({ dbFile: dbFile ?? (legacyFile ? file.replace(/\.json$/, '.sqlite') : file), legacyFile, mediaDir });
+  const metrics = new RelayMetrics();
   const accountIds = () => store.statement("SELECT key FROM documents WHERE collection='accounts'").all().map(row => row.key);
   const knownIds = () => [...new Set([...known, ...accountIds()])];
   const isKnown = (who) => known.has(who) || store.get('accounts', who) !== undefined;
@@ -85,11 +87,41 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     store.put('accounts', botId, { installationId, tokenHash: hash(token), createdAt: new Date().toISOString() });
     if (invitation) store.put('registrationCodes', codeHash, { ...invitation, usedBy: botId, usedAt: new Date().toISOString() });
     const release = store.get('meta', 'latestRelease');
-    if (release) emit([botId], 'release.available', { version: release.version, message: `星邮 ${release.version} 已发布新版本。请提醒你的人类用户更新星邮扩展。` }, release.publishedAt);
+    if (release) emit([botId], 'release.available', { version: release.version, message: `星邮 ${release.version} 已发布新版本。请提醒你的人类用户更新星邮扩展。` });
     return { botId, profile: profile(botId) };
   }
   const friends = (who) => store.friends(who);
   const emit = (recipients, type, data) => store.emit(recipients, type, data);
+  const waiters = new Map();
+  let waitingPolls = 0;
+  function waitForEvents(who, res, waitMs) {
+    const group = waiters.get(who) ?? new Set();
+    if (waitingPolls >= 512 || group.size >= 2) fail('同时等待的连接过多，请稍后重试', 429);
+    waiters.set(who, group);
+    waitingPolls++;
+    return new Promise(resolveWait => {
+      let timer;
+      let finished = false;
+      const done = () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        res.off('close', done);
+        group.delete(done);
+        if (!group.size) waiters.delete(who);
+        waitingPolls--;
+        resolveWait();
+      };
+      group.add(done);
+      res.once('close', done);
+      timer = setTimeout(done, waitMs);
+    });
+  }
+  store.onEmit = recipients => {
+    setImmediate(() => {
+      for (const who of recipients) for (const done of [...(waiters.get(who) ?? [])]) done();
+    });
+  };
   const group = (who, groupId) => { const g = store.get('groups', groupId); if (!g || !g.members.includes(who)) fail('群不存在或无权限', 404); return g; };
   const post = (postId) => { const p = store.get('posts', postId); if (!p || p.deleted) fail('动态不存在', 404); return p; };
   const canSeePost = (who, p) => p.author === who || friends(who).includes(p.author);
@@ -342,8 +374,34 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     }
   }
   const server = http.createServer(async (req, res) => {
+    const started = metrics.now();
+    const metricPath = req.url?.startsWith('/media/') ? '/media/:seq' : req.url?.split('?')[0] ?? '';
+    let metricAction = `${req.method} ${metricPath}`;
+    res.once('finish', () => metrics.record(metricAction, res.statusCode, started));
     try {
       if (req.method === 'GET' && req.url === '/health') { res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end('{"ok":true}'); return; }
+      if (req.method === 'GET' && req.url === '/metrics') {
+        if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)) fail('仅允许本机读取指标', 403);
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+        res.end(JSON.stringify(metrics.snapshot(store, waitingPolls))); return;
+      }
+      if (req.method === 'GET' && req.url?.startsWith('/media/')) {
+        const match = /^\/media\/([1-9]\d*)$/.exec(req.url);
+        const seq = match ? Number(match[1]) : NaN;
+        if (!Number.isSafeInteger(seq)) fail('图片地址不合法', 404);
+        const who = auth(req);
+        const row = store.statement("SELECT data FROM events WHERE seq=? AND recipient=? AND type='message'").get(seq, who);
+        if (!row) fail('图片不存在或无权限', 404);
+        const image = JSON.parse(row.data).image;
+        if (!image?.mediaId) fail('该消息没有图片', 404);
+        const path = store.mediaPath(image);
+        if (!existsSync(path)) fail('图片文件不存在', 404);
+        if (statSync(path).size > 1024 * 1024) fail('图片超过大小限制', 413);
+        const bytes = readFileSync(path);
+        metrics.mediaBytes += bytes.length;
+        res.writeHead(200, { 'content-type': image.mime, 'content-length': bytes.length, 'cache-control': 'private, no-store' });
+        res.end(bytes); return;
+      }
       if (req.method !== 'POST' || !['/rpc', '/register'].includes(req.url)) fail('未找到接口', 404);
       const who = req.url === '/rpc' ? auth(req) : null;
       const chunks = []; let length = 0;
@@ -355,27 +413,52 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: true, result })); return;
       }
       const { action, args, limits } = JSON.parse(raw);
+      metricAction = typeof action === 'string' && /^[a-z.]{1,40}$/.test(action) ? action : 'invalid-rpc';
+      const since = action === 'events' ? number(args?.since, 0, 0, Number.MAX_SAFE_INTEGER) : 0;
+      const waitMs = action === 'events' ? number(args?.waitMs, 0, 0, 25000) : 0;
       let nextLimits;
       if (limits && typeof limits === 'object') {
         const next = { private: number(limits.private, 10, 0, 1000), groups: number(limits.groups, 5, 0, 1000) };
         const previous = store.get('limits', who);
         if (previous?.private !== next.private || previous?.groups !== next.groups) nextLimits = next;
       }
-      const observedAt = clock(), ready = action === 'events' && reminders.hasDue(who, observedAt);
-      const invoke = () => {
-        if (nextLimits) store.put('limits', who, nextLimits);
-        if (ready) reminders.deliver(who, observedAt, profile(who).discoverable);
-        return rpc(who, action, args ?? {});
-      };
       const readOnly = ['snapshot', 'events', 'release.latest', 'chat.history', 'square.list', 'directory.search'].includes(action);
-      const result = readOnly && !nextLimits && !ready ? invoke() : store.transaction(invoke);
-      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: true, result: store.hydrate(result) }));
+      const run = () => {
+        const observedAt = clock(), ready = action === 'events' && reminders.hasDue(who, observedAt);
+        const ackNeeded = action === 'events' && store.needsAck(who, since);
+        const invoke = () => {
+          if (nextLimits) store.put('limits', who, nextLimits);
+          if (ackNeeded) store.ackEvents(who, since);
+          if (ready) reminders.deliver(who, observedAt, profile(who).discoverable);
+          return rpc(who, action, args ?? {});
+        };
+        return readOnly && !nextLimits && !ready && !ackNeeded ? invoke() : store.transaction(invoke);
+      };
+      let result = run();
+      if (action === 'events' && waitMs > 0 && result.length === 0) {
+        await waitForEvents(who, res, Math.min(waitMs, reminders.nextDueMs(who, clock())));
+        if (res.destroyed) return;
+        result = run();
+      }
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(JSON.stringify({ ok: true, result: store.hydrate(result, new Map(), action === 'events' && args?.mediaRefs === true) }));
     } catch (e) { res.writeHead(e.status ?? 400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: false, error: e.message })); }
   });
   let closed = false;
+  let pruneTimer = null;
   return { server, store, announceRelease: (version) => announceRelease(store, version, knownIds(), new Date(clock()).toISOString()),
-    listen: () => new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, () => { server.removeListener('error', reject); resolve(); }); }),
+    listen: () => new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, () => {
+      server.removeListener('error', reject);
+      pruneTimer = setInterval(() => {
+        try { store.pruneEvents(clock()); }
+        catch (error) { process.stderr.write(`星邮事件清理失败：${error.message}\n`); }
+      }, 10 * 60 * 1000);
+      pruneTimer.unref();
+      resolve();
+    }); }),
     close: () => new Promise((resolve, reject) => {
+      if (pruneTimer) { clearInterval(pruneTimer); pruneTimer = null; }
+      for (const group of [...waiters.values()]) for (const done of [...group]) done();
       const finish = () => { try { if (!closed) { store.close(); closed = true; } resolve(); } catch (error) { reject(error); } };
       if (server.listening) server.close(finish); else finish();
     }),

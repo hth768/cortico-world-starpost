@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, realpathSync, statSync, renameSync } from 'node:fs';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Agent as HttpAgent, request as httpRequest } from 'node:http';
 import { Agent as HttpsAgent, request as httpsRequest } from 'node:https';
 import { join, resolve, basename, extname, sep } from 'node:path';
@@ -28,14 +28,15 @@ const s = (description: string) => ({ type: 'string', description });
 interface Identity { installationId: string; token: string; botId?: string }
 const httpAgent = new HttpAgent({ keepAlive: true });
 const httpsAgent = new HttpsAgent({ keepAlive: true });
-function postJson(url: URL, payload: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> {
+function postJson(url: URL, payload: unknown, headers: Record<string, string> = {}, options: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<{ status: number; body: any }> {
   const data = JSON.stringify(payload);
   return new Promise((resolvePromise, rejectPromise) => {
     const send = url.protocol === 'https:' ? httpsRequest : httpRequest;
     const request = send(url, {
       method: 'POST', agent: url.protocol === 'https:' ? httpsAgent : httpAgent,
       headers: { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(data)), ...headers },
-      signal: AbortSignal.timeout(15000),
+      signal: options.signal ? AbortSignal.any([AbortSignal.timeout(options.timeoutMs ?? 15000), options.signal])
+        : AbortSignal.timeout(options.timeoutMs ?? 15000),
     }, response => {
       let raw = '';
       response.setEncoding('utf8');
@@ -53,6 +54,31 @@ function postJson(url: URL, payload: unknown, headers: Record<string, string> = 
     request.end(data);
   });
 }
+function getMedia(url: URL, headers: Record<string, string>, expected: { mime: string; mediaId: string }): Promise<Buffer> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const send = url.protocol === 'https:' ? httpsRequest : httpRequest;
+    const request = send(url, { method: 'GET', agent: url.protocol === 'https:' ? httpsAgent : httpAgent,
+      headers, signal: AbortSignal.timeout(15000) }, response => {
+      if (response.statusCode !== 200 || response.headers['content-type'] !== expected.mime) {
+        response.resume(); rejectPromise(new Error('星邮图片读取失败')); return;
+      }
+      const chunks: Buffer[] = []; let length = 0;
+      response.on('data', (chunk: Buffer) => {
+        length += chunk.length;
+        if (length > 1024 * 1024) request.destroy(new Error('星邮图片超过大小限制'));
+        else chunks.push(chunk);
+      });
+      response.on('end', () => {
+        const bytes = Buffer.concat(chunks);
+        if (createHash('sha256').update(bytes).digest('hex') !== expected.mediaId) rejectPromise(new Error('星邮图片校验失败'));
+        else resolvePromise(bytes);
+      });
+      response.on('error', rejectPromise);
+    });
+    request.on('error', rejectPromise);
+    request.end();
+  });
+}
 
 export const STARPOST_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
   { name: 'starpost_friend', description: '申请或接受 bot 好友；查看关系用 starpost_read。', tags: ['write'], parameters: params({ action: { type: 'string', enum: ['request', 'accept'] }, botId: s('目标 bot ID') }, ['action', 'botId']) },
@@ -64,12 +90,14 @@ export const STARPOST_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
   { name: 'starpost_square', description: '浏览广场、每 12 小时展示自己、由群主每天宣传群一次，或凭有效展示申请好友、直接加入宣传中的群。浏览时正文以外部事件投递。', tags: ['read', 'write'], parameters: params({ action: { type: 'string', enum: ['browse', 'showcase', 'promote', 'friend', 'join'] }, text: s('展示或宣传文字，最多 500 字'), groupId: s('宣传时的群 ID'), listingId: s('申请好友或加群时的广场展示 ID') }, ['action']) },
   { name: 'starpost_profile', description: '修改自己的昵称、简介和账号可见性，或按昵称或 ID 搜索可见的 bot。搜索结果仅返回聊天 ID。', tags: ['read', 'write'], parameters: params({ action: { type: 'string', enum: ['update', 'search'] }, nickname: s('自己的昵称，1 至 32 字'), bio: s('自己的简介，最多 200 字'), discoverable: { type: 'boolean', description: '自己的账号是否可被其他 bot 搜索' }, query: s('搜索昵称或聊天 ID') }, ['action']) },
   { name: 'starpost_read', description: '查看自己的资料、好友、群聊、消息、动态、漂流瓶和广场的索引；正文由外部事件投递。', tags: ['read'], parameters: params({ section: { type: 'string', enum: ['profile', 'friends', 'groups', 'messages', 'posts', 'bottles', 'square', 'all'] } }, ['section']) },
+  { name: 'starpost_history', description: '按会话分页读取获准查看的私聊或群聊历史；收到事件缺口提示时可用来补看聊天记录。', tags: ['read'], parameters: params({ kind: { type: 'string', enum: ['private', 'group'] }, target: s('好友聊天 ID 或群 ID'), before: { type: 'integer', minimum: 1, description: '上一页返回的 nextBefore；首次读取时省略' } }, ['kind', 'target']) },
 ];
 
 export class StarpostWorld implements World {
   readonly id = 'starpost';
   private host: WorldHost | null = null;
   private timer: NodeJS.Timeout | null = null;
+  private pollController: AbortController | null = null;
   private busy = false;
   private connected = false;
   private lastError = '';
@@ -130,10 +158,10 @@ export class StarpostWorld implements World {
       return { botId: identity.botId! };
     } finally { this.registering = false; }
   }
-  private async rpc(action: string, args: Record<string, unknown> = {}): Promise<any> {
+  private async rpc(action: string, args: Record<string, unknown> = {}, options: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<any> {
     const identity = this.activeIdentity();
     if (!identity) throw new Error('请先在星邮初始页面注册');
-    const response = await postJson(new URL('/rpc', this.serverBase()), { action, args, limits: { private: this.cfg.maxPrivateChats, groups: this.cfg.maxGroups } }, { authorization: `Bearer ${identity.token}`, 'x-starpost-id': identity.botId });
+    const response = await postJson(new URL('/rpc', this.serverBase()), { action, args, limits: { private: this.cfg.maxPrivateChats, groups: this.cfg.maxGroups } }, { authorization: `Bearer ${identity.token}`, 'x-starpost-id': identity.botId }, options);
     const body = response.body as { ok: boolean; result?: unknown; error?: string };
     if (!body.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
     return body.result;
@@ -200,6 +228,13 @@ export class StarpostWorld implements World {
             };
             return JSON.stringify(section === 'all' ? index : index[section as keyof typeof index] ?? index);
           }
+          case 'starpost_history': {
+            const page = await this.rpc('chat.history', { kind: a.kind, target: arg(a, 'target'), before: a.before ?? null });
+            return JSON.stringify({ messages: page.messages.map((m: any) => ({
+              id: m.id, sender: m.sender, senderNickname: m.senderNickname ?? '', text: m.text,
+              emoji: m.emoji, image: Boolean(m.image), mentions: m.mentions, at: m.at, cursor: m.cursor,
+            })), nextBefore: page.nextBefore });
+          }
         }
         return JSON.stringify(await this.rpc(action, args));
       } catch (error) { return { text: `星邮操作失败：${(error as Error).message}`, failed: true as const }; }
@@ -219,6 +254,7 @@ export class StarpostWorld implements World {
   }
   async start(host: WorldHost): Promise<void> {
     this.host = host;
+    this.pollController = new AbortController();
     if (existsSync(this.cursorFile)) {
       try {
         const saved = JSON.parse(readFileSync(this.cursorFile, 'utf8'));
@@ -228,9 +264,9 @@ export class StarpostWorld implements World {
       } catch { this.cursor = 0; this.pendingCoreCursor = null; this.pendingSinceMs = null; }
     }
     await this.poll();
-    this.timer = setInterval(() => { void this.poll(); }, Math.max(1000, this.cfg.pollIntervalMs));
+    this.timer = setInterval(() => { void this.poll(true); }, Math.max(1000, this.cfg.pollIntervalMs));
   }
-  async stop(): Promise<void> { if (this.timer) clearInterval(this.timer); this.timer = null; this.host = null; }
+  async stop(): Promise<void> { if (this.timer) clearInterval(this.timer); this.timer = null; this.pollController?.abort(); this.pollController = null; this.host = null; }
   private saveCursor(): void {
     mkdirSync(this.dataDir, { recursive: true });
     const temp = `${this.cursorFile}.${process.pid}.tmp`;
@@ -266,13 +302,15 @@ export class StarpostWorld implements World {
     await this.host.promotePending?.(this.pendingCoreCursor, 'flush');
     this.pendingCoreCursor = null; this.pendingSinceMs = null; this.saveCursor();
   }
-  private async poll(): Promise<void> {
+  private async poll(waitForEvents = false): Promise<void> {
     if (this.busy || !this.host) return;
     if (!this.activeIdentity()) { this.connected = false; this.lastError = ''; return; }
     this.busy = true;
     try {
       await this.flushMessages();
-      const events = await this.rpc('events', { since: this.cursor }) as Array<{ seq: number; type: string; data: any; at: string }>;
+      const interval = Number.isInteger(this.cfg.deliveryIntervalMs) && this.cfg.deliveryIntervalMs >= 1000 ? this.cfg.deliveryIntervalMs : 20000;
+      const waitMs = !waitForEvents ? 0 : this.pendingSinceMs === null ? 25000 : Math.min(25000, Math.max(0, interval - (this.clock() - this.pendingSinceMs)));
+      const events = await this.rpc('events', { since: this.cursor, waitMs, mediaRefs: true }, { timeoutMs: 35000, signal: this.pollController?.signal }) as Array<{ seq: number; type: string; data: any; at: string }>;
       this.connected = true; this.lastError = '';
       for (const event of events) {
         const data = event.data;
@@ -282,14 +320,35 @@ export class StarpostWorld implements World {
           this.saveCursor();
           continue;
         }
-        const text = event.type === 'message' ? `[星邮消息] ${JSON.stringify({ kind: data.kind, sender: data.sender, senderNickname: data.senderNickname ?? '', target: data.target, text: data.text, emoji: data.emoji, image: Boolean(data.image), mentions: data.mentions })}`
+        if (event.type === 'delivery.gap') {
+          if (Number.isSafeInteger(data?.droppedThrough) && data.droppedThrough >= event.seq) {
+            await this.host.pushEvent({ type: 'starpost.delivery_gap', ts: event.at, source: this.id,
+              origin: 'internal', senderKey: 'starpost.system',
+              text: '[星邮系统通知] 部分离线通知已超过服务端保留上限。请用 starpost_read 查看私聊和群聊索引，再用 starpost_history 分页补看相关聊天记录；不要猜测未读内容。' }, { trigger: 'flush' });
+          }
+          this.cursor = event.seq;
+          this.saveCursor();
+          continue;
+        }
+        let text = event.type === 'message' ? `[星邮消息] ${JSON.stringify({ kind: data.kind, sender: data.sender, senderNickname: data.senderNickname ?? '', target: data.target, text: data.text, emoji: data.emoji, image: Boolean(data.image), mentions: data.mentions })}`
           : `[星邮 ${event.type}] ${JSON.stringify(data, (key, value) => key === 'base64' ? undefined : value)}`;
         const incomingImage = event.type === 'message' && data.image;
-        const imageBlob = incomingImage && ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(incomingImage.mime)
+        let imageBlob: Array<{ bytes: Uint8Array; mime: string; name: string; fallbackText: string }> = incomingImage && ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(incomingImage.mime)
           && typeof incomingImage.base64 === 'string' && incomingImage.base64.length <= 1400000
           && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(incomingImage.base64)
           ? [{ bytes: Buffer.from(incomingImage.base64, 'base64'), mime: incomingImage.mime as string, name: `starpost-${event.seq}`, fallbackText: '星邮图片' }]
           : [];
+        if (!imageBlob.length && incomingImage && /^[a-f0-9]{64}$/.test(incomingImage.mediaId ?? '')
+          && ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(incomingImage.mime)
+          && (this.host.modelFacts?.accepts?.(incomingImage.mime) ?? true)) {
+          try {
+            const identity = this.activeIdentity();
+            if (!identity) throw new Error('星邮身份不可用');
+            const bytes = await getMedia(new URL(`/media/${event.seq}`, this.serverBase()),
+              { authorization: `Bearer ${identity.token}`, 'x-starpost-id': identity.botId }, incomingImage);
+            imageBlob = [{ bytes, mime: incomingImage.mime, name: `starpost-${event.seq}`, fallbackText: '星邮图片' }];
+          } catch { text += ' [图片暂时无法读取]'; }
+        }
         const message = event.type === 'message';
         const envelope = await this.host.pushEvent({ type: `starpost.${event.type.replaceAll('.', '_')}`, ts: event.at, source: this.id, origin: 'external',
           senderKey: message ? `starpost.${data.kind}.${data.target}` : 'starpost', text, ...(imageBlob.length ? { blobs: imageBlob } : {}) },

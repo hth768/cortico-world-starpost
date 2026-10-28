@@ -43,6 +43,13 @@ export class StarpostStorage {
         CREATE INDEX IF NOT EXISTS members_bot ON members(bot_id, group_id);
         CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY AUTOINCREMENT, recipient TEXT NOT NULL, type TEXT NOT NULL, at TEXT NOT NULL, data TEXT NOT NULL CHECK(json_valid(data)));
         CREATE INDEX IF NOT EXISTS events_recipient ON events(recipient, seq);
+        CREATE INDEX IF NOT EXISTS events_at ON events(at);
+        CREATE TABLE IF NOT EXISTS event_delivery (
+          recipient TEXT PRIMARY KEY,
+          ack_seq INTEGER NOT NULL DEFAULT 0,
+          dropped_through INTEGER NOT NULL DEFAULT 0,
+          dropped_count INTEGER NOT NULL DEFAULT 0
+        );
       `);
       const version = this.get('meta', 'schema');
       if (version !== undefined && version !== 1) throw new Error(`不支持的星邮数据库版本：${version}`);
@@ -63,14 +70,21 @@ export class StarpostStorage {
   transaction(fn) {
     this.db.exec('BEGIN IMMEDIATE');
     this.pendingMedia = [];
+    this.pendingRecipients = new Set();
     let committing = false;
-    try { const result = fn(); committing = true; this.db.exec('COMMIT'); return result; }
+    try {
+      const result = fn(); committing = true; this.db.exec('COMMIT');
+      if (this.pendingRecipients.size) {
+        try { this.onEmit?.([...this.pendingRecipients]); } catch { /* Long polls still wake at their deadline. */ }
+      }
+      return result;
+    }
     catch (error) {
       try { this.db.exec('ROLLBACK'); } catch { /* SQLite can already have rolled back after an I/O error. */ }
       // Leave files in place after an ambiguous COMMIT failure; a spare file is safer than a broken reference.
       if (!committing) for (const path of this.pendingMedia) { try { unlinkSync(path); } catch {} }
       throw error;
-    } finally { this.pendingMedia = undefined; }
+    } finally { this.pendingMedia = undefined; this.pendingRecipients = undefined; }
   }
   get(collection, key) {
     const row = this.statement('SELECT data FROM documents WHERE collection=? AND key=?').get(collection, String(key));
@@ -146,11 +160,57 @@ export class StarpostStorage {
     const insert = this.statement('INSERT INTO events(recipient,type,at,data) VALUES(?,?,?,?)');
     const json = JSON.stringify(this.externalize(data));
     for (const who of recipients) insert.run(who, type, at, json);
-    this.statement('DELETE FROM events WHERE seq <= (SELECT coalesce(max(seq),0)-20000 FROM events)').run();
+    if (this.pendingRecipients) for (const who of recipients) this.pendingRecipients.add(who);
+    else this.onEmit?.(recipients);
+  }
+  deliveryState(who) {
+    return this.statement('SELECT ack_seq,dropped_through,dropped_count FROM event_delivery WHERE recipient=?').get(who)
+      ?? { ack_seq: 0, dropped_through: 0, dropped_count: 0 };
+  }
+  needsAck(who, since) { return since > this.deliveryState(who).ack_seq; }
+  ackEvents(who, since) {
+    if (!Number.isSafeInteger(since) || since < 0) throw new Error('事件游标不合法');
+    if (!this.needsAck(who, since)) return false;
+    this.statement('INSERT INTO event_delivery(recipient,ack_seq) VALUES(?,?) ON CONFLICT(recipient) DO UPDATE SET ack_seq=max(ack_seq,excluded.ack_seq)').run(who, since);
+    this.statement('DELETE FROM events WHERE recipient=? AND seq<=?').run(who, since);
+    return true;
+  }
+  markDropped(who, through, count) {
+    this.statement(`INSERT INTO event_delivery(recipient,dropped_through,dropped_count) VALUES(?,?,?)
+      ON CONFLICT(recipient) DO UPDATE SET dropped_through=max(dropped_through,excluded.dropped_through),
+      dropped_count=dropped_count+excluded.dropped_count`).run(who, through, count);
+  }
+  pruneEvents(now = Date.now(), maxAgeMs = 72 * 60 * 60 * 1000, perRecipientLimit = 50000) {
+    const cutoff = new Date(now - maxAgeMs).toISOString();
+    return this.transaction(() => {
+      let removed = 0;
+      for (const row of this.statement('SELECT recipient,max(seq) AS through,count(*) AS n FROM events WHERE at<? GROUP BY recipient').all(cutoff)) {
+        this.markDropped(row.recipient, row.through, row.n);
+        removed += row.n;
+      }
+      this.statement('DELETE FROM events WHERE at<?').run(cutoff);
+      for (const { recipient } of this.statement('SELECT DISTINCT recipient FROM events').all()) {
+        const floor = this.statement('SELECT seq FROM events WHERE recipient=? ORDER BY seq DESC LIMIT 1 OFFSET ?').get(recipient, perRecipientLimit - 1)?.seq;
+        if (floor === undefined) continue;
+        const drop = this.statement('SELECT max(seq) AS through,count(*) AS n FROM events WHERE recipient=? AND seq<?').get(recipient, floor);
+        if (!drop.n) continue;
+        this.markDropped(recipient, drop.through, drop.n);
+        this.statement('DELETE FROM events WHERE recipient=? AND seq<?').run(recipient, floor);
+        removed += drop.n;
+      }
+      return removed;
+    });
   }
   events(who, since) {
-    return this.statement('SELECT seq,type,at,data FROM events WHERE recipient=? AND seq>? ORDER BY seq LIMIT 100')
+    const rows = this.statement('SELECT seq,type,at,data FROM events WHERE recipient=? AND seq>? ORDER BY seq LIMIT 100')
       .all(who, since).map(row => ({ seq: row.seq, to: who, type: row.type, at: row.at, data: JSON.parse(row.data) }));
+    const state = this.deliveryState(who);
+    if (state.dropped_through > since) {
+      rows.push({ seq: state.dropped_through, to: who, type: 'delivery.gap', at: new Date().toISOString(),
+        data: { droppedThrough: state.dropped_through, droppedCount: state.dropped_count } });
+      rows.sort((a, b) => a.seq - b.seq);
+    }
+    return rows.slice(0, 100);
   }
   externalize(value) {
     if (!value || typeof value !== 'object') return value;
@@ -174,14 +234,16 @@ export class StarpostStorage {
     if (!/^[a-f0-9]{64}$/.test(image.mediaId) || !extensions[image.mime]) throw new Error('无效图片引用');
     return join(this.mediaDir, `${image.mediaId}.${extensions[image.mime]}`);
   }
-  hydrate(value, cache = new Map()) {
+  hydrate(value, cache = new Map(), mediaRefs = false) {
     if (!value || typeof value !== 'object') return value;
     if (value.mediaId !== undefined) {
+      if (mediaRefs) { this.mediaPath(value); return { mime: value.mime, mediaId: value.mediaId }; }
       const path = this.mediaPath(value);
       if (!cache.has(path)) cache.set(path, readFileSync(path).toString('base64'));
       return { mime: value.mime, base64: cache.get(path) };
     }
-    return Array.isArray(value) ? value.map(item => this.hydrate(item, cache)) : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, this.hydrate(item, cache)]));
+    return Array.isArray(value) ? value.map(item => this.hydrate(item, cache, mediaRefs))
+      : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, this.hydrate(item, cache, mediaRefs)]));
   }
   importLegacy(state) {
     if (!state || typeof state !== 'object' || Array.isArray(state)) throw new Error('旧数据格式不合法');

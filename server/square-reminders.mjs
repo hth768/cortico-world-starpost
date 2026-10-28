@@ -54,6 +54,11 @@ export class SquareReminders {
     return this.store.count('squareReminders', "owner=? AND kind='pending' AND at<=?", [who, new Date(now).toISOString()]) > 0;
   }
 
+  nextDueMs(who, now) {
+    const row = this.store.statement("SELECT min(at) AS next FROM documents WHERE collection='squareReminders' AND owner=? AND kind='pending'").get(who);
+    return row?.next ? Math.max(0, Date.parse(row.next) - now) : Infinity;
+  }
+
   deliver(who, now, discoverable) {
     const due = this.store.list('squareReminders', "owner=? AND kind='pending' AND at<=?", [who, new Date(now).toISOString()], { limit: -1 });
     for (const reminder of due) {
