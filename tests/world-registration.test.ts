@@ -131,14 +131,14 @@ test('本机星邮版本变化只发一次内部更新通知', async () => {
   const key = 'a'.repeat(32), app = createStarpostServer({ file: join(dir, 'relay.json'), keys: { 10001: key }, port: 0 });
   await app.listen();
   const config = { ...structuredClone(STARPOST_DEFAULTS), enabled: true, botId: '10001', serverUrl: `http://127.0.0.1:${(app.server.address() as { port: number }).port}` };
-  const world = () => new StarpostWorld(config, dir, dir, dir, 'Asia/Shanghai', () => key);
+  let extensionVersion = '0.7.0';
+  const world = () => new StarpostWorld(config, dir, dir, dir, 'Asia/Shanghai', () => key, Date.now, () => extensionVersion);
   const notices: Array<{ type: string; origin: string; senderKey: string; text: string; trigger?: string }> = [];
   const host = { pushEvent: async (event: { type: string; origin: string; senderKey: string; text: string }, opts?: { trigger?: string }) => {
     notices.push({ ...event, trigger: opts?.trigger }); return { cursor: notices.length };
   } } as never;
   let receiver = world();
   try {
-    writeFileSync(join(dir, 'package.json'), JSON.stringify({ version: '0.7.0' }));
     await receiver.start(host); await receiver.stop();
     assert.equal(notices.length, 1);
     assert.equal(notices[0].type, 'starpost.updated'); assert.equal(notices[0].origin, 'internal');
@@ -146,9 +146,13 @@ test('本机星邮版本变化只发一次内部更新通知', async () => {
     assert.match(notices[0].text, /提醒你的人类用户/);
     receiver = world(); await receiver.start(host); await receiver.stop();
     assert.equal(notices.length, 1);
-    writeFileSync(join(dir, 'package.json'), JSON.stringify({ version: '0.8.0' }));
+    extensionVersion = '0.8.1';
     receiver = world(); await receiver.start(host); await receiver.stop();
-    assert.equal(notices.length, 2); assert.match(notices[1].text, /0\.8\.0/);
-    assert.equal(JSON.parse(readFileSync(join(dir, 'starpost-version-notice.json'), 'utf8')).version, '0.8.0');
+    assert.equal(notices.length, 2); assert.match(notices[1].text, /0\.8\.1/);
+    assert.equal(JSON.parse(readFileSync(join(dir, 'starpost-version-notice.json'), 'utf8')).version, '0.8.1');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ version: '0.0.0' }));
+    receiver = new StarpostWorld(config, dir, dir, join(dir, 'actual-package'), 'Asia/Shanghai', () => key);
+    await receiver.start(host); await receiver.stop();
+    assert.match(notices[2].text, /0\.8\.1/);
   } finally { await receiver.stop(); await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });

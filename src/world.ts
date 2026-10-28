@@ -10,6 +10,7 @@ import { STARPOST_CONFIG_GROUP } from './config.ts';
 
 const ENV_PROMPT_FILE = fileURLToPath(new URL('./ENV_PROMPT.md', import.meta.url));
 const DEFAULT_EMOJI_DIR = fileURLToPath(new URL('../emoji/', import.meta.url));
+const STARPOST_PACKAGE_FILE = fileURLToPath(new URL('../package.json', import.meta.url));
 const arg = (o: Record<string, unknown>, key: string) => String(o[key] ?? '');
 const params = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object' as const, additionalProperties: false, properties, required });
 const s = (description: string) => ({ type: 'string', description });
@@ -69,7 +70,7 @@ export class StarpostWorld implements World {
   private pendingCoreCursor: number | null = null;
   private pendingSinceMs: number | null = null;
   private registering = false;
-  constructor(private readonly cfg: StarpostConfigSection, private readonly botDir: string, private readonly packageDir: string, private readonly dataDir: string, private readonly timezone: string, private readonly secret: (name: string) => string, private readonly clock: () => number = Date.now) {
+  constructor(private readonly cfg: StarpostConfigSection, private readonly botDir: string, _packageDir: string, private readonly dataDir: string, private readonly timezone: string, private readonly secret: (name: string) => string, private readonly clock: () => number = Date.now, private readonly extensionVersion: () => unknown = () => JSON.parse(readFileSync(STARPOST_PACKAGE_FILE, 'utf8')).version) {
     this.cursorFile = join(dataDir, 'starpost-cursor.json');
     this.identityFile = join(dataDir, 'starpost-identity.json');
     this.versionNoticeFile = join(dataDir, 'starpost-version-notice.json');
@@ -227,7 +228,7 @@ export class StarpostWorld implements World {
   }
   private async announceUpdate(): Promise<void> {
     let version = '';
-    try { version = JSON.parse(readFileSync(join(this.packageDir, 'package.json'), 'utf8')).version; } catch { return; }
+    try { version = this.extensionVersion() as string; } catch { return; }
     if (typeof version !== 'string' || !/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(version)) return;
     let previous = '';
     try { previous = JSON.parse(readFileSync(this.versionNoticeFile, 'utf8')).version; } catch {}
