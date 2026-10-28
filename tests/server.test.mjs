@@ -166,3 +166,43 @@ test('广场展示配额、凭展示入群与漂流瓶好友申请', async () =>
     assert.ok((await rpc('10001', 'square.promote', { groupId, text: '新一天宣传' })).result.listingId);
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('现有群直接拉好友、聊天记录按会话分页且默认每分钟六条', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'starpost-chat-'));
+  const keys = Object.fromEntries(Array.from({ length: 4 }, (_, i) => [String(10001 + i), String.fromCharCode(97 + i).repeat(32)]));
+  const app = createStarpostServer({ file: join(dir, 'data.json'), keys, port: 0 }); await app.listen();
+  const base = `http://127.0.0.1:${app.server.address().port}`;
+  const rpc = async (who, action, args = {}, limits) => {
+    const response = await fetch(`${base}/rpc`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-starpost-id': who, authorization: `Bearer ${keys[who]}` }, body: JSON.stringify({ action, args, ...(limits ? { limits } : {}) }) });
+    return { status: response.status, ...(await response.json()) };
+  };
+  try {
+    await rpc('10001', 'friend.request', { to: '10002' }); await rpc('10002', 'friend.accept', { from: '10001' });
+    await rpc('10001', 'friend.request', { to: '10003' }); await rpc('10003', 'friend.accept', { from: '10001' });
+    const groupId = (await rpc('10001', 'group.create', { name: '原群', members: ['10002'] })).result.id;
+    assert.equal((await rpc('10002', 'group.invite', { groupId, botId: '10003' })).status, 403);
+    assert.equal((await rpc('10001', 'group.invite', { groupId, botId: '10004' })).status, 403);
+    assert.equal((await rpc('10001', 'group.invite', { groupId, botId: '10003' })).result.groupId, groupId);
+    assert.equal((await rpc('10003', 'snapshot')).result.groups[0].id, groupId);
+    assert.equal((await rpc('10001', 'snapshot')).result.groups.length, 1);
+    assert.equal((await rpc('10001', 'group.invite', { groupId, botId: '10003' })).ok, false);
+    assert.ok((await rpc('10003', 'events')).result.some(e => e.type === 'group.joined' && e.data.invitedBy === '10001'));
+    for (let i = 0; i < 6; i++) assert.equal((await rpc('10001', 'message.send', { kind: 'group', target: groupId, text: `第${i}条`, maxConsecutiveBotTurns: 100 })).ok, true);
+    assert.equal((await rpc('10001', 'message.send', { kind: 'group', target: groupId, text: '第七条', maxConsecutiveBotTurns: 100 })).ok, false);
+    const image = { mime: 'image/png', base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lX8AAAAASUVORK5CYII=' };
+    for (let i = 0; i < 20; i++) assert.equal((await rpc('10001', 'message.send', { kind: 'private', target: '10002', text: `私聊${i}`, ...(i === 0 ? { image } : {}), maxConsecutiveBotTurns: 100 })).ok, true);
+    const first = (await rpc('10002', 'chat.history', { kind: 'private', target: '10001' })).result;
+    assert.equal(first.messages.length, 15); assert.ok(first.nextBefore); assert.equal(first.nextAfter, null);
+    const older = (await rpc('10002', 'chat.history', { kind: 'private', target: '10001', before: first.nextBefore })).result;
+    assert.equal(older.messages.length, 5); assert.equal(older.nextBefore, null);
+    assert.deepEqual(older.messages[0].image, image);
+    const newer = (await rpc('10002', 'chat.history', { kind: 'private', target: '10001', after: older.messages.at(-1).cursor })).result;
+    assert.equal(newer.messages.length, 15); assert.equal(newer.messages[0].text, '私聊5');
+    assert.equal((await rpc('10004', 'chat.history', { kind: 'private', target: '10001' })).status, 403);
+    assert.equal((await rpc('10004', 'chat.history', { kind: 'group', target: groupId })).status, 404);
+    const overview = (await rpc('10002', 'snapshot', { omitMessages: true })).result;
+    assert.equal(overview.messages.length, 0);
+    assert.ok(overview.conversations.some(c => c.kind === 'group' && c.target === groupId));
+    assert.ok(overview.conversations.some(c => c.kind === 'private' && c.target === '10001' && c.latest.text === '私聊19'));
+  } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
+});

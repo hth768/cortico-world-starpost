@@ -116,18 +116,44 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     if (!entry || entry.kind !== kind || !squareActive(entry)) fail('广场展示不存在或已过期', 404);
     return entry;
   }
-  function snapshot(who) {
+  function snapshot(who, omitMessages = false) {
     const fs = friends(who);
     const authors = [who, ...fs];
     const posts = store.posts(authors)
       .map(p => ({ ...p, comments: store.list('comments', 'target=?', [p.id], { limit: 200, reverse: true }).reverse().map(({ postId, ...comment }) => comment) }));
+    const conversations = [
+      ...fs.map(target => ({ kind: 'private', target, scope: `private:${[who, target].sort().join(':')}` })),
+      ...store.groups(who).map(g => ({ kind: 'group', target: g.id, scope: `group:${g.id}` })),
+    ].map(({ kind, target, scope }) => {
+      const latest = store.list('messages', 'scope=?', [scope], { limit: 1, reverse: true })[0];
+      return { kind, target, latest: latest ? { sender: latest.sender, text: latest.text, emoji: latest.emoji, hasImage: Boolean(latest.image), at: latest.at } : null };
+    });
     return { botId: who, profile: profile(who), friendProfiles: fs.map(profile), friends: fs, requests: store.list('requests', 'target=?', [who], { limit: -1 }), groups: store.groups(who),
-      messages: store.messages(who).map(withSenderNickname), posts, bottles: store.bottles(who), square: squareList() };
+      messages: omitMessages ? [] : store.messages(who).map(withSenderNickname), conversations, posts, bottles: store.bottles(who), square: squareList() };
+  }
+  function chatHistory(who, args) {
+    const kind = args.kind === 'private' ? 'private' : args.kind === 'group' ? 'group' : fail('消息类型不合法');
+    const target = str(args.target, 100);
+    if (kind === 'private' && !friends(who).includes(id(target))) fail('只能查看好友私聊', 403);
+    if (kind === 'group') group(who, target);
+    const before = args.before == null ? Number.MAX_SAFE_INTEGER : args.before;
+    const after = args.after == null ? null : args.after;
+    if (!Number.isSafeInteger(before) || before < 1 || (after !== null && (!Number.isSafeInteger(after) || after < 1)) || (after !== null && args.before != null)) fail('消息游标不合法');
+    const scope = kind === 'group' ? `group:${target}` : `private:${[who, target].sort().join(':')}`;
+    const rows = after === null
+      ? store.statement("SELECT rowid,data FROM documents WHERE collection='messages' AND scope=? AND rowid<? ORDER BY rowid DESC LIMIT 16").all(scope, before)
+      : store.statement("SELECT rowid,data FROM documents WHERE collection='messages' AND scope=? AND rowid>? ORDER BY rowid ASC LIMIT 16").all(scope, after);
+    const page = rows.slice(0, 15), hasMore = rows.length > 15;
+    if (after === null) page.reverse();
+    return { messages: page.map(row => ({ ...withSenderNickname(JSON.parse(row.data)), cursor: row.rowid })),
+      nextBefore: after === null && hasMore ? page[0].rowid : null,
+      nextAfter: after !== null && hasMore ? page.at(-1).rowid : null };
   }
   function rpc(who, action, args = {}) {
     const now = clock();
     switch (action) {
-      case 'snapshot': return snapshot(who);
+      case 'snapshot': return snapshot(who, args.omitMessages === true);
+      case 'chat.history': return chatHistory(who, args);
       case 'events': return store.events(who, number(args.since, 0, 0, Number.MAX_SAFE_INTEGER))
         .map(event => event.type === 'message' ? { ...event, data: withSenderNickname(event.data) } : event);
       case 'square.list': return squareList();
@@ -214,6 +240,18 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         const g = { id: randomUUID(), name: str(args.name, 80).trim(), owner: who, members, createdAt: new Date().toISOString() };
         if (!g.name) fail('群名不能为空'); store.saveGroup(g); emit(members, 'group.created', g); return g;
       }
+      case 'group.invite': {
+        const g = group(who, str(args.groupId, 100)), invitee = id(args.botId);
+        if (!isKnown(invitee)) fail('目标 bot 不存在');
+        if (g.members.includes(invitee)) fail('目标已在群聊中');
+        if (!friends(who).includes(invitee)) fail('只能邀请自己的好友', 403);
+        if (g.members.length >= 50) fail('群人数已达上限');
+        if (store.groupCount(invitee) >= (store.get('limits', invitee)?.groups ?? 5)) fail('对方群聊上限已满');
+        g.members.push(invitee);
+        store.saveGroup(g);
+        emit(g.members, 'group.joined', { groupId: g.id, botId: invitee, invitedBy: who });
+        return { groupId: g.id, botId: invitee };
+      }
       case 'group.leave': {
         const g = group(who, str(args.groupId, 100)); g.members = g.members.filter(x => x !== who);
         if (!g.members.length) store.removeGroup(g.id);
@@ -242,7 +280,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         const idleSec = number(args.idleToEndSec, 300, 0, 86400);
         if (idleSec && history.length && lastOther && now - Date.parse(lastOther.at) > idleSec * 1000 && history[0].sender === who) fail('对方静默，话题收尾');
         if (g) {
-          const windowSec = number(args.windowSec, 60, 1, 86400), max = number(args.maxPerWindow, 12, 1, 1000);
+          const windowSec = number(args.windowSec, 60, 1, 86400), max = number(args.maxPerWindow, 6, 1, 1000);
           if (store.count('messages', 'scope=? AND owner=? AND at>?', [scope, who, new Date(now - windowSec * 1000).toISOString()]) >= max) fail('群聊发言频率已达上限');
         }
         const m = { id: randomUUID(), kind, target, sender: who, senderNickname: profile(who).nickname, text, emoji, image: picture, mentions, at: new Date().toISOString() };
@@ -325,7 +363,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         if (ready) reminders.deliver(who, observedAt, profile(who).discoverable);
         return rpc(who, action, args ?? {});
       };
-      const readOnly = ['snapshot', 'events', 'square.list', 'directory.search'].includes(action);
+      const readOnly = ['snapshot', 'events', 'chat.history', 'square.list', 'directory.search'].includes(action);
       const result = readOnly && !nextLimits && !ready ? invoke() : store.transaction(invoke);
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: true, result: store.hydrate(result) }));
     } catch (e) { res.writeHead(e.status ?? 400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: false, error: e.message })); }

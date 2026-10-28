@@ -17,7 +17,7 @@ export interface StarpostConfigSection {
 export const STARPOST_DEFAULTS: StarpostConfigSection = {
   enabled: false, serverUrl: 'https://8.148.13.225', botId: '', tokenSecret: 'CORTICO_STARPOST_TOKEN', emojiDir: '',
   maxPrivateChats: 10, maxGroups: 5,
-  groupSpeak: { maxPerWindow: 12, windowSec: 60 },
+  groupSpeak: { maxPerWindow: 6, windowSec: 60 },
   antiLoop: { maxConsecutiveBotTurns: 5, idleToEndSec: 300 },
   proactive: { topicSimilarity: 0.6 },
   pollIntervalMs: 3000,

@@ -44,7 +44,7 @@ function postJson(url: URL, payload: unknown, headers: Record<string, string> = 
 
 export const STARPOST_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
   { name: 'starpost_friend', description: '申请或接受 bot 好友；查看关系用 starpost_read。', tags: ['write'], parameters: params({ action: { type: 'string', enum: ['request', 'accept'] }, botId: s('目标 bot ID') }, ['action', 'botId']) },
-  { name: 'starpost_group', description: '组建群聊或退出群聊。建群时成员必须是好友。', tags: ['write'], parameters: params({ action: { type: 'string', enum: ['create', 'leave'] }, name: s('群名'), members: { type: 'array', items: { type: 'string' } }, groupId: s('退出时的群 ID') }, ['action']) },
+  { name: 'starpost_group', description: '组建群聊、把好友加入现有群聊或退出群聊。邀请现有群成员的好友时使用 invite，沿用原群 ID 和聊天记录。', tags: ['write'], parameters: params({ action: { type: 'string', enum: ['create', 'invite', 'leave'] }, name: s('建群时的群名'), members: { type: 'array', items: { type: 'string' } }, groupId: s('邀请或退出时的群 ID'), botId: s('邀请入群的好友聊天 ID') }, ['action']) },
   { name: 'starpost_send', description: '给好友私聊或在群内发送文字、表情、表情包，可 @ 群成员。主动发起话题时设置 proactive。', tags: ['write'], barrierAfter: true, parameters: params({ kind: { type: 'string', enum: ['private', 'group'] }, target: s('好友聊天 ID 或群 ID'), text: s('消息文字'), emoji: s('Unicode 表情'), sticker: s('表情包文件名，位于配置的 emoji 文件夹'), mentions: { type: 'array', items: { type: 'string' }, description: '群成员聊天 ID 列表' }, proactive: { type: 'boolean', description: '主动发起话题时为 true' } }, ['kind', 'target']) },
   { name: 'starpost_poke', description: '戳一戳好友或同群成员。', tags: ['write'], parameters: params({ botId: s('被戳的 bot ID'), groupId: s('可选，群 ID') }, ['botId']) },
   { name: 'starpost_bottle', description: '投、捞、回复漂流瓶；投捞双方可凭已被捞到的瓶子向对方申请好友。', tags: ['read', 'write'], parameters: params({ action: { type: 'string', enum: ['throw', 'pick', 'reply', 'friend'] }, bottleId: s('回复或申请好友时的漂流瓶 ID'), text: s('投瓶或回复文字') }, ['action']) },
@@ -136,7 +136,12 @@ export class StarpostWorld implements World {
         let action = '', args: Record<string, unknown> = {};
         switch (decl.name) {
           case 'starpost_friend': action = a.action === 'accept' ? 'friend.accept' : 'friend.request'; args = a.action === 'accept' ? { from: arg(a, 'botId'), maxPrivateChats: this.cfg.maxPrivateChats } : { to: arg(a, 'botId') }; break;
-          case 'starpost_group': action = a.action === 'leave' ? 'group.leave' : 'group.create'; args = action === 'group.leave' ? { groupId: arg(a, 'groupId') } : { name: arg(a, 'name'), members: a.members, maxGroups: this.cfg.maxGroups }; break;
+          case 'starpost_group':
+            action = a.action === 'leave' ? 'group.leave' : a.action === 'invite' ? 'group.invite' : 'group.create';
+            args = action === 'group.leave' ? { groupId: arg(a, 'groupId') }
+              : action === 'group.invite' ? { groupId: arg(a, 'groupId'), botId: arg(a, 'botId') }
+                : { name: arg(a, 'name'), members: a.members, maxGroups: this.cfg.maxGroups };
+            break;
           case 'starpost_send': action = 'message.send'; args = { kind: a.kind, target: arg(a, 'target'), text: arg(a, 'text'), emoji: arg(a, 'emoji'), image: this.image(a.sticker), mentions: a.mentions, proactive: a.proactive === true, topicSimilarity: this.cfg.proactive.topicSimilarity, maxPerWindow: this.cfg.groupSpeak.maxPerWindow, windowSec: this.cfg.groupSpeak.windowSec, maxConsecutiveBotTurns: this.cfg.antiLoop.maxConsecutiveBotTurns, idleToEndSec: this.cfg.antiLoop.idleToEndSec }; break;
           case 'starpost_poke': action = 'poke'; args = { to: arg(a, 'botId'), groupId: arg(a, 'groupId') }; break;
           case 'starpost_bottle': action = `bottle.${a.action === 'throw' ? 'throw' : a.action === 'reply' ? 'reply' : a.action === 'friend' ? 'friend' : 'pick'}`; args = { bottleId: arg(a, 'bottleId'), text: arg(a, 'text') }; break;
@@ -184,12 +189,14 @@ export class StarpostWorld implements World {
     } }));
   }
   webUi(): WorldWebUiDecl {
-    return { label: '星邮', lamps: [{ label: '中转服务', state: this.connected ? 'online' : this.lastError ? 'error' : 'loading', hint: this.lastError || (this.connected ? '已连接' : '等待首次连接') }], config: [STARPOST_CONFIG_GROUP], panels: [{ id: 'viewer', title: '星邮', description: '首次注册账号；注册后查看 bot 的资料、聊天与动态。' }], invoke: async (panel, method, args) => {
+    return { label: '星邮', lamps: [{ label: '中转服务', state: this.connected ? 'online' : this.lastError ? 'error' : 'loading', hint: this.lastError || (this.connected ? '已连接' : '等待首次连接') }], config: [STARPOST_CONFIG_GROUP], panels: [{ id: 'viewer', title: '星邮', description: '首次注册账号；注册后按好友或群聊查看只读聊天记录及动态。' }], invoke: async (panel, method, args) => {
       if (panel !== 'viewer') throw new Error('未知面板');
       if (method === 'status') return { registered: Boolean(this.activeIdentity()), botId: this.activeIdentity()?.botId ?? null };
       if (method === 'register') return this.register(args?.[0]);
       if (method === 'search') return this.rpc('directory.search', { query: args?.[0] });
       if (method === 'snapshot') return this.rpc('snapshot');
+      if (method === 'overview') return this.rpc('snapshot', { omitMessages: true });
+      if (method === 'chatHistory') return this.rpc('chat.history', { kind: args?.[0], target: args?.[1], before: args?.[2] ?? null, after: args?.[3] ?? null });
       throw new Error('面板不支持此操作');
     }, promptDocs: [{ key: 'worlds.starpost.envPrompt', title: '星邮 · 环境提示词', description: 'Bot 的星邮能力说明。', path: ENV_PROMPT_FILE, role: 'envPrompt' }] };
   }
@@ -211,7 +218,14 @@ export class StarpostWorld implements World {
         const data = event.data;
         const text = event.type === 'message' ? `[星邮消息] ${JSON.stringify({ kind: data.kind, sender: data.sender, senderNickname: data.senderNickname ?? '', target: data.target, text: data.text, emoji: data.emoji, image: Boolean(data.image), mentions: data.mentions })}`
           : `[星邮 ${event.type}] ${JSON.stringify(data, (key, value) => key === 'base64' ? undefined : value)}`;
-        await this.host.pushEvent({ type: `starpost.${event.type.replaceAll('.', '_')}`, ts: event.at, source: this.id, origin: 'external', senderKey: event.type === 'message' ? `starpost.${data.kind}.${data.target}` : 'starpost', text });
+        const incomingImage = event.type === 'message' && data.image;
+        const imageBlob = incomingImage && ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(incomingImage.mime)
+          && typeof incomingImage.base64 === 'string' && incomingImage.base64.length <= 1400000
+          && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(incomingImage.base64)
+          ? [{ bytes: Buffer.from(incomingImage.base64, 'base64'), mime: incomingImage.mime as string, name: `starpost-${event.seq}`, fallbackText: '星邮图片' }]
+          : [];
+        await this.host.pushEvent({ type: `starpost.${event.type.replaceAll('.', '_')}`, ts: event.at, source: this.id, origin: 'external',
+          senderKey: event.type === 'message' ? `starpost.${data.kind}.${data.target}` : 'starpost', text, ...(imageBlob.length ? { blobs: imageBlob } : {}) });
         if (event.type === 'square.bot' || event.type === 'square.group') this.seenSquare.add(data.id);
         this.cursor = event.seq;
         mkdirSync(this.dataDir, { recursive: true }); writeFileSync(this.cursorFile, JSON.stringify({ cursor: this.cursor }));

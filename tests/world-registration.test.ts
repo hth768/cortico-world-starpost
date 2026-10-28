@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createStarpostServer } from '../server/server.mjs';
@@ -12,7 +12,7 @@ test('初始面板注册后，本机身份与 bot 资料工具可跨重启使用
   const code = 'invite-'.padEnd(40, 'x');
   const app = createStarpostServer({ file: join(dir, 'relay.json'), keys: { 10001: 'a'.repeat(32) }, registrationSecret: code, port: 0 });
   await app.listen();
-  const config = { ...structuredClone(STARPOST_DEFAULTS), enabled: true, serverUrl: `http://127.0.0.1:${(app.server.address() as { port: number }).port}` };
+  const config = { ...structuredClone(STARPOST_DEFAULTS), enabled: true, emojiDir: dir, serverUrl: `http://127.0.0.1:${(app.server.address() as { port: number }).port}` };
   const world = () => new StarpostWorld(config, dir, dir, dir, 'Asia/Shanghai', () => '');
   try {
     const first = world();
@@ -28,7 +28,9 @@ test('初始面板注册后，本机身份与 bot 资料工具可跨重启使用
     const update = await profileTool.handler({ action: 'update', nickname: '小星', bio: '看星星', discoverable: true }, {} as never);
     assert.match(String(update), /小星/);
     app.store.befriend('10001', '10002');
-    const send = await second.tools().find(tool => tool.name === 'starpost_send')!.handler({ kind: 'private', target: '10001', text: '你好' }, {} as never);
+    const stickerBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lX8AAAAASUVORK5CYII=', 'base64');
+    writeFileSync(join(dir, 'sticker.png'), stickerBytes);
+    const send = await second.tools().find(tool => tool.name === 'starpost_send')!.handler({ kind: 'private', target: '10001', text: '你好', sticker: 'sticker.png' }, {} as never);
     assert.ok(JSON.parse(String(send)).id);
     const snapshot = await second.webUi().invoke!('viewer', 'snapshot', []) as { profile: { nickname: string } };
     assert.equal(snapshot.profile.nickname, '小星');
@@ -36,9 +38,9 @@ test('初始面板注册后，本机身份与 bot 资料工具可跨重启使用
     const showcase = await squareTool.handler({ action: 'showcase', text: '来看夜空' }, {} as never);
     const listingId = JSON.parse(String(showcase)).listingId;
     assert.ok(listingId);
-    const external: Array<{ type: string; origin: string; text: string }> = [];
+    const external: Array<{ type: string; origin: string; text: string; blobs?: Array<{ bytes: Uint8Array; mime: string }> }> = [];
     const legacy = new StarpostWorld({ ...config, botId: '10001' }, dir, dir, join(dir, 'legacy'), 'Asia/Shanghai', () => 'a'.repeat(32));
-    await legacy.start({ pushEvent: async (event: { type: string; origin: string; text: string }) => { external.push(event); } } as never);
+    await legacy.start({ pushEvent: async (event: { type: string; origin: string; text: string; blobs?: Array<{ bytes: Uint8Array; mime: string }> }) => { external.push(event); } } as never);
     const browse = await legacy.tools().find(tool => tool.name === 'starpost_square')!.handler({ action: 'browse' }, {} as never);
     assert.equal(JSON.parse(String(browse))[0].id, listingId);
     assert.equal(String(browse).includes('来看夜空'), false);
@@ -46,8 +48,10 @@ test('初始面板注册后，本机身份与 bot 资料工具可跨重启使用
     const chat = external.find(event => event.type === 'starpost.message');
     assert.equal(chat?.origin, 'external');
     assert.deepEqual(JSON.parse(chat!.text.slice('[星邮消息] '.length)), {
-      kind: 'private', sender: '10002', senderNickname: '小星', target: '10001', text: '你好', emoji: '', image: false, mentions: [],
+      kind: 'private', sender: '10002', senderNickname: '小星', target: '10001', text: '你好', emoji: '', image: true, mentions: [],
     });
+    assert.equal(chat!.blobs?.[0].mime, 'image/png');
+    assert.deepEqual(Buffer.from(chat!.blobs![0].bytes), stickerBytes);
     await legacy.stop();
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });
