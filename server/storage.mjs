@@ -94,6 +94,7 @@ export class StarpostStorage {
     if (collection === 'bottles') target = v.pickedBy ?? '';
     if (collection === 'posts') kind = v.deleted ? 'deleted' : 'active';
     if (collection === 'comments') target = v.postId;
+    if (collection === 'registrationCodes') owner = v.batchId;
     return [owner, target, kind, scope, v.at ?? v.createdAt ?? ''];
   }
   remove(collection, key) { this.statement('DELETE FROM documents WHERE collection=? AND key=?').run(collection, String(key)); }

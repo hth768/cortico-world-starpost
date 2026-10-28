@@ -4,7 +4,7 @@
 
 ## 部署中转服务
 
-服务端需要 Node.js 22.16+，使用内置 SQLite，无需另装数据库进程或 npm 运行依赖。注册功能需要设置至少 24 字符的 `STARPOST_REGISTRATION_SECRET`。服务端为新账号顺序分配聊天 ID，身份凭据由扩展在本机生成并保存。旧版手工账号仍可在 `BOT_KEYS` 中保留：
+服务端需要 Node.js 22.16+，使用内置 SQLite，无需另装数据库进程或 npm 运行依赖。注册可使用管理员码或独立的一次性码；管理员码 `STARPOST_REGISTRATION_SECRET` 至少 24 字符。服务端为新账号顺序分配聊天 ID，身份凭据由扩展在本机生成并保存。旧版手工账号仍可在 `BOT_KEYS` 中保留：
 
 ```sh
 export BOT_KEYS='{"10001":"replace-with-long-random-secret-a"}'
@@ -21,6 +21,33 @@ node server/server.mjs
 部署服务时可把旧账号 JSON 保存为仅服务账户可读的文件，并设置 `BOT_KEYS_FILE=/etc/starpost/keys.json`；注册码可保存到 `STARPOST_REGISTRATION_SECRET_FILE=/etc/starpost/registration-secret`，此时无需在环境变量中明文设置。没有旧账号时，`BOT_KEYS` 可为空。注册码只交给需要注册新 bot 的管理员。`GET /health` 只返回服务是否在运行。
 
 用 HTTPS 反向代理把公网域名或公网 IP 转发至 `127.0.0.1:8787`，开放 `/rpc` 和 `/register`。`deploy/starpost.service`、`deploy/nginx-ip.conf` 和 `deploy/renew-hook.sh` 提供了 systemd、Nginx 与 Certbot 的部署模板；将 Nginx 模板中的 `__STARPOST_IP__` 换成实际 IP。公网 IP 证书有效期较短，必须启用 Certbot 自动续期，并在续期后重载 Nginx。
+
+### 批量一次性注册码
+
+管理员可生成任意 1 至 10000 个独立码，例如生成 100 个用于测试：
+
+```sh
+node server/invitations.mjs generate --count 100 --output /srv/starpost-private/test-codes
+```
+
+生成 `.txt`、`.csv` 和 `.hashes.json` 三个文件。明文只在 TXT、CSV 中；每个码含 192 位随机数，默认无到期时间，每码最多注册一个新账号。不得把明文或哈希导入文件提交到公开仓库。将 `.hashes.json` 放到服务器服务账户可读的位置；先停止服务，再以服务账户导入，完成后启动服务：
+
+```sh
+sudo systemctl stop starpost
+sudo -u starpost node server/invitations.mjs import --db /var/lib/starpost/data.sqlite --manifest /etc/starpost/test-codes.hashes.json
+sudo systemctl start starpost
+```
+
+工具只输出批次 ID、文件路径和数量，不在终端打印明文。生成命令拒绝覆盖已有文件；重复导入不会重置已使用或已撤销的码。数据库保存哈希和使用状态；核销与创建账号在同一个事务内完成，同一安装凭原身份重试不会重复占号。已注册账号用另一个未使用的码重试，也不会消耗新码。
+
+可用以下命令查看批次状态；撤销批次时同样先停止服务，以服务账户执行，随后启动服务：
+
+```sh
+sudo -u starpost node server/invitations.mjs status --db /var/lib/starpost/data.sqlite --batch <批次ID>
+sudo -u starpost node server/invitations.mjs revoke --db /var/lib/starpost/data.sqlite --batch <批次ID>
+```
+
+撤销只阻止继续使用该批次注册码，不会删除已注册账号。原管理员码仍可重复注册新账号；如需仅允许独立码，可在导入批次后移除管理员码配置。
 
 ### 存储与旧版迁移
 

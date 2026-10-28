@@ -39,13 +39,13 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
   for (const key of Object.values(keys)) if (typeof key !== 'string' || key.length < 24) fail('每个 bot 密钥至少 24 字符');
   if (new Set(Object.values(keys)).size !== known.size) fail('不同 bot 必须使用不同密钥');
   if (registrationSecret && registrationSecret.length < 24) fail('注册码至少 24 字符');
-  if (!known.size && !registrationSecret) fail('必须设置 BOT_KEYS 或注册码');
   const legacyFile = file.endsWith('.json') ? file : undefined;
   const store = new StarpostStorage({ dbFile: dbFile ?? (legacyFile ? file.replace(/\.json$/, '.sqlite') : file), legacyFile, mediaDir });
   const accountIds = () => store.statement("SELECT key FROM documents WHERE collection='accounts'").all().map(row => row.key);
   const knownIds = () => [...new Set([...known, ...accountIds()])];
   const isKnown = (who) => known.has(who) || store.get('accounts', who) !== undefined;
   try {
+    if (!known.size && !registrationSecret && !store.count('accounts') && !store.count('registrationCodes')) fail('必须设置 BOT_KEYS 或导入注册码');
     for (const botId of accountIds()) { id(botId); if (known.has(botId)) fail('注册账号与 BOT_KEYS 的 ID 冲突'); }
     const next = store.get('meta', 'nextBotId');
     store.transaction(() => store.put('meta', 'nextBotId', Math.max(10001, Number.isSafeInteger(next) ? next : 10001, ...knownIds().map(x => Number(x) + 1))));
@@ -61,12 +61,16 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
   }
   const profile = (who) => ({ botId: who, nickname: '', bio: '', discoverable: true, ...store.get('profiles', who) });
   function register(input) {
-    if (!registrationSecret) fail('此中转服务未开放注册', 503);
-    if (!same(input?.code, registrationSecret)) fail('注册码错误', 403);
+    if (!registrationSecret && !store.count('registrationCodes')) fail('此中转服务未开放注册', 503);
+    const code = str(input?.code, 128);
+    const legacyCode = Boolean(registrationSecret && same(code, registrationSecret));
+    const codeHash = hash(code), invitation = legacyCode ? undefined : store.get('registrationCodes', codeHash);
+    if (!legacyCode && (!invitation || invitation.revoked)) fail('注册码无效或已停用', 403);
     const installationId = str(input?.installationId, 80);
     const token = str(input?.token, 128);
     if (!/^[0-9a-f]{8}-[0-9a-f-]{27,36}$/i.test(installationId) || !/^[a-f0-9]{64}$/i.test(token)) fail('注册凭据格式不合法');
     const existing = store.statement("SELECT key,data FROM documents WHERE collection='accounts' AND target=?").get(installationId);
+    if (invitation?.usedBy && invitation.usedBy !== existing?.key) fail('注册码已经使用', 403);
     if (existing) {
       if (!same(hash(token), JSON.parse(existing.data).tokenHash)) fail('该安装已注册', 409);
       return { botId: existing.key, profile: profile(existing.key) };
@@ -74,6 +78,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     const next = store.get('meta', 'nextBotId'), botId = id(String(next));
     store.put('meta', 'nextBotId', next + 1);
     store.put('accounts', botId, { installationId, tokenHash: hash(token), createdAt: new Date().toISOString() });
+    if (invitation) store.put('registrationCodes', codeHash, { ...invitation, usedBy: botId, usedAt: new Date().toISOString() });
     return { botId, profile: profile(botId) };
   }
   const friends = (who) => store.friends(who);
