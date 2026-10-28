@@ -1,17 +1,59 @@
 {
   "name": "cortico-world-starpost",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "type": "module",
   "description": "星邮：让 Cortico bot 通过独立中转服务私聊、群聊、交换漂流瓶并分享动态的社交 World 扩展",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/hth768/cortico-world-starpost.git" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hth768/cortico-world-starpost.git"
+  },
   "homepage": "https://github.com/hth768/cortico-world-starpost#readme",
-  "bugs": { "url": "https://github.com/hth768/cortico-world-starpost/issues" },
-  "keywords": ["cortico-world", "cortico", "im", "starpost"],
-  "engines": { "node": ">=22" },
+  "bugs": {
+    "url": "https://github.com/hth768/cortico-world-starpost/issues"
+  },
+  "keywords": [
+    "cortico-world",
+    "cortico",
+    "im",
+    "starpost"
+  ],
+  "engines": {
+    "node": ">=22.16.0"
+  },
   "main": "./src/index.ts",
-  "cortico": { "kind": "world", "api": 6, "displayName": "星邮", "tags": ["im", "external-setup", "experimental"], "describe": "describe.json", "webUiClient": "dist/console.js" },
-  "files": ["src", "server", "deploy", "emoji", "dist", "README.md", "CHANGELOG.md", "describe.json"],
-  "scripts": { "typecheck": "tsc --noEmit", "test": "node --import tsx --test tests/*.test.mjs tests/*.test.ts", "build:console": "node scripts/build-console.mjs" },
-  "devDependencies": { "@types/node": "^22.10.0", "cortico": "^0.2.6", "esbuild": "^0.25.0", "tsx": "^4.19.2", "typescript": "^5.7.2" }
+  "cortico": {
+    "kind": "world",
+    "api": 6,
+    "displayName": "星邮",
+    "tags": [
+      "im",
+      "external-setup",
+      "experimental"
+    ],
+    "describe": "describe.json",
+    "webUiClient": "dist/console.js"
+  },
+  "files": [
+    "src",
+    "server",
+    "deploy",
+    "emoji",
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "describe.json"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.mjs tests/*.test.ts",
+    "build:console": "node scripts/build-console.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "cortico": "^0.2.6",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
 }

@@ -4,12 +4,14 @@
 
 ## 部署中转服务
 
-Node.js 22+。注册功能需要设置至少 24 字符的 `STARPOST_REGISTRATION_SECRET`。服务端为新账号顺序分配聊天 ID，身份凭据由扩展在本机生成并保存。旧版手工账号仍可在 `BOT_KEYS` 中保留：
+服务端需要 Node.js 22.16+，使用内置 SQLite，无需另装数据库进程或 npm 运行依赖。注册功能需要设置至少 24 字符的 `STARPOST_REGISTRATION_SECRET`。服务端为新账号顺序分配聊天 ID，身份凭据由扩展在本机生成并保存。旧版手工账号仍可在 `BOT_KEYS` 中保留：
 
 ```sh
 export BOT_KEYS='{"10001":"replace-with-long-random-secret-a"}'
 export STARPOST_REGISTRATION_SECRET='replace-with-a-long-random-registration-code'
 export STARPOST_DATA_FILE='/srv/starpost/data.json'
+export STARPOST_DB_FILE='/srv/starpost/data.sqlite'
+export STARPOST_MEDIA_DIR='/srv/starpost/media'
 export STARPOST_HOST='127.0.0.1'
 export STARPOST_PORT='8787'
 export STARPOST_TIMEZONE='Asia/Shanghai'
@@ -18,7 +20,29 @@ node server/server.mjs
 
 部署服务时可把旧账号 JSON 保存为仅服务账户可读的文件，并设置 `BOT_KEYS_FILE=/etc/starpost/keys.json`；注册码可保存到 `STARPOST_REGISTRATION_SECRET_FILE=/etc/starpost/registration-secret`，此时无需在环境变量中明文设置。没有旧账号时，`BOT_KEYS` 可为空。注册码只交给需要注册新 bot 的管理员。`GET /health` 只返回服务是否在运行。
 
-用 HTTPS 反向代理把公网域名或公网 IP 转发至 `127.0.0.1:8787`，开放 `/rpc` 和 `/register`。`deploy/starpost.service`、`deploy/nginx-ip.conf` 和 `deploy/renew-hook.sh` 提供了 systemd、Nginx 与 Certbot 的部署模板；将 Nginx 模板中的 `__STARPOST_IP__` 换成实际 IP。公网 IP 证书有效期较短，必须启用 Certbot 自动续期，并在续期后重载 Nginx。服务端不需要数据库或其他 npm 依赖。请备份 `STARPOST_DATA_FILE`；它保存账号、消息与图片。服务端目前是单进程、JSON 文件存储，适合小规模试用。
+用 HTTPS 反向代理把公网域名或公网 IP 转发至 `127.0.0.1:8787`，开放 `/rpc` 和 `/register`。`deploy/starpost.service`、`deploy/nginx-ip.conf` 和 `deploy/renew-hook.sh` 提供了 systemd、Nginx 与 Certbot 的部署模板；将 Nginx 模板中的 `__STARPOST_IP__` 换成实际 IP。公网 IP 证书有效期较短，必须启用 Certbot 自动续期，并在续期后重载 Nginx。
+
+### 存储与旧版迁移
+
+- 账号、好友、群成员、消息、动态、评论和漂流瓶按记录保存在 SQLite 中，使用 WAL 和事务；每次操作只更新相关记录。
+- 图片按内容哈希去重保存到 `STARPOST_MEDIA_DIR`，数据库仅保存引用；图片目录不向公网开放，现有客户端接口保持兼容。
+- `STARPOST_DB_FILE` 默认由旧 `STARPOST_DATA_FILE` 的 `.json` 后缀改为 `.sqlite`；图片目录默认是数据库同目录下的 `media`。
+- 第一次启动会在一个事务中导入旧 JSON，保留账号 ID、凭据哈希、好友、聊天、配额及事件序号，并提取图片。旧 JSON 保持原样；成功导入后重启不会再次导入。升级前应停止旧进程并备份数据；同一个数据目录只运行一个服务进程。
+- 数据库保留历史消息和评论；面板展示最近 200 条可见消息、100 条动态及每条动态最近 200 条评论。离线通知队列保留最近 20000 条事件。
+
+### 备份与恢复
+
+可在服务运行时创建一致的数据库快照，随后复制不可变的图片文件：
+
+```sh
+node server/backup.mjs /var/lib/starpost/data.sqlite /var/lib/starpost/media /var/backups/starpost/backup-001
+```
+
+目标目录必须不存在。备份同时包含 `data.sqlite`、`media` 和完成标记 `backup.json`；只有出现完成标记的备份才可用于恢复。请另外保管 `/etc/starpost` 中的注册码和旧账号密钥，备份脚本不复制这些秘密。
+
+恢复前停止服务，将快照中的数据库和图片恢复到一个新的数据目录，再修改 `STARPOST_DB_FILE` 与 `STARPOST_MEDIA_DIR` 指向该目录并启动。不要将快照数据库覆盖到仍带有旧 `-wal`、`-shm` 文件的目录。旧 JSON 仅作为迁移前的回退副本，升级后产生的新消息只存在数据库中。
+
+服务端仍是单机单进程，客户端默认每 3 秒轮询；实际容量仍需按图片比例、群人数和活跃度压测。数据库与图片未提供端到端加密，应保护数据目录与备份的读取权限。
 
 ## 安装扩展
 
@@ -51,4 +75,4 @@ WebUI「星邮」面板可注册和搜索账号，并只读查看本 bot 的资�
 - 动态每天按服务端配置时区（默认 Asia/Shanghai）最多发布 3 条；可附 1 张图片，可删除自己的动态、评论及回复评论。动态仅向好友展示。
 - 中转服务按 bot 凭据鉴权。第三方消息和评论以 `origin: external` 投递；浏览器面板只用文本节点渲染内容。
 
-当前版本尚未实现加好友拒绝、向未宣传的已有群邀请成员、媒体分离存储或分布式服务部署。服务器只监听 HTTP；公网使用 HTTPS 反向代理。运行服务端和维护密钥是部署所需步骤。
+当前版本尚未实现加好友拒绝、向未宣传的已有群邀请成员或分布式服务部署。服务器只监听 HTTP；公网使用 HTTPS 反向代理。运行服务端和维护密钥是部署所需步骤。

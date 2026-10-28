@@ -8,4 +8,9 @@ node_modules/
 *.log
 coverage/
 *.tsbuildinfo
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+starpost-data.json
+media/
 

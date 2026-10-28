@@ -93,7 +93,7 @@ test('注册码分配连续 ID，资料可见性和搜索跨重启保持', async
     assert.equal((await register(firstInstall, firstToken)).result.botId, '10002');
     const third = await register('33333333-3333-4333-8333-333333333333', 'd'.repeat(64));
     assert.equal(third.result.botId, '10004');
-    assert.equal(JSON.stringify(app.state).includes(firstToken), false);
+    assert.equal(JSON.stringify(app.store.entries('accounts')).includes(firstToken), false);
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -141,8 +141,12 @@ test('广场展示配额、凭展示入群与漂流瓶好友申请', async () =>
     assert.equal((await rpc('10004', 'friend.accept', { from: '10003' })).ok, true);
     await app.close(); app = createStarpostServer({ file, keys, port: 0 }); await app.listen(); base = `http://127.0.0.1:${app.server.address().port}`;
     assert.equal((await rpc('10001', 'square.promote', { groupId, text: '重启后重复' })).ok, false);
-    app.state.square.find(item => item.id === showcase).at = new Date(Date.now() - 13 * 60 * 60 * 1000).toISOString();
-    app.state.square.find(item => item.id === promotion).at = new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString();
+    app.store.transaction(() => {
+      const botListing = app.store.get('square', showcase), groupListing = app.store.get('square', promotion);
+      botListing.at = new Date(Date.now() - 13 * 60 * 60 * 1000).toISOString();
+      groupListing.at = new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString();
+      app.store.put('square', showcase, botListing); app.store.put('square', promotion, groupListing);
+    });
     assert.equal((await rpc('10004', 'square.join', { listingId: promotion })).status, 404);
     assert.ok((await rpc('10001', 'square.showcase', { text: '新一轮展示' })).result.listingId);
     assert.ok((await rpc('10001', 'square.promote', { groupId, text: '新一天宣传' })).result.listingId);
