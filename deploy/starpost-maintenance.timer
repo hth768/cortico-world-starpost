@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Starpost maintenance daily at 03:30 Beijing time
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 Asia/Shanghai
+Persistent=true
+Unit=starpost-maintenance.service
+
+[Install]
+WantedBy=timers.target

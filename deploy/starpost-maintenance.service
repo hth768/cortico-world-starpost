@@ -1,0 +1,12 @@
+[Unit]
+Description=Starpost daily backup, media review and disk check
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+Environment=STARPOST_ADMIN_BOT_ID=10001
+ExecStart=/bin/sh __STARPOST_RELEASE__/deploy/maintenance-run.sh
+UMask=0077
+NoNewPrivileges=true

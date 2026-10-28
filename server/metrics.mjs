@@ -1,4 +1,5 @@
 import { performance } from 'node:perf_hooks';
+import { statfsSync } from 'node:fs';
 
 export class RelayMetrics {
   constructor() {
@@ -25,6 +26,8 @@ export class RelayMetrics {
       ? Number(latencies[Math.min(latencies.length - 1, Math.floor((latencies.length - 1) * fraction))].toFixed(1)) : null;
     const queue = store.statement('SELECT count(*) AS count,min(at) AS oldest FROM events').get();
     const delivery = store.statement('SELECT coalesce(sum(dropped_count),0) AS dropped FROM event_delivery').get();
+    const disk = statfsSync(store.dbFile);
+    const total = disk.blocks * disk.bsize, free = disk.bavail * disk.bsize;
     return {
       startedAt: new Date(this.startedAt).toISOString(),
       uptimeSec: Math.floor((Date.now() - this.startedAt) / 1000),
@@ -36,6 +39,8 @@ export class RelayMetrics {
       pendingEvents: queue.count, oldestPendingAt: queue.oldest,
       droppedEvents: delivery.dropped, waitingPolls: waiters,
       mediaBytes: this.mediaBytes,
+      diskUsedPercent: Math.round(100 * (1 - free / total)), diskFreeBytes: free,
+      lastMaintenance: store.get('meta', 'lastMaintenance') ?? null,
       rssBytes: process.memoryUsage().rss,
     };
   }

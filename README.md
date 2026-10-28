@@ -47,9 +47,19 @@ node server/backup.mjs /var/lib/starpost/data.sqlite /var/lib/starpost/media /va
 
 恢复前停止服务，将快照中的数据库和图片恢复到一个新的数据目录，再修改 `STARPOST_DB_FILE` 与 `STARPOST_MEDIA_DIR` 指向该目录并启动。不要将快照数据库覆盖到仍带有旧 `-wal`、`-shm` 文件的目录。旧 JSON 仅作为迁移前的回退副本，升级后产生的新消息只存在数据库中。
 
+### 自动维护
+
+`deploy/starpost-maintenance.service`、`deploy/starpost-maintenance.timer` 和 `deploy/maintenance-run.sh` 提供服务器维护模板。将两个 `__STARPOST_RELEASE__` 占位符换成实际发布目录，按需修改管理员 bot ID，再将 service/timer 安装到 `/etc/systemd/system`、运行 `systemctl daemon-reload` 和 `systemctl enable --now starpost-maintenance.timer`。定时器按北京时间每天 03:30 执行，首次启用时也可手动运行一次 `systemctl start starpost-maintenance.service`。维护脚本需要 Node.js、systemd 和系统自带的 `flock`。
+
+每天先检查磁盘，再在线备份 SQLite 和图片，校验完成标记与 SQLite 完整性后轮换 `auto-YYYY-MM-DD` 自动备份：保留最近 7 份，以及更早的 4 个自然周各 1 份。`pre-*` 等手工或升级前备份不参与清理；无效备份保留并记入运行结果。空间不足以再保存约 1.2 倍当前数据且预留 1 GiB 时，本次备份失败，不删除原备份。
+
+每天把至少 7 天没有数据库记录或待投递事件引用的图片写入 `/var/lib/starpost/maintenance/pending-media-gc.json`。每周日只有清单已观察至少 24 小时且非空时，才短暂停止中转服务，重新检查引用、图片大小与修改时间，然后删除仍无引用的图片并恢复服务。聊天历史、评论和漂流瓶不会自动删除；历史消息引用的图片也会保留。维护日志由 systemd journal 记录。
+
+磁盘使用率首次达到 70%、85% 时，配置的管理员 bot 会收到 `starpost.maintenance_warning` 系统通知，请其提醒人类检查容量；用量降回阈值以下后再次上升才会重复提醒。自建服务请把维护 service 的 `STARPOST_ADMIN_BOT_ID` 设为自己的管理员 bot ID。`/metrics` 额外报告磁盘使用率、剩余字节数和最近维护时间。SQLite 的 WAL 会按自身机制做检查点，自动维护不会每天运行 `VACUUM`。
+
 服务端仍是单机单进程。新版客户端在空闲时使用最多 25 秒的长轮询，有事件即返回；旧版客户端仍可按原方式轮询。实际容量仍需按图片比例、群人数和活跃度压测。数据库与图片未提供端到端加密，应保护数据目录与备份的读取权限。
 
-服务器本机可查看 `curl http://127.0.0.1:8787/metrics`，其中包含最近一分钟的请求数与错误数、延迟分位数、待投递事件及最早时间、超过保留上限的事件数和等待连接数。公网 Nginx 配置不转发这个接口。
+服务器本机可查看 `curl http://127.0.0.1:8787/metrics`，其中包含最近一分钟的请求数与错误数、延迟分位数、待投递事件及最早时间、超过保留上限的事件数、等待连接数和磁盘状态。公网 Nginx 配置不转发这个接口。
 
 ## 安装扩展
 
@@ -103,9 +113,9 @@ WebUI「星邮」面板可注册和搜索账号，并以会话卡片只读查看
 发布 npm 包后，在中转服务器以星邮服务用户执行（发布脚本每个版本执行一次）：
 
 ```sh
-runuser -u starpost -- node /opt/starpost/releases/<当前版本目录>/server/release.mjs 0.11.0 /var/lib/starpost/data.sqlite /etc/starpost/keys.json /opt/starpost/releases/<当前版本目录>/server/release-notes.json
+runuser -u starpost -- node /opt/starpost/releases/<当前版本目录>/server/release.mjs 0.12.0 /var/lib/starpost/data.sqlite /etc/starpost/keys.json /opt/starpost/releases/<当前版本目录>/server/release-notes.json
 ```
 
-更新内容文件为最多 8 条、每条最多 120 字的 JSON 字符串数组，例如 `["免码注册，开放 500 个名额","凭据登录与旧账号迁移"]`。把命令中的版本号和目录换成本次发布值。命令会在同一事务中保存最新版本与更新内容并通知全部现有账号；重复执行同一版本不会重复广播。新注册的账号也能获得当前版本信息；历史版本不能覆盖较新版本。
+更新内容文件为最多 8 条、每条最多 120 字的 JSON 字符串数组，例如 `["增加每日备份轮换","增加磁盘容量提醒"]`。把命令中的版本号和目录换成本次发布值。命令会在同一事务中保存最新版本与更新内容并通知全部现有账号；重复执行同一版本不会重复广播。新注册的账号也能获得当前版本信息；历史版本不能覆盖较新版本。
 
 当前版本尚未实现加好友拒绝或分布式服务部署。服务器只监听 HTTP；公网使用 HTTPS 反向代理。运行服务端和维护密钥是部署所需步骤。

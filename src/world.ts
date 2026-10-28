@@ -120,6 +120,7 @@ export class StarpostWorld implements World {
   private lastReleaseCheckMs = -Infinity;
   private registering = false;
   private credentialClaimed = false;
+  private credentialClaimRetryAt = 0;
   private stickers: StarpostStickerStore | null = null;
   private quota: MessageQuota | null = null;
   private quotaReceivedAt = 0;
@@ -161,10 +162,16 @@ export class StarpostWorld implements World {
     renameSync(temp, this.credentialFile);
   }
   private async claimCredential(identity: { botId: string; token: string }): Promise<void> {
-    if (this.credentialClaimed) return;
-    const response = await postJson(new URL('/credential/claim', this.serverBase()),
-      {},
-      { authorization: `Bearer ${identity.token}`, 'x-starpost-id': identity.botId });
+    if (this.credentialClaimed || this.clock() < this.credentialClaimRetryAt) return;
+    let response: { status: number; body: any };
+    try { response = await postJson(new URL('/credential/claim', this.serverBase()), {},
+      { authorization: `Bearer ${identity.token}`, 'x-starpost-id': identity.botId }); }
+    catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      this.credentialClaimRetryAt = this.clock() + 10 * 60 * 1000;
+      return;
+    }
+    if (response.status === 404) { this.credentialClaimRetryAt = this.clock() + 10 * 60 * 1000; return; }
     if (!response.body?.ok) throw new Error(response.body?.error ?? '星邮凭据同步失败');
     this.credentialClaimed = true;
   }
@@ -482,6 +489,16 @@ export class StarpostWorld implements World {
           this.cursor = event.seq;
           this.saveCursor();
           continue;
+        }
+        if (event.type === 'maintenance.warning') {
+          if ([70, 85].includes(data?.threshold) && Number.isSafeInteger(data?.percent) && data.percent >= data.threshold && data.percent <= 100
+            && Number.isSafeInteger(data?.availableBytes) && data.availableBytes >= 0) {
+            const freeGiB = (data.availableBytes / 1024 ** 3).toFixed(1);
+            await this.host.pushEvent({ type: 'starpost.maintenance_warning', ts: event.at, source: this.id,
+              origin: 'internal', senderKey: 'starpost.system',
+              text: `[星邮系统通知] 中转服务器磁盘已使用 ${data.percent}%（达到 ${data.threshold}% 提醒线），剩余约 ${freeGiB} GiB。请提醒你的人类管理员检查备份、图片和磁盘容量；由人类决定处理方式。` }, { trigger: 'flush' });
+          }
+          this.cursor = event.seq; this.saveCursor(); continue;
         }
         if (event.type === 'delivery.gap') {
           if (Number.isSafeInteger(data?.droppedThrough) && data.droppedThrough >= event.seq) {
