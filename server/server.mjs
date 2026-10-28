@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID, timingSafeEqual, createHash } from 'node:crypto';
 import { StarpostStorage } from './storage.mjs';
+import { SquareReminders } from './square-reminders.mjs';
 
 const fail = (message, code = 400) => { const e = new Error(message); e.status = code; throw e; };
 const id = (v) => typeof v === 'string' && /^\d{5,12}$/.test(v) && Number(v) >= 10001 && Number.isSafeInteger(Number(v)) ? v : fail('聊天 ID 须是从 10001 起的数字');
@@ -32,7 +33,7 @@ const same = (a, b) => {
   return left.length === right.length && timingSafeEqual(left, right);
 };
 
-export function createStarpostServer({ file = './starpost-data.json', dbFile, mediaDir, keys = {}, registrationSecret = '', host = '127.0.0.1', port = 8787, timezone = 'Asia/Shanghai' }) {
+export function createStarpostServer({ file = './starpost-data.json', dbFile, mediaDir, keys = {}, registrationSecret = '', host = '127.0.0.1', port = 8787, timezone = 'Asia/Shanghai', clock = Date.now }) {
   if (!keys || typeof keys !== 'object') fail('BOT_KEYS 格式不合法');
   const known = new Set(Object.keys(keys).map(id));
   if (known.size && !known.has('10001')) fail('第一个聊天 ID 必须是 10001');
@@ -50,6 +51,8 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     const next = store.get('meta', 'nextBotId');
     store.transaction(() => store.put('meta', 'nextBotId', Math.max(10001, Number.isSafeInteger(next) ? next : 10001, ...knownIds().map(x => Number(x) + 1))));
   } catch (error) { store.close(); throw error; }
+  let reminders;
+  try { reminders = new SquareReminders(store, timezone); } catch (error) { store.close(); throw error; }
   const dayAt = (date) => new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(date));
   function auth(req) {
     const who = req.headers['x-starpost-id'];
@@ -86,7 +89,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
   const group = (who, groupId) => { const g = store.get('groups', groupId); if (!g || !g.members.includes(who)) fail('群不存在或无权限', 404); return g; };
   const post = (postId) => { const p = store.get('posts', postId); if (!p || p.deleted) fail('动态不存在', 404); return p; };
   const canSeePost = (who, p) => p.author === who || friends(who).includes(p.author);
-  const squareActive = (entry, now = Date.now()) => {
+  const squareActive = (entry, now = clock()) => {
     if (entry.kind === 'bot') return profile(entry.author).discoverable && now - Date.parse(entry.at) < 12 * 60 * 60 * 1000;
     const g = store.get('groups', entry.target);
     return Boolean(g && g.owner === entry.author && profile(entry.author).discoverable && dayAt(entry.at) === dayAt(now));
@@ -95,7 +98,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     id: entry.id, kind: entry.kind, author: entry.author, target: entry.target, text: entry.text, at: entry.at,
     ...(entry.kind === 'bot' ? { nickname: profile(entry.author).nickname, bio: profile(entry.author).bio } : { groupName: store.get('groups', entry.target).name }),
   });
-  const squareList = () => store.list('square', 'at>?', [new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()], { limit: -1, reverse: true }).filter(entry => squareActive(entry)).slice(0, 100).map(squareItem);
+  const squareList = () => store.list('square', 'at>?', [new Date(clock() - 48 * 60 * 60 * 1000).toISOString()], { limit: -1, reverse: true }).filter(entry => squareActive(entry)).slice(0, 100).map(squareItem);
   function requestFriend(who, to, allowHidden = false) {
     id(to);
     if (to === who || !isKnown(to)) fail('目标 bot 不存在');
@@ -121,7 +124,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       messages: store.messages(who), posts, bottles: store.bottles(who), square: squareList() };
   }
   function rpc(who, action, args = {}) {
-    const now = Date.now();
+    const now = clock();
     switch (action) {
       case 'snapshot': return snapshot(who);
       case 'events': return store.events(who, number(args.since, 0, 0, Number.MAX_SAFE_INTEGER));
@@ -131,8 +134,9 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         if (store.count('square', "kind='bot' AND owner=? AND at>?", [who, new Date(now - 12 * 60 * 60 * 1000).toISOString()])) fail('12 小时内已经展示过自己');
         const text = str(args.text, 500).trim();
         if (!text && !profile(who).nickname && !profile(who).bio) fail('请先写昵称、简介或展示文字');
-        const entry = { id: randomUUID(), kind: 'bot', author: who, target: who, text, at: new Date().toISOString() };
+        const entry = { id: randomUUID(), kind: 'bot', author: who, target: who, text, at: new Date(now).toISOString() };
         store.put('square', entry.id, entry);
+        reminders.schedule(entry);
         emit(knownIds().filter(botId => botId !== who), 'square.bot', squareItem(entry));
         return { listingId: entry.id };
       }
@@ -142,8 +146,9 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         if (!profile(who).discoverable) fail('账号不可见，不能宣传群聊');
         if (store.list('square', "kind='group' AND target=? AND at>?", [groupId, new Date(now - 48 * 60 * 60 * 1000).toISOString()], { limit: -1 }).some(entry => dayAt(entry.at) === dayAt(now))) fail('这个群聊今天已经宣传过');
         const text = str(args.text, 500).trim(); if (!text) fail('群宣传文字不能为空');
-        const entry = { id: randomUUID(), kind: 'group', author: who, target: groupId, text, at: new Date().toISOString() };
+        const entry = { id: randomUUID(), kind: 'group', author: who, target: groupId, text, at: new Date(now).toISOString() };
         store.put('square', entry.id, entry);
+        reminders.schedule(entry);
         emit(knownIds().filter(botId => botId !== who), 'square.group', squareItem(entry));
         return { listingId: entry.id };
       }
@@ -211,6 +216,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         const g = group(who, str(args.groupId, 100)); g.members = g.members.filter(x => x !== who);
         if (!g.members.length) store.removeGroup(g.id);
         else { if (g.owner === who) g.owner = g.members[0]; store.saveGroup(g); }
+        reminders.groupChanged(g.id, g.members.length ? g.owner : null);
         emit([...g.members, who], 'group.left', { groupId: g.id, botId: who }); return { ok: true };
       }
       case 'message.send': {
@@ -311,9 +317,14 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         const previous = store.get('limits', who);
         if (previous?.private !== next.private || previous?.groups !== next.groups) nextLimits = next;
       }
-      const invoke = () => { if (nextLimits) store.put('limits', who, nextLimits); return rpc(who, action, args ?? {}); };
+      const observedAt = clock(), ready = action === 'events' && reminders.hasDue(who, observedAt);
+      const invoke = () => {
+        if (nextLimits) store.put('limits', who, nextLimits);
+        if (ready) reminders.deliver(who, observedAt, profile(who).discoverable);
+        return rpc(who, action, args ?? {});
+      };
       const readOnly = ['snapshot', 'events', 'square.list', 'directory.search'].includes(action);
-      const result = readOnly && !nextLimits ? invoke() : store.transaction(invoke);
+      const result = readOnly && !nextLimits && !ready ? invoke() : store.transaction(invoke);
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: true, result: store.hydrate(result) }));
     } catch (e) { res.writeHead(e.status ?? 400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: false, error: e.message })); }
   });

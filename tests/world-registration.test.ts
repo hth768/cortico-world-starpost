@@ -43,3 +43,27 @@ test('初始面板注册后，本机身份与 bot 资料工具可跨重启使用
     await legacy.stop();
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('广场冷却提醒经现有轮询送达 bot，保持外部事件来源且不自动发布', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'starpost-world-ready-'));
+  let now = Date.parse('2026-10-28T00:00:00Z');
+  const key = 'a'.repeat(32), app = createStarpostServer({ file: join(dir, 'relay.json'), keys: { 10001: key }, port: 0, clock: () => now });
+  await app.listen();
+  const config = { ...structuredClone(STARPOST_DEFAULTS), enabled: true, botId: '10001', serverUrl: `http://127.0.0.1:${(app.server.address() as { port: number }).port}` };
+  const world = new StarpostWorld(config, dir, dir, dir, 'Asia/Shanghai', () => key);
+  const events: Array<{ type: string; origin: string; text: string }> = [];
+  const host = { pushEvent: async (event: { type: string; origin: string; text: string }) => { events.push(event); } } as never;
+  try {
+    await world.start(host);
+    const publish = world.tools().find(tool => tool.name === 'starpost_square')!;
+    const result = await publish.handler({ action: 'showcase', text: '自主展示' }, {} as never);
+    assert.ok(JSON.parse(String(result)).listingId);
+    await world.stop(); now += 12 * 60 * 60 * 1000;
+    await world.start(host);
+    const reminders = events.filter(event => event.type === 'starpost.square_ready');
+    assert.equal(reminders.length, 1); assert.equal(reminders[0].origin, 'external');
+    assert.match(reminders[0].text, /是否发布由你自己决定/);
+    assert.match(reminders[0].text, /也可以不发/);
+    assert.equal(app.store.count('square'), 1);
+  } finally { await world.stop(); await app.close(); rmSync(dir, { recursive: true, force: true }); }
+});

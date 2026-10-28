@@ -87,6 +87,7 @@ export class StarpostStorage {
   indexes(collection, value) {
     const v = value && typeof value === 'object' ? value : {};
     let owner = v.author ?? '', target = v.target ?? '', kind = v.kind ?? '', scope = '';
+    let at = v.at ?? v.createdAt ?? '';
     if (collection === 'accounts') target = v.installationId;
     if (collection === 'requests') { owner = v.from; target = v.to; }
     if (collection === 'groups') owner = v.owner;
@@ -95,7 +96,8 @@ export class StarpostStorage {
     if (collection === 'posts') kind = v.deleted ? 'deleted' : 'active';
     if (collection === 'comments') target = v.postId;
     if (collection === 'registrationCodes') owner = v.batchId;
-    return [owner, target, kind, scope, v.at ?? v.createdAt ?? ''];
+    if (collection === 'squareReminders') { owner = v.owner; kind = v.notifiedAt ? 'notified' : 'pending'; at = v.availableAt; }
+    return [owner, target, kind, scope, at];
   }
   remove(collection, key) { this.statement('DELETE FROM documents WHERE collection=? AND key=?').run(collection, String(key)); }
   // where clauses are fixed SQL fragments supplied only by this module and server code.
@@ -140,9 +142,9 @@ export class StarpostStorage {
     rows.push(...this.statement("SELECT rowid,data FROM documents WHERE collection='bottles' AND target=? ORDER BY rowid DESC LIMIT 50").all(who));
     return [...new Map(rows.map(row => [row.rowid, row])).values()].sort((a, b) => b.rowid - a.rowid).slice(0, 50).reverse().map(row => JSON.parse(row.data));
   }
-  emit(recipients, type, data) {
+  emit(recipients, type, data, at = new Date().toISOString()) {
     const insert = this.statement('INSERT INTO events(recipient,type,at,data) VALUES(?,?,?,?)');
-    const json = JSON.stringify(this.externalize(data)), at = new Date().toISOString();
+    const json = JSON.stringify(this.externalize(data));
     for (const who of recipients) insert.run(who, type, at, json);
     this.statement('DELETE FROM events WHERE seq <= (SELECT coalesce(max(seq),0)-20000 FROM events)').run();
   }

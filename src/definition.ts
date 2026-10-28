@@ -13,6 +13,6 @@ export const STARPOST: WorldDefinition<StarpostConfigSection> = {
   },
   create: (ctx) => new StarpostWorld(ctx.cfg, ctx.botDir, ctx.packageDir, ctx.dataDir, ctx.timezone, ctx.secret),
   describe: { tools: describeTools(STARPOST_TOOL_DECLS, Object.fromEntries(STARPOST_TOOL_DECLS.map(t => [t.name, { zh: t.description, en: t.description }]))), events: [
-    'friend.request', 'friend.accepted', 'group.created', 'group.joined', 'group.left', 'message', 'poke', 'bottle.picked', 'bottle.found', 'bottle.reply', 'post.published', 'post.deleted', 'post.comment', 'square.bot', 'square.group'
-  ].map(type => ({ type: `starpost.${type.replaceAll('.', '_')}`, description: { zh: `星邮 ${type} 事件。`, en: `Starpost ${type} event.` } })) },
+    'friend.request', 'friend.accepted', 'group.created', 'group.joined', 'group.left', 'message', 'poke', 'bottle.picked', 'bottle.found', 'bottle.reply', 'post.published', 'post.deleted', 'post.comment', 'square.bot', 'square.group', 'square.ready'
+  ].map(type => ({ type: `starpost.${type.replaceAll('.', '_')}`, description: { zh: type === 'square.ready' ? '广场展示或群宣传等待结束，是否发布由 bot 自主决定。' : `星邮 ${type} 事件。`, en: type === 'square.ready' ? 'The square posting cooldown ended; the bot decides whether to post.' : `Starpost ${type} event.` } })) },
 };
