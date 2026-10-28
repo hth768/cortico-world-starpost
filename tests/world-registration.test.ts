@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createStarpostServer } from '../server/server.mjs';
@@ -126,12 +126,12 @@ test('聊天消息先积压，满 20 秒只触发一次合批投递，重启可�
   } finally { await receiver.stop(); await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('本机星邮版本变化只发一次内部更新通知', async () => {
+test('发布新版本只提醒未更新的 bot，同版本不重发，漏收时能核对最新版本', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'starpost-world-update-'));
   const key = 'a'.repeat(32), app = createStarpostServer({ file: join(dir, 'relay.json'), keys: { 10001: key }, port: 0 });
   await app.listen();
   const config = { ...structuredClone(STARPOST_DEFAULTS), enabled: true, botId: '10001', serverUrl: `http://127.0.0.1:${(app.server.address() as { port: number }).port}` };
-  let extensionVersion = '0.7.0';
+  let extensionVersion = '0.8.1';
   const world = () => new StarpostWorld(config, dir, dir, dir, 'Asia/Shanghai', () => key, Date.now, () => extensionVersion);
   const notices: Array<{ type: string; origin: string; senderKey: string; text: string; trigger?: string }> = [];
   const host = { pushEvent: async (event: { type: string; origin: string; senderKey: string; text: string }, opts?: { trigger?: string }) => {
@@ -140,19 +140,28 @@ test('本机星邮版本变化只发一次内部更新通知', async () => {
   let receiver = world();
   try {
     await receiver.start(host); await receiver.stop();
+    assert.equal(notices.length, 0);
+    app.announceRelease('0.8.2');
+    receiver = world(); await receiver.start(host); await receiver.stop();
     assert.equal(notices.length, 1);
-    assert.equal(notices[0].type, 'starpost.updated'); assert.equal(notices[0].origin, 'internal');
+    assert.equal(notices[0].type, 'starpost.update_available'); assert.equal(notices[0].origin, 'internal');
     assert.equal(notices[0].senderKey, 'starpost.system'); assert.equal(notices[0].trigger, 'flush');
-    assert.match(notices[0].text, /提醒你的人类用户/);
+    assert.match(notices[0].text, /提醒你的人类用户更新/);
+    assert.match(notices[0].text, /0\.8\.2/);
     receiver = world(); await receiver.start(host); await receiver.stop();
     assert.equal(notices.length, 1);
-    extensionVersion = '0.8.1';
+    app.announceRelease('0.8.3');
     receiver = world(); await receiver.start(host); await receiver.stop();
-    assert.equal(notices.length, 2); assert.match(notices[1].text, /0\.8\.1/);
-    assert.equal(JSON.parse(readFileSync(join(dir, 'starpost-version-notice.json'), 'utf8')).version, '0.8.1');
-    writeFileSync(join(dir, 'package.json'), JSON.stringify({ version: '0.0.0' }));
-    receiver = new StarpostWorld(config, dir, dir, join(dir, 'actual-package'), 'Asia/Shanghai', () => key);
+    assert.equal(notices.length, 2); assert.match(notices[1].text, /0\.8\.3/);
+    assert.equal(JSON.parse(readFileSync(join(dir, 'starpost-release-notice.json'), 'utf8')).version, '0.8.3');
+    extensionVersion = '0.8.3';
+    receiver = world(); await receiver.start(host); await receiver.stop();
+    assert.equal(notices.length, 2);
+    extensionVersion = '0.8.1';
+    const missedDir = join(dir, 'missed'); mkdirSync(missedDir);
+    writeFileSync(join(missedDir, 'starpost-cursor.json'), JSON.stringify({ cursor: app.store.events('10001', 0).at(-1)!.seq }));
+    receiver = new StarpostWorld(config, dir, dir, missedDir, 'Asia/Shanghai', () => key, Date.now, () => extensionVersion);
     await receiver.start(host); await receiver.stop();
-    assert.match(notices[2].text, /0\.8\.1/);
+    assert.equal(notices.length, 3); assert.match(notices[2].text, /0\.8\.3/);
   } finally { await receiver.stop(); await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });

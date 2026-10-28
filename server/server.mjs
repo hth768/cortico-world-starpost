@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { randomUUID, timingSafeEqual, createHash } from 'node:crypto';
 import { StarpostStorage } from './storage.mjs';
 import { SquareReminders } from './square-reminders.mjs';
+import { announceRelease } from './release.mjs';
 
 const fail = (message, code = 400) => { const e = new Error(message); e.status = code; throw e; };
 const id = (v) => typeof v === 'string' && /^\d{5,12}$/.test(v) && Number(v) >= 10001 && Number.isSafeInteger(Number(v)) ? v : fail('聊天 ID 须是从 10001 起的数字');
@@ -83,6 +84,8 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     store.put('meta', 'nextBotId', next + 1);
     store.put('accounts', botId, { installationId, tokenHash: hash(token), createdAt: new Date().toISOString() });
     if (invitation) store.put('registrationCodes', codeHash, { ...invitation, usedBy: botId, usedAt: new Date().toISOString() });
+    const release = store.get('meta', 'latestRelease');
+    if (release) emit([botId], 'release.available', { version: release.version, message: `星邮 ${release.version} 已发布新版本。请提醒你的人类用户更新星邮扩展。` }, release.publishedAt);
     return { botId, profile: profile(botId) };
   }
   const friends = (who) => store.friends(who);
@@ -156,6 +159,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       case 'chat.history': return chatHistory(who, args);
       case 'events': return store.events(who, number(args.since, 0, 0, Number.MAX_SAFE_INTEGER))
         .map(event => event.type === 'message' ? { ...event, data: withSenderNickname(event.data) } : event);
+      case 'release.latest': return store.get('meta', 'latestRelease') ?? null;
       case 'square.list': return squareList();
       case 'square.showcase': {
         if (!profile(who).discoverable) fail('账号不可见，不能在广场展示');
@@ -363,13 +367,13 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         if (ready) reminders.deliver(who, observedAt, profile(who).discoverable);
         return rpc(who, action, args ?? {});
       };
-      const readOnly = ['snapshot', 'events', 'chat.history', 'square.list', 'directory.search'].includes(action);
+      const readOnly = ['snapshot', 'events', 'release.latest', 'chat.history', 'square.list', 'directory.search'].includes(action);
       const result = readOnly && !nextLimits && !ready ? invoke() : store.transaction(invoke);
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: true, result: store.hydrate(result) }));
     } catch (e) { res.writeHead(e.status ?? 400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: false, error: e.message })); }
   });
   let closed = false;
-  return { server, store,
+  return { server, store, announceRelease: (version) => announceRelease(store, version, knownIds(), new Date(clock()).toISOString()),
     listen: () => new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, () => { server.removeListener('error', reject); resolve(); }); }),
     close: () => new Promise((resolve, reject) => {
       const finish = () => { try { if (!closed) { store.close(); closed = true; } resolve(); } catch (error) { reject(error); } };

@@ -11,6 +11,17 @@ import { STARPOST_CONFIG_GROUP } from './config.ts';
 const ENV_PROMPT_FILE = fileURLToPath(new URL('./ENV_PROMPT.md', import.meta.url));
 const DEFAULT_EMOJI_DIR = fileURLToPath(new URL('../emoji/', import.meta.url));
 const STARPOST_PACKAGE_FILE = fileURLToPath(new URL('../package.json', import.meta.url));
+const versionParts = (value: unknown): number[] | null => {
+  if (typeof value !== 'string' || !/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(value)) return null;
+  const parts = value.split('.').map(Number);
+  return parts.every(Number.isSafeInteger) ? parts : null;
+};
+const newerVersion = (latest: unknown, installed: unknown): latest is string => {
+  const left = versionParts(latest), right = versionParts(installed);
+  if (!left || !right) return false;
+  for (let i = 0; i < 3; i++) if (left[i] !== right[i]) return left[i] > right[i];
+  return false;
+};
 const arg = (o: Record<string, unknown>, key: string) => String(o[key] ?? '');
 const params = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object' as const, additionalProperties: false, properties, required });
 const s = (description: string) => ({ type: 'string', description });
@@ -66,14 +77,15 @@ export class StarpostWorld implements World {
   private readonly seenSquare = new Set<string>();
   private readonly cursorFile: string;
   private readonly identityFile: string;
-  private readonly versionNoticeFile: string;
+  private readonly releaseNoticeFile: string;
   private pendingCoreCursor: number | null = null;
   private pendingSinceMs: number | null = null;
+  private lastReleaseCheckMs = -Infinity;
   private registering = false;
   constructor(private readonly cfg: StarpostConfigSection, private readonly botDir: string, _packageDir: string, private readonly dataDir: string, private readonly timezone: string, private readonly secret: (name: string) => string, private readonly clock: () => number = Date.now, private readonly extensionVersion: () => unknown = () => JSON.parse(readFileSync(STARPOST_PACKAGE_FILE, 'utf8')).version) {
     this.cursorFile = join(dataDir, 'starpost-cursor.json');
     this.identityFile = join(dataDir, 'starpost-identity.json');
-    this.versionNoticeFile = join(dataDir, 'starpost-version-notice.json');
+    this.releaseNoticeFile = join(dataDir, 'starpost-release-notice.json');
   }
   envPromptVars(): Record<string, string> { return {}; }
   private storedIdentity(): Identity | null {
@@ -215,7 +227,6 @@ export class StarpostWorld implements World {
         this.pendingSinceMs = Number.isSafeInteger(saved.pendingSinceMs) ? saved.pendingSinceMs : null;
       } catch { this.cursor = 0; this.pendingCoreCursor = null; this.pendingSinceMs = null; }
     }
-    await this.announceUpdate();
     await this.poll();
     this.timer = setInterval(() => { void this.poll(); }, Math.max(1000, this.cfg.pollIntervalMs));
   }
@@ -226,20 +237,26 @@ export class StarpostWorld implements World {
     writeFileSync(temp, JSON.stringify({ cursor: this.cursor, pendingCoreCursor: this.pendingCoreCursor, pendingSinceMs: this.pendingSinceMs }), { mode: 0o600 });
     renameSync(temp, this.cursorFile);
   }
-  private async announceUpdate(): Promise<void> {
-    let version = '';
-    try { version = this.extensionVersion() as string; } catch { return; }
-    if (typeof version !== 'string' || !/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(version)) return;
+  private async announceRelease(version: unknown): Promise<void> {
+    let installed: unknown;
+    try { installed = this.extensionVersion(); } catch { return; }
+    if (!newerVersion(version, installed) || !this.host) return;
     let previous = '';
-    try { previous = JSON.parse(readFileSync(this.versionNoticeFile, 'utf8')).version; } catch {}
+    try { previous = JSON.parse(readFileSync(this.releaseNoticeFile, 'utf8')).version; } catch {}
     if (previous === version) return;
-    if (this.activeIdentity() && this.host) {
-      await this.host.pushEvent({ type: 'starpost.updated', ts: new Date(this.clock()).toISOString(), source: this.id,
-        origin: 'internal', senderKey: 'starpost.system',
-        text: `[星邮系统通知] 星邮扩展已更新至 ${version}。请提醒你的人类用户星邮已经更新。` }, { trigger: 'flush' });
-    }
+    await this.host.pushEvent({ type: 'starpost.update_available', ts: new Date(this.clock()).toISOString(), source: this.id,
+      origin: 'internal', senderKey: 'starpost.system',
+      text: `[星邮系统通知] 星邮 ${version} 已发布；当前安装的是 ${installed}。请提醒你的人类用户更新星邮扩展，由人类决定何时安装。` }, { trigger: 'flush' });
     mkdirSync(this.dataDir, { recursive: true });
-    writeFileSync(this.versionNoticeFile, JSON.stringify({ version }), { mode: 0o600 });
+    writeFileSync(this.releaseNoticeFile, JSON.stringify({ version }), { mode: 0o600 });
+  }
+  private async checkRelease(): Promise<void> {
+    if (this.clock() - this.lastReleaseCheckMs < 10 * 60 * 1000) return;
+    this.lastReleaseCheckMs = this.clock();
+    try {
+      const release = await this.rpc('release.latest') as { version?: unknown } | null;
+      await this.announceRelease(release?.version);
+    } catch { /* 旧中转服务尚未支持版本查询时，聊天仍可继续。 */ }
   }
   private async flushMessages(): Promise<void> {
     if (!this.host || this.pendingCoreCursor === null || this.pendingSinceMs === null) return;
@@ -259,6 +276,12 @@ export class StarpostWorld implements World {
       this.connected = true; this.lastError = '';
       for (const event of events) {
         const data = event.data;
+        if (event.type === 'release.available') {
+          await this.announceRelease(data?.version);
+          this.cursor = event.seq;
+          this.saveCursor();
+          continue;
+        }
         const text = event.type === 'message' ? `[星邮消息] ${JSON.stringify({ kind: data.kind, sender: data.sender, senderNickname: data.senderNickname ?? '', target: data.target, text: data.text, emoji: data.emoji, image: Boolean(data.image), mentions: data.mentions })}`
           : `[星邮 ${event.type}] ${JSON.stringify(data, (key, value) => key === 'base64' ? undefined : value)}`;
         const incomingImage = event.type === 'message' && data.image;
@@ -280,6 +303,7 @@ export class StarpostWorld implements World {
         this.saveCursor();
       }
       await this.flushMessages();
+      await this.checkRelease();
     } catch (error) { this.connected = false; this.lastError = (error as Error).message; }
     finally { this.busy = false; }
   }
