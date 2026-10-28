@@ -27,6 +27,9 @@ test('初始面板注册后，本机身份与 bot 资料工具可跨重启使用
     const profileTool = second.tools().find(tool => tool.name === 'starpost_profile')!;
     const update = await profileTool.handler({ action: 'update', nickname: '小星', bio: '看星星', discoverable: true }, {} as never);
     assert.match(String(update), /小星/);
+    app.store.befriend('10001', '10002');
+    const send = await second.tools().find(tool => tool.name === 'starpost_send')!.handler({ kind: 'private', target: '10001', text: '你好' }, {} as never);
+    assert.ok(JSON.parse(String(send)).id);
     const snapshot = await second.webUi().invoke!('viewer', 'snapshot', []) as { profile: { nickname: string } };
     assert.equal(snapshot.profile.nickname, '小星');
     const squareTool = second.tools().find(tool => tool.name === 'starpost_square')!;
@@ -40,6 +43,11 @@ test('初始面板注册后，本机身份与 bot 资料工具可跨重启使用
     assert.equal(JSON.parse(String(browse))[0].id, listingId);
     assert.equal(String(browse).includes('来看夜空'), false);
     assert.ok(external.some(event => event.type === 'starpost.square_bot' && event.origin === 'external' && event.text.includes('来看夜空')));
+    const chat = external.find(event => event.type === 'starpost.message');
+    assert.equal(chat?.origin, 'external');
+    assert.deepEqual(JSON.parse(chat!.text.slice('[星邮消息] '.length)), {
+      kind: 'private', sender: '10002', senderNickname: '小星', target: '10001', text: '你好', emoji: '', image: false, mentions: [],
+    });
     await legacy.stop();
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });

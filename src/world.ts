@@ -171,7 +171,7 @@ export class StarpostWorld implements World {
             const index = {
               botId: snap.botId, profile: snap.profile, friends: snap.friends, requests: snap.requests.map((r: any) => ({ from: r.from })),
               groups: snap.groups.map((g: any) => ({ id: g.id, members: g.members })),
-              messages: snap.messages.map((m: any) => ({ id: m.id, kind: m.kind, target: m.target, sender: m.sender, at: m.at })).slice(-50),
+              messages: snap.messages.map((m: any) => ({ id: m.id, kind: m.kind, target: m.target, sender: m.sender, senderNickname: m.senderNickname ?? '', at: m.at })).slice(-50),
               posts: snap.posts.map((p: any) => ({ id: p.id, author: p.author, at: p.at, comments: p.comments.map((c: any) => ({ id: c.id, author: c.author, parentId: c.parentId })) })).slice(-50),
               bottles: snap.bottles.map((b: any) => ({ id: b.id, author: b.author, pickedBy: b.pickedBy })).slice(-50),
               square: (snap.square ?? []).map((item: any) => ({ id: item.id, kind: item.kind, author: item.author, target: item.target, at: item.at })),
@@ -209,7 +209,7 @@ export class StarpostWorld implements World {
       this.connected = true; this.lastError = '';
       for (const event of events) {
         const data = event.data;
-        const text = event.type === 'message' ? `[星邮消息] ${JSON.stringify({ kind: data.kind, sender: data.sender, target: data.target, text: data.text, emoji: data.emoji, image: Boolean(data.image), mentions: data.mentions })}`
+        const text = event.type === 'message' ? `[星邮消息] ${JSON.stringify({ kind: data.kind, sender: data.sender, senderNickname: data.senderNickname ?? '', target: data.target, text: data.text, emoji: data.emoji, image: Boolean(data.image), mentions: data.mentions })}`
           : `[星邮 ${event.type}] ${JSON.stringify(data, (key, value) => key === 'base64' ? undefined : value)}`;
         await this.host.pushEvent({ type: `starpost.${event.type.replaceAll('.', '_')}`, ts: event.at, source: this.id, origin: 'external', senderKey: event.type === 'message' ? `starpost.${data.kind}.${data.target}` : 'starpost', text });
         if (event.type === 'square.bot' || event.type === 'square.group') this.seenSquare.add(data.id);

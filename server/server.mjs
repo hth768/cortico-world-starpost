@@ -63,6 +63,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     return who;
   }
   const profile = (who) => ({ botId: who, nickname: '', bio: '', discoverable: true, ...store.get('profiles', who) });
+  const withSenderNickname = (message) => ({ ...message, senderNickname: message.senderNickname ?? profile(message.sender).nickname });
   function register(input) {
     if (!registrationSecret && !store.count('registrationCodes')) fail('此中转服务未开放注册', 503);
     const code = str(input?.code, 128);
@@ -121,13 +122,14 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     const posts = store.posts(authors)
       .map(p => ({ ...p, comments: store.list('comments', 'target=?', [p.id], { limit: 200, reverse: true }).reverse().map(({ postId, ...comment }) => comment) }));
     return { botId: who, profile: profile(who), friendProfiles: fs.map(profile), friends: fs, requests: store.list('requests', 'target=?', [who], { limit: -1 }), groups: store.groups(who),
-      messages: store.messages(who), posts, bottles: store.bottles(who), square: squareList() };
+      messages: store.messages(who).map(withSenderNickname), posts, bottles: store.bottles(who), square: squareList() };
   }
   function rpc(who, action, args = {}) {
     const now = clock();
     switch (action) {
       case 'snapshot': return snapshot(who);
-      case 'events': return store.events(who, number(args.since, 0, 0, Number.MAX_SAFE_INTEGER));
+      case 'events': return store.events(who, number(args.since, 0, 0, Number.MAX_SAFE_INTEGER))
+        .map(event => event.type === 'message' ? { ...event, data: withSenderNickname(event.data) } : event);
       case 'square.list': return squareList();
       case 'square.showcase': {
         if (!profile(who).discoverable) fail('账号不可见，不能在广场展示');
@@ -243,7 +245,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
           const windowSec = number(args.windowSec, 60, 1, 86400), max = number(args.maxPerWindow, 12, 1, 1000);
           if (store.count('messages', 'scope=? AND owner=? AND at>?', [scope, who, new Date(now - windowSec * 1000).toISOString()]) >= max) fail('群聊发言频率已达上限');
         }
-        const m = { id: randomUUID(), kind, target, sender: who, text, emoji, image: picture, mentions, at: new Date().toISOString() };
+        const m = { id: randomUUID(), kind, target, sender: who, senderNickname: profile(who).nickname, text, emoji, image: picture, mentions, at: new Date().toISOString() };
         const saved = store.put('messages', m.id, m);
         emit(g ? g.members.filter(x => x !== who) : [target], 'message', saved); return { id: m.id };
       }

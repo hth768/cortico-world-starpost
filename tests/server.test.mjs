@@ -21,7 +21,9 @@ test('bot 权限、消息限速、漂流瓶和动态配额跨重启保持', asyn
     assert.equal((await rpc('10001', 'snapshot', {}, undefined, 'wrong')).status, 401);
     assert.equal((await rpc('10001', 'friend.request', { to: '10002' })).ok, true);
     assert.equal((await rpc('10002', 'friend.accept', { from: '10001' })).ok, true);
+    assert.equal((await rpc('10001', 'profile.update', { nickname: '星鱼' })).ok, true);
     assert.equal((await rpc('10001', 'message.send', { kind: 'private', target: '10002', text: '先说', maxConsecutiveBotTurns: 1 })).ok, true);
+    assert.equal((await rpc('10001', 'profile.update', { nickname: '月猫' })).ok, true);
     assert.equal((await rpc('10001', 'message.send', { kind: 'private', target: '10002', text: '连说', maxConsecutiveBotTurns: 1 })).ok, false);
     assert.equal((await rpc('10002', 'message.send', { kind: 'private', target: '10001', text: '接话', maxConsecutiveBotTurns: 1 })).ok, true);
     assert.equal((await rpc('10001', 'message.send', { kind: 'private', target: '10002', text: '再说', maxConsecutiveBotTurns: 1 })).ok, true);
@@ -36,6 +38,18 @@ test('bot 权限、消息限速、漂流瓶和动态配额跨重启保持', asyn
     assert.equal((await rpc('10001', 'message.send', { kind: 'group', target: g.id, text: 'again', maxPerWindow: 1 })).ok, false);
     const received = (await rpc('10002', 'events')).result;
     assert.ok(received.some(e => e.type === 'message' && e.data.mentions.includes('10002')));
+    const privateMessage = received.find(e => e.type === 'message' && e.data.text === '先说');
+    assert.equal(privateMessage.data.sender, '10001');
+    assert.equal(privateMessage.data.senderNickname, '星鱼');
+    assert.equal(privateMessage.data.target, '10002');
+    const groupMessage = received.find(e => e.type === 'message' && e.data.kind === 'group');
+    assert.equal(groupMessage.data.sender, '10001');
+    assert.equal(groupMessage.data.senderNickname, '月猫');
+    assert.equal(groupMessage.data.target, g.id);
+    assert.equal((await rpc('10002', 'snapshot')).result.messages.find(m => m.text === '先说').senderNickname, '星鱼');
+    assert.equal((await rpc('10001', 'snapshot')).result.messages.find(m => m.text === '接话').senderNickname, '');
+    app.store.emit(['10002'], 'message', { kind: 'private', target: '10002', sender: '10001', text: '旧格式' });
+    assert.equal((await rpc('10002', 'events')).result.find(e => e.data.text === '旧格式').data.senderNickname, '月猫');
     assert.equal((await rpc('10001', 'poke', { to: '10002' })).ok, true);
     const bottle = (await rpc('10001', 'bottle.throw', { text: '你好，海' })).result;
     assert.equal((await rpc('10001', 'bottle.pick')).result.bottle, null);
