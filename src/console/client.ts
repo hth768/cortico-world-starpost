@@ -14,6 +14,10 @@ interface ChatMessage {
   text: string; emoji: string; image?: { mime: string; base64: string }; mentions: string[]; at: string;
 }
 interface HistoryPage { messages: ChatMessage[]; nextBefore: number | null; nextAfter: number | null }
+interface StickerPage {
+  total: number; matched: number; qqImported: number; warning: string; nextOffset: number | null;
+  items: Array<{ file: string; emotion: string; usage: string; tag: string; label: string; note: string; count: number; qqImported: boolean }>;
+}
 const chatCss = `
 .sp-chat-layout{display:grid;grid-template-columns:minmax(210px,30%) minmax(0,1fr);min-height:540px;border:1px solid rgba(128,128,128,.22);border-radius:14px;overflow:hidden;margin-top:12px}
 .sp-chat-list{display:flex;flex-direction:column;gap:4px;padding:10px;border-right:1px solid rgba(128,128,128,.22);max-height:620px;overflow:auto;background:rgba(128,128,128,.04)}
@@ -64,12 +68,49 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
   const account = ui.h('div');
   const content = ui.h('div');
   card.body.append(status, account, content); ctx.root.appendChild(card.el);
+  const library = ui.sheet({ title: '表情包收藏', en: 'Stickers' }); library.el.hidden = true; ctx.root.appendChild(library.el);
+  const stickerQuery = ui.input({ placeholder: '搜索标签、备注、情感或用途' }); stickerQuery.maxLength = 200;
+  const stickerStatus = ui.msgline('由 bot 自主填写标注，页面只读。');
+  const stickerList = ui.h('div'), stickerPager = ui.h('div');
+  let stickerBusy = false, stickerLoaded = false;
+  async function loadStickers(offset = 0) {
+    if (stickerBusy || ctx.signal.aborted) return;
+    stickerBusy = true;
+    try {
+      const page = await ctx.invoke<StickerPage>('stickers', [stickerQuery.value, offset]);
+      if (ctx.signal.aborted) return;
+      if (offset === 0) stickerList.replaceChildren();
+      stickerPager.replaceChildren();
+      stickerStatus.textContent = `收藏 ${page.total} 张 · 匹配 ${page.matched} 张 · 读取 QQ 标注 ${page.qqImported} 张${page.warning ? ` · ${page.warning}` : ''}`;
+      for (const item of page.items) {
+        const row = ui.h('div'); row.style.marginBottom = '12px';
+        line(ctx, row, `${item.label || '表情包'} · ${item.file}${item.qqImported ? ' · 含 QQ 标注' : ''}`);
+        line(ctx, row, `情感：${item.emotion || '未标注'} · 用途：${item.usage || '未标注'} · 标签：${item.tag || '未标注'} · 收到 ${item.count} 次`);
+        if (item.note) line(ctx, row, `备注：${item.note}`);
+        const preview = ui.h('div');
+        const view = ui.button('查看图片', { size: 'sm', onClick: () => {
+          view.disabled = true;
+          void ctx.invoke<{ mime: string; base64: string }>('stickerImage', [item.file]).then(value => {
+            if (!ctx.signal.aborted) image(ctx, preview, value);
+          }).catch(error => { line(ctx, preview, String(error)); view.disabled = false; });
+        } });
+        row.append(view, preview); stickerList.appendChild(row);
+      }
+      if (page.nextOffset !== null) stickerPager.appendChild(ui.button('加载更多', { onClick: () => { void loadStickers(page.nextOffset!); } }));
+      stickerLoaded = true;
+    } catch (error) { stickerStatus.textContent = String(error); }
+    finally { stickerBusy = false; }
+  }
+  const stickerSearch = ui.button('搜索 / 刷新', { onClick: () => { void loadStickers(); } });
+  const stickerBar = ui.rowbar(); stickerBar.append(stickerQuery, stickerSearch);
+  library.body.append(stickerBar, stickerStatus, stickerList, stickerPager);
   let shown: 'registered' | 'unregistered' | '' = '';
   let selected = '', before: number | null = null, snapshotData: Snapshot | null = null, historyLoading = 0, refreshBusy = false;
   const history = new Map<string, ChatMessage>();
   function showRegistration() {
     if (shown === 'unregistered') return;
     shown = 'unregistered'; account.replaceChildren(); content.replaceChildren();
+    library.el.hidden = true;
     line(ctx, account, '首次使用请注册。聊天 ID 将由中转服务依次分配。');
     const code = ui.input({ placeholder: '输入服务器注册码' }); code.type = 'password'; code.autocomplete = 'off'; code.maxLength = 200;
     const result = ui.msgline('注册码由中转服务管理员提供。');
@@ -85,6 +126,8 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
   function showSearch() {
     if (shown === 'registered') return;
     shown = 'registered'; account.replaceChildren();
+    library.el.hidden = false;
+    if (!stickerLoaded) void loadStickers();
     const query = ui.input({ placeholder: '按昵称或聊天 ID 搜索 bot' }); query.maxLength = 40;
     const results = ui.h('div');
     const button = ui.button('搜索', { onClick: () => {

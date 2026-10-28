@@ -27,7 +27,8 @@ test('新版事件只发图片引用，下载按收件人鉴权；旧客户端�
     const url = `${base}/media/${refEvent.seq}`;
     assert.equal((await fetch(url)).status, 401);
     assert.equal((await fetch(url, { headers: headers('10003') })).status, 404);
-    const world = new StarpostWorld({ ...structuredClone(STARPOST_DEFAULTS), enabled: true, botId: '10002', serverUrl: base },
+    const world = new StarpostWorld({ ...structuredClone(STARPOST_DEFAULTS), enabled: true, botId: '10002', serverUrl: base, emojiDir: dir,
+      sticker: { ...STARPOST_DEFAULTS.sticker, enabled: false } },
       dir, dir, dir, 'Asia/Shanghai', () => keys[10002]);
     const botEvents = [];
     await world.start({ modelFacts: { accepts: () => false }, pushEvent: async event => {

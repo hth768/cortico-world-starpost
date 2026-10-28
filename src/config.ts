@@ -6,6 +6,7 @@ export interface StarpostConfigSection {
   botId: string;
   tokenSecret: string;
   emojiDir: string;
+  sticker: { enabled: boolean; maxFiles: number; qqIndexFile: string };
   maxPrivateChats: number;
   maxGroups: number;
   groupSpeak: { maxPerWindow: number; windowSec: number };
@@ -17,6 +18,7 @@ export interface StarpostConfigSection {
 
 export const STARPOST_DEFAULTS: StarpostConfigSection = {
   enabled: false, serverUrl: 'https://8.148.13.225', botId: '', tokenSecret: 'CORTICO_STARPOST_TOKEN', emojiDir: '',
+  sticker: { enabled: true, maxFiles: 10000, qqIndexFile: '' },
   maxPrivateChats: 10, maxGroups: 5,
   groupSpeak: { maxPerWindow: 6, windowSec: 60 },
   antiLoop: { maxConsecutiveBotTurns: 5, idleToEndSec: 300 },
@@ -31,7 +33,10 @@ export const STARPOST_CONFIG_GROUP: ConfigGroup = {
     'worlds.starpost.serverUrl': { type: 'string', title: '中转服务地址', description: '建议使用 HTTPS。修改后重启 World。' },
     'worlds.starpost.botId': { type: 'string', title: '旧账号聊天 ID', description: '新账号在星邮页面注册并自动分配；旧版手工登记的账号才需在此填写 ID。' },
     'worlds.starpost.tokenSecret': { type: 'string', title: '密钥环境变量名', description: '默认 CORTICO_STARPOST_TOKEN；密钥值写在部署 .env。' },
-    'worlds.starpost.emojiDir': { type: 'string', title: '表情包文件夹', description: '留空使用扩展内 emoji 文件夹；也可设为 qq 扩展的 emoji 文件夹。仅读取文件夹内的图片。' },
+    'worlds.starpost.emojiDir': { type: 'string', title: '表情包文件夹', description: '留空使用扩展内 emoji 文件夹；也可设为 qq 扩展的 emoji 文件夹。收到的聊天表情包自动收集到此目录。' },
+    'worlds.starpost.sticker.enabled': { type: 'boolean', title: '自动收集聊天表情包', description: '按图片内容去重，单张不超过 1 MiB；动态附图不自动收集。', 'x-hot': true },
+    'worlds.starpost.sticker.maxFiles': { type: 'integer', minimum: 1, maximum: 50000, title: '表情包收藏数量上限', description: '默认 10000 张，达到上限后保留现有收藏。修改后重启 World。' },
+    'worlds.starpost.sticker.qqIndexFile': { type: 'string', title: 'QQ 表情包标签索引', description: '留空尝试读取本实例 data/sticker-index.json；跨实例共用目录时可填写对应 QQ 实例的索引路径。只读导入哈希与文件匹配的标注，修改后重启 World。' },
     'worlds.starpost.maxPrivateChats': { type: 'integer', minimum: 0, maximum: 1000, title: '私聊上限', 'x-hot': true },
     'worlds.starpost.maxGroups': { type: 'integer', minimum: 0, maximum: 1000, title: '群聊上限', 'x-hot': true },
     'worlds.starpost.groupSpeak.maxPerWindow': { type: 'integer', minimum: 1, maximum: 1000, title: '每群窗口发言上限', 'x-hot': true },
