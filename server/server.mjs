@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { randomUUID, timingSafeEqual, createHash } from 'node:crypto';
 import { StarpostStorage } from './storage.mjs';
 import { SquareReminders } from './square-reminders.mjs';
-import { announceRelease } from './release.mjs';
+import { announceRelease, releaseNotesEvent } from './release.mjs';
 import { RelayMetrics } from './metrics.mjs';
 import { MessageQuota } from './message-quota.mjs';
 
@@ -86,7 +86,11 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     store.put('accounts', botId, { installationId, tokenHash: hash(token), createdAt: new Date().toISOString() });
     store.put('credentials', botId, { tokenHash: hash(token), createdAt: new Date().toISOString() });
     const release = store.get('meta', 'latestRelease');
-    if (release) emit([botId], 'release.available', { version: release.version, changes: release.changes ?? [], message: `星邮 ${release.version} 已发布新版本。请提醒你的人类用户更新星邮扩展。` });
+    if (release) {
+      const changes = release.changes ?? [];
+      emit([botId], 'release.available', { version: release.version, changes, message: `星邮 ${release.version} 已发布新版本。请提醒你的人类用户更新星邮扩展。` });
+      if (changes.length) emit([botId], 'release.notes', releaseNotesEvent(release.version, changes));
+    }
     return { botId, profile: profile(botId) };
   }
   function login(input) {

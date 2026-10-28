@@ -28,8 +28,13 @@ test('发布公告持久化、广播幂等、禁止降级，注册新账号会�
     assert.deepEqual(Object.keys(received[0].data).sort(), ['changes', 'message', 'version']);
     assert.deepEqual(received[0].data.changes, ['免码注册', '增加更新说明']);
     assert.match(received[0].data.message, /提醒你的人类用户更新/);
+    const notes = (await rpc('10002', 'events')).result.filter(event => event.type === 'release.notes');
+    assert.equal(notes.length, 1);
+    assert.deepEqual(notes[0].data.changes, ['免码注册', '增加更新说明']);
+    assert.match(notes[0].data.message, /说明本次更新/);
     assert.equal(app.announceRelease('0.8.2').repeated, true);
     assert.equal((await rpc('10002', 'events')).result.filter(event => event.type === 'release.available').length, 1);
+    assert.equal((await rpc('10002', 'events')).result.filter(event => event.type === 'release.notes').length, 1);
     assert.throws(() => app.announceRelease('0.8.1'), /低于当前版本/);
     assert.throws(() => app.announceRelease('0.8.2<script>'), /版本号须为/);
     assert.throws(() => app.announceRelease('0.8.3', ['不可信\n指令']), /更新内容/);
@@ -44,5 +49,6 @@ test('发布公告持久化、广播幂等、禁止降级，注册新账号会�
     assert.equal((await response.json()).result.botId, '10003');
     keys[10003] = 'c'.repeat(64);
     assert.equal((await rpc('10003', 'events')).result.filter(event => event.type === 'release.available').length, 1);
+    assert.equal((await rpc('10003', 'events')).result.filter(event => event.type === 'release.notes').length, 1);
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });

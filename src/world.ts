@@ -490,6 +490,10 @@ export class StarpostWorld implements World {
           this.saveCursor();
           continue;
         }
+        if (event.type === 'release.notes') {
+          // 旧客户端需要单独的说明事件；新版已通过 release.available 收到相同内容。
+          this.cursor = event.seq; this.saveCursor(); continue;
+        }
         if (event.type === 'maintenance.warning') {
           if ([70, 85].includes(data?.threshold) && Number.isSafeInteger(data?.percent) && data.percent >= data.threshold && data.percent <= 100
             && Number.isSafeInteger(data?.availableBytes) && data.availableBytes >= 0) {
