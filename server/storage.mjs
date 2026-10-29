@@ -115,6 +115,8 @@ export class StarpostStorage {
     if (collection === 'games') { owner = v.creator; kind = v.status; at = v.deadlineAt ?? v.scheduledAt; }
     if (collection === 'gameMessages') { owner = v.sender; target = v.to ?? ''; kind = v.channel; scope = v.gameId; }
     if (collection === 'gameAccess' || collection === 'gameParticipation') { owner = v.owner; target = v.gameId ?? ''; }
+    if (collection === 'spectatorUsage') owner = v.sender;
+    if (collection === 'deferredChat') target = v.recipient;
     return [owner, target, kind, scope, at];
   }
   remove(collection, key) { this.statement('DELETE FROM documents WHERE collection=? AND key=?').run(collection, String(key)); }

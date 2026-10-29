@@ -23,6 +23,7 @@ const day = ms => new Date(ms + 8 * HOUR).toISOString().slice(0, 10);
 const hour = ms => new Date(ms + 8 * HOUR).getUTCHours();
 const canStartAt = ms => { const h = hour(ms); return h >= 6 && h < 9 || h >= 12 && h < 14 || h >= 18; };
 const RULEBOOK = {
+  spectators: '默认私密。公开对局允许未参与者全知观战所有房间消息；局外频道仅观众可见并计普通聊天额度，参赛者与法官的游戏发言仍免额度。参赛期间普通聊天暂存，结算后补投。',
   roles: { wolf: '狼人：夜晚共同选择一位非狼人袭击', seer: '预言家：每夜查验一位其他玩家是否为狼人',
     witch: '女巫：全局各一瓶解药和毒药，每夜至多用一瓶，不能自救', guard: '守卫：每夜守护一人，不能连续两夜守同一人',
     hunter: '猎人：被袭击或公投出局后可开枪一次，被毒杀不能开枪', villager: '平民：白天讨论并参加公投' },
@@ -57,8 +58,9 @@ function shuffle(values) {
 }
 
 export class WerewolfGames {
-  constructor(store, { isKnown, friends, group, nickname = () => '', clock = Date.now }) {
+  constructor(store, { isKnown, friends, group, nickname = () => '', clock = Date.now, pauseChat = () => {}, resumeChat = () => {}, consume = () => {}, knownIds = () => [] }) {
     this.store = store; this.isKnown = isKnown; this.friends = friends; this.group = group; this.nickname = nickname; this.clock = clock;
+    this.pauseChat = pauseChat; this.resumeChat = resumeChat; this.consume = consume; this.knownIds = knownIds;
   }
   rules(who) {
     return { presets: PRESETS, customPlayers: '6–20 人，每种神职最多一位，狼人少于半数且至少一位平民',
@@ -81,7 +83,8 @@ export class WerewolfGames {
     const entry = { id: randomUUID(), gameId: game.id, channel, sender, senderNickname: sender === 'system' ? '星邮法官' : this.nickname(sender),
       recipients: [...new Set(recipients)], at, ...data };
     this.store.put('gameMessages', entry.id, entry);
-    this.store.emit([...new Set(recipients)].filter(who => who !== sender), `game.${channel}`, entry, at);
+    const viewers = game.public && channel !== 'outside' ? (game.spectators ?? []).filter(who => !this.store.get('gameBusy', who)) : [];
+    this.store.emit([...new Set([...recipients, ...viewers])].filter(who => who !== sender), `game.${channel}`, entry, at);
     return entry;
   }
   public(game, data, sender = 'system') { return this.emit(game, 'public', [...game.participants, ...(game.judgeBotId ? [game.judgeBotId] : [])], data, sender); }
@@ -97,10 +100,10 @@ export class WerewolfGames {
       status: game.status, maxPlayers: game.maxPlayers, joined: game.joined.length, checkedIn: game.checkedIn.length,
       rules: game.rules, participant: who ? game.joined.includes(who) : undefined,
       judge: who ? game.judgeBotId === who : undefined, phaseDeadlineAt: game.deadlineAt,
-      winner: game.winner ?? null };
+      winner: game.winner ?? null, public: Boolean(game.public), spectators: (game.spectators ?? []).length };
   }
   canView(game, who) {
-    if (game.creator !== who && game.judgeBotId !== who && !game.invited.includes(who) && !game.joined.includes(who)) fail('无权查看此局游戏', 403);
+    if (!game.public && game.creator !== who && game.judgeBotId !== who && !game.invited.includes(who) && !game.joined.includes(who)) fail('无权查看此局游戏', 403);
   }
   participation(who, now) {
     return this.store.get('gameParticipation', `${who}:${day(now)}`)?.games ?? [];
@@ -135,6 +138,7 @@ export class WerewolfGames {
     if (sourceKind === 'private' && !this.friends(who).includes(targets[0])) fail('只能通过私聊邀请好友', 403);
     const invited = [...new Set(targets.filter(botId => botId !== judgeBotId))];
     const game = { id: randomUUID(), title, creator: who, judgeMode, judgeBotId, assignmentMode,
+      public: args.public === true, spectators: [],
       scheduledAt: iso(scheduled), createdAt: iso(now), status: 'scheduled', deadlineAt: iso(scheduled),
       maxPlayers, customRoles: custom, rules: custom ?? { preset: '按实际报到人数自动匹配 6–20 人身份配置' },
       invited, joined: judgeBotId === who ? [] : [who], checkedIn: [], judgeAccepted: judgeBotId === who,
@@ -168,6 +172,7 @@ export class WerewolfGames {
     }
     if (!game.invited.includes(who) && who !== game.creator) fail('没有收到这局邀请', 403);
     if (game.joined.includes(who)) return { gameId, joined: true };
+    game.spectators = (game.spectators ?? []).filter(id => id !== who);
     if (game.joined.length >= game.maxPlayers) fail('名额已满');
     if (this.participation(who, Date.parse(game.scheduledAt)).length >= 3) fail('预约当天已参加 3 局');
     game.joined.push(who); this.save(game);
@@ -199,18 +204,49 @@ export class WerewolfGames {
   list(who) {
     return this.store.list('gameAccess', 'owner=?', [who], { limit: 50, reverse: true })
       .map(access => this.store.get('games', access.gameId)).filter(Boolean)
+      .filter(game => game.public || game.creator === who || game.judgeBotId === who || game.invited.includes(who) || game.joined.includes(who))
       .map(game => this.summary(game, who));
+  }
+  publicListings() {
+    return this.store.list('games', `kind IN (${ACTIVE.map(() => '?').join(',')})`, ACTIVE, { limit: -1, reverse: true })
+      .filter(game => game.public && game.published).slice(0, 100).map(game => ({ ...this.summary(game), id: game.id, kind: 'game', author: game.creator, target: game.id, text: game.title, at: game.createdAt }));
+  }
+  visibility(who, args) {
+    const game = this.get(args.gameId);
+    if (game.creator !== who || game.status !== 'scheduled' || typeof args.public !== 'boolean') fail('仅发起人可在开局前设置公开性', 403);
+    game.public = args.public; if (!game.public) { game.spectators = []; game.published = false; }
+    this.save(game); return { gameId: game.id, public: game.public };
+  }
+  publish(who, gameId) {
+    const game = this.get(gameId);
+    if (game.creator !== who || !game.public || !ACTIVE.includes(game.status)) fail('只有公开对局的发起人可公告', 403);
+    if (game.published) fail('本局已公告');
+    game.published = true; this.save(game);
+    this.store.emit(this.knownIds().filter(id => id !== who), 'square.game', this.publicListings().find(item => item.id === game.id));
+    return { gameId, published: true };
+  }
+  watch(who, gameId, enabled) {
+    const game = this.get(gameId);
+    if (!game.public || !ACTIVE.includes(game.status)) fail('对局未公开或已经关闭', 403);
+    if (game.participants.includes(who) || game.judgeBotId === who || game.joined.includes(who)) fail('参与者不能进入全知观战频道', 403);
+    if (this.store.get('gameBusy', who)) fail('正在对局时不能观战其他对局', 403);
+    game.spectators ??= []; game.spectators = game.spectators.filter(id => id !== who);
+    if (enabled) game.spectators.push(who); this.save(game);
+    this.store.put('gameAccess', `${who}:${game.id}`, { owner: who, gameId, at: game.createdAt });
+    return { gameId, watching: enabled };
   }
   read(who, gameId, before) {
     const game = this.get(gameId); this.canView(game, who);
-    if (!['scheduled', 'cancelled'].includes(game.status) && !game.participants.includes(who) && game.judgeBotId !== who) fail('不是此局聊天室成员', 403);
+    const spectator = Boolean(game.public && !game.joined.includes(who) && game.judgeBotId !== who);
+    if (spectator && this.store.get('gameBusy', who)) fail('正在对局时不能读取全知视角', 403);
+    if (!spectator && !['scheduled', 'cancelled'].includes(game.status) && !game.participants.includes(who) && game.judgeBotId !== who) fail('不是此局聊天室成员', 403);
     const cursor = before == null ? Number.MAX_SAFE_INTEGER : before;
     if (!Number.isSafeInteger(cursor) || cursor < 1) fail('消息游标不合法');
     const rows = this.store.statement("SELECT rowid,data FROM documents WHERE collection='gameMessages' AND scope=? AND rowid<? ORDER BY rowid DESC LIMIT 200").all(game.id, cursor);
-    const allowed = rows.map(row => ({ ...JSON.parse(row.data), cursor: row.rowid })).filter(item => item.channel === 'public'
+    const allowed = rows.map(row => ({ ...JSON.parse(row.data), cursor: row.rowid })).filter(item => spectator || item.channel === 'public'
       || item.channel === 'private' && item.to === who
       || item.channel === 'wolf' && item.recipients.includes(who)
-      || game.judgeBotId === who);
+      || game.judgeBotId === who && item.channel !== 'outside');
     const page = allowed.slice(0, 50).reverse();
     return { game: { ...this.summary(game, who), rulebook: RULEBOOK, participants: game.participants, alive: game.alive, day: game.day,
       ownRole: game.roles[who] ?? null, uses: game.roles[who] ? game.uses[who] ?? {} : undefined,
@@ -272,6 +308,7 @@ export class WerewolfGames {
     game.rules = roles; game.participants = present; game.startedAt = iso(now);
     for (const who of [...present, ...(game.judgeBotId ? [game.judgeBotId] : [])]) {
       this.charge(who, game.id, now); this.store.put('gameBusy', who, { gameId: game.id });
+      this.pauseChat(who);
     }
     this.store.emit([...new Set([...game.joined, game.creator, ...(game.judgeBotId ? [game.judgeBotId] : [])])], 'game.attendance',
       { gameId: game.id, participants: present, absent, judgeMode: game.judgeMode });
@@ -283,6 +320,13 @@ export class WerewolfGames {
   }
   message(who, args) {
     const game = this.get(args.gameId), now = this.clock();
+    if (args.channel === 'outside') {
+      if (!game.public || !(game.spectators ?? []).includes(who) || game.joined.includes(who) || game.judgeBotId === who || this.store.get('gameBusy', who) || !ACTIVE.includes(game.status)) fail('仅未参赛的观众可在局外讨论', 403);
+      const content = text(args.text, 1000, true);
+      if (this.store.count('gameMessages', 'scope=? AND owner=? AND at>=?', [game.id, who, iso(now - 60000)]) >= 6) fail('每分钟最多 6 条', 429);
+      this.consume(who); const entry = this.emit(game, 'outside', game.spectators.filter(id => !this.store.get('gameBusy', id)), { kind: 'chat', text: content }, who);
+      return { gameId: game.id, messageId: entry.id, channel: 'outside' };
+    }
     if (!['night_wolf', 'night_gods', 'day', 'vote', 'finished'].includes(game.status)) fail('聊天室尚未开放或已经关闭');
     const judge = game.judgeBotId === who, player = game.participants.includes(who);
     if (!judge && !player) fail('不是本局成员', 403);
@@ -365,6 +409,7 @@ export class WerewolfGames {
     game.status = 'finished'; game.winner = winner; game.deadlineAt = iso(this.clock() + 2 * 60000); this.save(game);
     for (const who of [...game.participants, ...(game.judgeBotId ? [game.judgeBotId] : [])]) {
       if (this.store.get('gameBusy', who)?.gameId === game.id) this.store.remove('gameBusy', who);
+      this.resumeChat(who);
     }
     this.public(game, { kind: 'finished', winner, roles: game.roles, closeAt: game.deadlineAt });
   }

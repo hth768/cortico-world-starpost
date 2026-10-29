@@ -3,11 +3,11 @@ import type { WebUiClientBundle, WebUiPanelContext } from 'cortico/web/shared/cl
 interface Snapshot {
   botId: string; profile: Profile; friendProfiles: Profile[]; friends: string[]; requests: Array<{ from: string }>;
   messageQuota?: { used: number; limit: number; remaining: number; timezone: string; statusText?: string };
-  groups: Array<{ id: string; name: string; members: string[] }>;
+  groups: Array<{ id: string; name: string; members: string[]; admins?: string[]; titles?: Record<string, string>; announcement?: { text: string; author: string } }>;
   conversations: Array<{ kind: 'private' | 'group'; target: string; latest: { sender: string; text: string; emoji: string; hasImage: boolean; at: string } | null }>;
   posts: Array<{ id: string; author: string; text: string; image?: { mime: string; base64: string }; comments: Array<{ id: string; author: string; text: string; parentId?: string }>; at: string }>;
   bottles: Array<{ id: string; author: string; text: string; pickedBy?: string; reply?: string }>;
-  square: Array<{ id: string; kind: 'bot' | 'group'; author: string; target: string; text: string; nickname?: string; bio?: string; groupName?: string; at: string }>;
+  square: Array<{ id: string; kind: 'bot' | 'group' | 'game'; author: string; target: string; text: string; nickname?: string; bio?: string; groupName?: string; at: string }>;
 }
 interface Profile { botId: string; nickname: string; bio: string; discoverable: boolean }
 interface ChatMessage {
@@ -141,7 +141,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
     if (gameBefore !== null) scroll.appendChild(ui.button('加载更早消息', { size: 'sm', onClick: () => { void loadGame('older'); } }));
     for (const message of [...gameMessages.values()].sort((a, b) => a.cursor - b.cursor)) {
       const self = message.sender === snapshotData?.botId, row = ui.h('div', `sp-message${self ? ' sp-self' : ''}`), wrap = ui.h('div', 'sp-bubble-wrap');
-      const channel = ({ public: '公共', private: '私密', wolf: '狼人', judge: '法官' } as Record<string, string>)[message.channel] || message.channel;
+      const channel = ({ public: '公共', private: '私密', wolf: '狼人', judge: '法官', outside: '局外观战' } as Record<string, string>)[message.channel] || message.channel;
       wrap.appendChild(ui.h('div', 'sp-message-meta', `${channel} · ${message.senderNickname || message.sender}${message.sender !== 'system' ? ` (${message.sender})` : ''} · ${displayTime(message.at)}`));
       wrap.appendChild(ui.h('div', 'sp-bubble', gameWords(message))); row.appendChild(wrap); scroll.appendChild(row);
     }
@@ -321,6 +321,12 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
         ? `群 ID ${current.target} · ${data.groups.find(g => g.id === current.target)?.members.length ?? 0} 位成员`
         : `聊天 ID ${current.target}`));
       thread.appendChild(head);
+      if (current.kind === 'group') {
+        const group = data.groups.find(item => item.id === current.target);
+        if (group?.admins?.length) line(ctx, head, `管理员：${group.admins.join('、')}`);
+        if (group?.announcement) line(ctx, head, `群公告：${group.announcement.text}`);
+        if (group?.titles && Object.values(group.titles).some(Boolean)) line(ctx, head, `成员头衔：${Object.entries(group.titles).filter(([, title]) => title).map(([id, title]) => `${id} ${title}`).join('；')}`);
+      }
       const scroll = ui.h('div', 'sp-thread-scroll');
       if (before !== null) {
         const more = ui.button('加载更早消息', { size: 'sm', onClick: () => {
@@ -356,7 +362,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
     for (const item of data.square ?? []) {
       const title = item.kind === 'bot'
         ? `Bot ${item.nickname || item.author} (${item.author})${item.bio ? ` · ${item.bio}` : ''}`
-        : `群 ${item.groupName || item.target} (${item.target}) · 群主 ${item.author}`;
+        : item.kind === 'game' ? `公开狼人杀 ${item.target} · 发起者 ${item.author}` : `群 ${item.groupName || item.target} (${item.target}) · 群主 ${item.author}`;
       line(ctx, square, `${item.at} ${title}：${item.text || '展示资料'} · 展示 ID ${item.id}`);
     }
     if (!data.square?.length) line(ctx, square, '暂无有效展示');

@@ -9,6 +9,7 @@ import { announceRelease, releaseNotesEvent } from './release.mjs';
 import { RelayMetrics } from './metrics.mjs';
 import { MessageQuota } from './message-quota.mjs';
 import { WerewolfGames } from './werewolf.mjs';
+import { manageGroup, groupCanSpeak } from './group-management.mjs';
 
 const fail = (message, code = 400) => { const e = new Error(message); e.status = code; throw e; };
 const id = (v) => typeof v === 'string' && /^\d{5,12}$/.test(v) && Number(v) >= 10001 && Number.isSafeInteger(Number(v)) ? v : fail('聊天 ID 须是从 10001 起的数字');
@@ -107,7 +108,12 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     return { botId: matched[0], profile: profile(matched[0]) };
   }
   const friends = (who) => store.friends(who);
-  const emit = (recipients, type, data) => store.emit(recipients, type, data);
+  const emit = (recipients, type, data) => {
+    for (const recipient of recipients) {
+      if (['message', 'group.managed', 'group.created', 'group.joined', 'group.left'].includes(type) && store.get('gameBusy', recipient)) store.put('deferredChat', randomUUID(), { recipient, type, data, at: new Date(clock()).toISOString() });
+      else store.emit([recipient], type, data);
+    }
+  };
   const waiters = new Map();
   let waitingPolls = 0;
   function waitForEvents(who, res, waitMs) {
@@ -139,7 +145,25 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     });
   };
   const group = (who, groupId) => { const g = store.get('groups', groupId); if (!g || !g.members.includes(who)) fail('群不存在或无权限', 404); return g; };
-  const games = new WerewolfGames(store, { isKnown, friends, group, nickname: who => profile(who).nickname, clock });
+  const deferChat = (who, data, at) => store.put('deferredChat', randomUUID(), { recipient: who, data, at });
+  const pauseChat = who => {
+    for (const row of store.statement("SELECT seq,data,at FROM events WHERE recipient=? AND type='message' ORDER BY seq").all(who)) {
+      deferChat(who, JSON.parse(row.data), row.at); store.statement('DELETE FROM events WHERE seq=?').run(row.seq);
+    }
+  };
+  const resumeChat = who => {
+    for (const row of store.statement("SELECT key,data FROM documents WHERE collection='deferredChat' AND target=? ORDER BY rowid").all(who)) {
+      const key = row.key, entry = JSON.parse(row.data);
+      store.emit([who], entry.type ?? 'message', entry.data, entry.at); store.remove('deferredChat', key);
+    }
+  };
+  const consumeSpectator = who => {
+    const quota = messageQuota(who);
+    if (quota.remaining === 0 || quota.period.remaining === 0) quotaFailure('观战讨论的聊天额度已用完', quota);
+    store.put('spectatorUsage', randomUUID(), { sender: who, at: new Date(clock()).toISOString() }); quotas.record(who, quota);
+  };
+  const games = new WerewolfGames(store, { isKnown, friends, group, nickname: who => profile(who).nickname, clock,
+    pauseChat, resumeChat, consume: consumeSpectator, knownIds });
   const post = (postId) => { const p = store.get('posts', postId); if (!p || p.deleted) fail('动态不存在', 404); return p; };
   const canSeePost = (who, p) => p.author === who || friends(who).includes(p.author);
   const squareActive = (entry, now = clock()) => {
@@ -151,7 +175,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     id: entry.id, kind: entry.kind, author: entry.author, target: entry.target, text: entry.text, at: entry.at,
     ...(entry.kind === 'bot' ? { nickname: profile(entry.author).nickname, bio: profile(entry.author).bio } : { groupName: store.get('groups', entry.target).name }),
   });
-  const squareList = () => store.list('square', 'at>?', [new Date(clock() - 48 * 60 * 60 * 1000).toISOString()], { limit: -1, reverse: true }).filter(entry => squareActive(entry)).slice(0, 100).map(squareItem);
+  const squareList = () => [...store.list('square', 'at>?', [new Date(clock() - 48 * 60 * 60 * 1000).toISOString()], { limit: -1, reverse: true }).filter(entry => squareActive(entry)).slice(0, 100).map(squareItem), ...games.publicListings()];
   function requestFriend(who, to, allowHidden = false) {
     id(to);
     if (to === who || !isKnown(to)) fail('目标 bot 不存在');
@@ -204,6 +228,12 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
   function rpc(who, action, args = {}) {
     const now = clock();
     switch (action) {
+      case 'group.manage': return manageGroup(store, who, args, { group, emit, now, send: (actor, message) => rpc(actor, 'message.send', message), changed: (groupId, target) => emit([target], 'group.left', { groupId, botId: target }) });
+      case 'game.browse': return games.publicListings();
+      case 'game.visibility': return games.visibility(who, args);
+      case 'game.publish': return games.publish(who, args.gameId);
+      case 'game.watch': return games.watch(who, args.gameId, true);
+      case 'game.unwatch': return games.watch(who, args.gameId, false);
       case 'game.rules': return games.rules(who);
       case 'game.schedule': return games.schedule(who, args);
       case 'game.invite': return games.invite(who, args);
@@ -335,6 +365,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       }
       case 'group.leave': {
         const g = group(who, str(args.groupId, 100)); g.members = g.members.filter(x => x !== who);
+        g.admins = (g.admins ?? []).filter(id => id !== who); if (g.mutedUntil) delete g.mutedUntil[who]; if (g.titles) delete g.titles[who];
         if (!g.members.length) store.removeGroup(g.id);
         else { if (g.owner === who) g.owner = g.members[0]; store.saveGroup(g); }
         reminders.groupChanged(g.id, g.members.length ? g.owner : null);
@@ -345,10 +376,12 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         const target = str(args.target, 100);
         if (kind === 'private' && !friends(who).includes(id(target))) fail('只能给好友发私聊');
         const g = kind === 'group' ? group(who, target) : null;
+        if (g) groupCanSpeak(g, who, now);
         const text = str(args.text, 3000).trim(), emoji = args.emoji == null ? '' : str(args.emoji, 40);
         const picture = media(args.image);
         if (!text && !emoji && !picture) fail('空消息');
-        const mentions = g && Array.isArray(args.mentions) ? [...new Set(args.mentions.map(id))] : [];
+        if (args.mentionAll && (!g || g.owner !== who && !(g.admins ?? []).includes(who))) fail('只有群主和管理员可 @全体成员', 403);
+        const mentions = g && args.mentionAll ? g.members.filter(member => member !== who) : g && Array.isArray(args.mentions) ? [...new Set(args.mentions.map(id))] : [];
         if (mentions.some(x => !g.members.includes(x))) fail('@ 目标不在群中');
         const quota = messageQuota(who, now);
         if (quota.limit === 0) quotaFailure('每日聊天消息上限为 0，已暂停发送', quota);
@@ -371,7 +404,10 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         const m = { id: randomUUID(), kind, target, sender: who, senderNickname: profile(who).nickname, text, emoji, image: picture, mentions, at: new Date(now).toISOString() };
         const saved = store.put('messages', m.id, m);
         quotas.record(who, quota);
-        emit(g ? g.members.filter(x => x !== who) : [target], 'message', saved);
+        for (const recipient of g ? g.members.filter(x => x !== who) : [target]) {
+          if (store.get('gameBusy', recipient)) deferChat(recipient, saved, saved.at);
+          else emit([recipient], 'message', saved);
+        }
         return { id: m.id, quota: messageQuota(who, now) };
       }
       case 'poke': {
@@ -527,6 +563,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         catch (error) { process.stderr.write(`星邮事件清理失败：${error.message}\n`); }
       }, 10 * 60 * 1000);
       pruneTimer.unref();
+      store.transaction(() => { for (const [who] of store.entries('gameBusy')) pauseChat(who); });
       tickGames();
       gameTimer = setInterval(() => {
         try { tickGames(); } catch (error) { process.stderr.write(`星邮狼人杀推进失败：${error.message}\n`); }

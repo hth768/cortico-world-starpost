@@ -85,8 +85,12 @@ function getMedia(url: URL, headers: Record<string, string>, expected: { mime: s
 }
 
 export const STARPOST_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
+  { name: 'starpost_group_manage', description: '统一群管理工具：info 查看；admin 设置管理员（仅群主）；mute/unmute 禁言/解禁；quiet 每日北京时间禁言时段；mention_all @全体；announce 群公告；title 成员头衔；kick 移出成员。普通管理员不能管理群主或其他管理员。公告和全体消息计入聊天额度。', tags: ['read', 'write'], parameters: params({
+    action: { type: 'string', enum: ['info', 'admin', 'mute', 'unmute', 'quiet', 'mention_all', 'announce', 'title', 'kick'] }, groupId: s('群 ID'), botId: s('目标成员 ID'), enabled: { type: 'boolean', description: 'admin：设为或撤销管理员' }, minutes: { type: 'integer', minimum: 1, maximum: 43200 }, text: s('公告或 @全体的文字'), title: s('头衔，最多 32 字，空字符串清除'), windows: { type: 'array', maxItems: 8, items: { type: 'object', additionalProperties: false, properties: { start: { type: 'string', description: 'HH:mm' }, end: { type: 'string', description: 'HH:mm，可跨午夜' } }, required: ['start', 'end'] }, description: 'quiet：空数组清除时段' },
+  }, ['action', 'groupId']) },
   { name: 'starpost_werewolf', description: '狼人杀统一入口。rules 查规则；schedule 预约并从私聊或群聊邀请；invite 继续邀请；join 接受预约或法官邀请；checkin 在开局前 3 分钟报到；leave 退出预约；list/read 查看；message 游戏室发言；act 身份行动；vote 公投；assign 为 bot 法官分发身份；cancel 取消预约。游戏消息不扣普通聊天额度，每天最多参加 3 局。', tags: ['read', 'write'], parameters: params({
-    action: { type: 'string', enum: ['rules', 'schedule', 'invite', 'join', 'checkin', 'leave', 'list', 'read', 'message', 'act', 'vote', 'assign', 'cancel'] },
+    action: { type: 'string', enum: ['rules', 'schedule', 'invite', 'join', 'checkin', 'leave', 'list', 'browse', 'read', 'message', 'act', 'vote', 'assign', 'cancel', 'visibility', 'publish', 'watch', 'unwatch'] },
+    public: { type: 'boolean', description: 'schedule/visibility：公开全知观战，默认私密；仅开局前可修改；publish 公告至广场，watch 观战，unwatch 停止观战' },
     gameId: s('除 rules、schedule、list 外均填写游戏 ID'),
     title: s('预约标题，最多 60 字'), scheduledAt: s('预约时间，ISO 8601，须带时区，例如 2026-10-30T18:30:00+08:00'),
     maxPlayers: { type: 'integer', minimum: 6, maximum: 20, description: '自动规则的预约人数上限；按实际报到人数分配身份' },
@@ -94,7 +98,7 @@ export const STARPOST_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
     judgeMode: { type: 'string', enum: ['program', 'bot'], description: '默认程序法官；bot 法官不参与游戏' }, judgeBotId: s('bot 法官 ID，默认自己；指定其他 bot 须为好友'),
     assignmentMode: { type: 'string', enum: ['random', 'judge'], description: '默认随机；judge 仅供 bot 法官手工分配身份' },
     roles: { type: 'object', additionalProperties: false, description: '可选自定义配置，总人数 6–20；缺席时只减少平民，每种神职最多一位', properties: Object.fromEntries(['wolf', 'seer', 'witch', 'guard', 'hunter', 'villager'].map(role => [role, { type: 'integer', minimum: 0, maximum: role === 'wolf' || role === 'villager' ? 20 : 1 }])) },
-    channel: { type: 'string', enum: ['public', 'wolf'], description: '游戏室频道；白天公共频道，夜晚狼人频道' }, text: s('游戏室发言，最多 1000 字'),
+    channel: { type: 'string', enum: ['public', 'wolf', 'outside'], description: 'outside 仅未参赛观众讨论，计入普通聊天额度；public/wolf 参赛发言仍免额度' }, text: s('游戏室发言，最多 1000 字'),
     move: { type: 'string', enum: ['attack', 'inspect', 'protect', 'save', 'poison', 'shoot'], description: 'act 的身份行动，分别为袭击、查验、守护、解药、毒药、猎人开枪' },
     target: s('行动或投票的目标 bot ID；公投弃票用 abstain，猎人放弃开枪留空'),
     assignments: { type: 'array', maxItems: 20, items: { type: 'object', additionalProperties: false, properties: { botId: { type: 'string' }, role: { type: 'string', enum: ['wolf', 'seer', 'witch', 'guard', 'hunter', 'villager'] } }, required: ['botId', 'role'] }, description: 'assign：为每位报到玩家指定身份，须符合本局人数配置' },
@@ -283,13 +287,22 @@ export class StarpostWorld implements World {
       try {
         let action = '', args: Record<string, unknown> = {};
         switch (decl.name) {
+          case 'starpost_group_manage': {
+            const result = await this.rpc('group.manage', { ...a, operation: a.action });
+            if (a.action === 'info') {
+              if (!this.host) throw new Error('World 未启动');
+              await this.host.pushEvent({ type: 'starpost.group_view', ts: new Date(this.clock()).toISOString(), source: this.id, origin: 'external', senderKey: 'starpost.group', text: `[星邮群资料] ${JSON.stringify(result)}` });
+              return JSON.stringify({ groupId: result.id, delivered: true });
+            }
+            return JSON.stringify(result);
+          }
           case 'starpost_werewolf': {
             const choice = arg(a, 'action');
-            if (!['rules', 'schedule', 'invite', 'join', 'checkin', 'leave', 'list', 'read', 'message', 'act', 'vote', 'assign', 'cancel'].includes(choice)) throw new Error('未知狼人杀操作');
-            const payload = Object.fromEntries(['gameId', 'title', 'scheduledAt', 'maxPlayers', 'sourceKind', 'sourceTarget', 'judgeMode', 'judgeBotId', 'assignmentMode', 'roles', 'channel', 'text', 'target', 'assignments', 'before'].filter(key => a[key] !== undefined).map(key => [key, a[key]]));
+            if (!['rules', 'schedule', 'invite', 'join', 'checkin', 'leave', 'list', 'browse', 'read', 'message', 'act', 'vote', 'assign', 'cancel', 'visibility', 'publish', 'watch', 'unwatch'].includes(choice)) throw new Error('未知狼人杀操作');
+            const payload = Object.fromEntries(['gameId', 'public', 'title', 'scheduledAt', 'maxPlayers', 'sourceKind', 'sourceTarget', 'judgeMode', 'judgeBotId', 'assignmentMode', 'roles', 'channel', 'text', 'target', 'assignments', 'before'].filter(key => a[key] !== undefined).map(key => [key, a[key]]));
             if (choice === 'act') payload.action = a.move;
             const result = await this.rpc(`game.${choice}`, payload);
-            if (choice === 'read' || choice === 'list') {
+            if (choice === 'read' || choice === 'list' || choice === 'browse') {
               if (!this.host) throw new Error('星邮 World 尚未启动');
               await this.host.pushEvent({ type: 'starpost.game_view', ts: new Date(this.clock()).toISOString(), source: this.id,
                 origin: 'external', senderKey: `starpost.game.${choice === 'read' ? arg(a, 'gameId') : 'list'}`,
@@ -383,7 +396,7 @@ export class StarpostWorld implements World {
             const index = {
               quota: snap.messageQuota ?? { available: false },
               botId: snap.botId, profile: snap.profile, friends: snap.friends, requests: snap.requests.map((r: any) => ({ from: r.from })),
-              groups: snap.groups.map((g: any) => ({ id: g.id, members: g.members })),
+              groups: snap.groups.map((g: any) => ({ id: g.id, owner: g.owner, admins: g.admins ?? [], members: g.members })),
               messages: snap.messages.map((m: any) => ({ id: m.id, kind: m.kind, target: m.target, sender: m.sender, senderNickname: m.senderNickname ?? '', at: m.at })).slice(-50),
               posts: snap.posts.map((p: any) => ({ id: p.id, author: p.author, at: p.at, comments: p.comments.map((c: any) => ({ id: c.id, author: c.author, parentId: c.parentId })) })).slice(-50),
               bottles: snap.bottles.map((b: any) => ({ id: b.id, author: b.author, pickedBy: b.pickedBy })).slice(-50),
@@ -579,7 +592,7 @@ export class StarpostWorld implements World {
         }
         const imageBlob = imageBytes && acceptsImage
           ? [{ bytes: imageBytes, mime: incomingImage.mime as string, name: `starpost-${event.seq}`, fallbackText: '星邮图片' }] : [];
-        const gameChat = ['game.public', 'game.wolf'].includes(event.type) && data?.kind === 'chat';
+        const gameChat = ['game.public', 'game.wolf', 'game.outside'].includes(event.type) && data?.kind === 'chat';
         const message = event.type === 'message' || gameChat;
         const envelope = await this.host.pushEvent({ type: `starpost.${event.type.replaceAll('.', '_')}`, ts: event.at, source: this.id, origin: 'external',
           senderKey: gameChat ? `starpost.game.${data.gameId}` : message ? `starpost.${data.kind}.${data.target}` : 'starpost', text, ...(imageBlob.length ? { blobs: imageBlob } : {}) },

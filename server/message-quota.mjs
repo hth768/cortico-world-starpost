@@ -15,7 +15,7 @@ export class MessageQuota {
     const midnight = Date.parse(`${day}T00:00:00+08:00`), limits = this.store.get('limits', who);
     const rule = MESSAGE_PERIODS.find(period => shifted.getUTCHours() < period.endHour);
     const count = (start, end) => this.store.count('messages', 'owner=? AND at>=? AND at<?',
-      [who, new Date(start).toISOString(), new Date(end).toISOString()]);
+      [who, new Date(start).toISOString(), new Date(end).toISOString()]) + this.store.count('spectatorUsage', 'owner=? AND at>=? AND at<?', [who, new Date(start).toISOString(), new Date(end).toISOString()]);
     const saved = this.store.get('messageQuota', who);
     const used = saved?.day === day && saved.timezone === 'Asia/Shanghai' && Number.isSafeInteger(saved.used) && saved.used >= 0
       ? saved.used : count(midnight, midnight + 24 * HOUR_MS);

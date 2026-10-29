@@ -51,6 +51,68 @@ async function fixture(count = 10) {
     close: async () => { await app.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
+test('公开全知观战与局外讨论隔离，只有观众发言扣额度，对局期间聊天暂存并在结束后补投', async () => {
+  const f = await fixture();
+  try {
+    await f.ok('10008', 'message.send', { kind: 'private', target: '10001', text: '开局前未领取的消息' });
+    const players = f.ids.slice(0, 6), gameId = await f.reserve(players, { public: true, roles: { wolf: 1, villager: 5 } });
+    await f.ok('10001', 'game.publish', { gameId });
+    assert.ok((await f.ok('10010', 'square.list')).some(item => item.kind === 'game' && item.id === gameId));
+    await f.ok('10010', 'game.watch', { gameId });
+    const viewer = await f.ok('10010', 'game.read', { gameId });
+    assert.equal(viewer.messages.filter(message => message.kind === 'role').length, 6);
+    assert.equal((await f.rpc('10001', 'game.watch', { gameId })).status, 403);
+    await f.ok('10010', 'game.message', { gameId, channel: 'outside', text: '全知观战讨论' });
+    assert.equal((await f.ok('10010', 'snapshot')).messageQuota.used, 1);
+    assert.equal((await f.ok('10001', 'game.read', { gameId })).messages.some(message => message.channel === 'outside'), false);
+    assert.equal((await f.rpc('10010', 'game.message', { gameId, channel: 'outside', text: '额度为零' }, { maxMessagesPerDay: 0 })).status, 429);
+    await f.ok('10008', 'message.send', { kind: 'group', target: f.groupId, text: '游戏期间收到的群消息' });
+    assert.equal((await f.ok('10001', 'events')).some(event => event.type === 'message'), false);
+    const wolf = Object.keys(f.app.store.get('games', gameId).roles).find(id => f.app.store.get('games', gameId).roles[id] === 'wolf');
+    f.advance(gameId); f.advance(gameId);
+    await f.ok('10001', 'game.message', { gameId, channel: 'public', text: '参赛发言免费' }, { maxMessagesPerDay: 0 });
+    assert.equal((await f.ok('10001', 'snapshot')).messageQuota.used, 0);
+    f.advance(gameId);
+    for (const who of players) await f.ok(who, 'game.vote', { gameId, target: wolf });
+    const resumed = (await f.ok('10001', 'events')).filter(event => event.type === 'message');
+    assert.equal(resumed.length, 2);
+    assert.deepEqual(resumed.map(event => event.data.text), ['开局前未领取的消息', '游戏期间收到的群消息']);
+    const hidden = await f.ok('10001', 'game.schedule', { scheduledAt: new Date(f.now + 4 * 60000).toISOString(), maxPlayers: 6, sourceKind: 'private', sourceTarget: '10002' });
+    assert.equal((await f.rpc('10010', 'game.read', { gameId: hidden.gameId })).status, 403);
+    assert.equal((await f.rpc('10010', 'game.watch', { gameId: hidden.gameId })).status, 403);
+  } finally { await f.close(); }
+});
+
+test('群主和管理员权限、禁言及跨午夜时段、公告额度、头衔、移出和管理员离群清理', async () => {
+  const f = await fixture();
+  const manage = (who, operation, args = {}) => f.rpc(who, 'group.manage', { groupId: f.groupId, operation, ...args });
+  try {
+    assert.equal((await manage('10002', 'admin', { botId: '10003', enabled: true })).status, 403);
+    assert.equal((await manage('10001', 'admin', { botId: '10002', enabled: true })).ok, true);
+    assert.equal((await manage('10001', 'admin', { botId: '10003', enabled: true })).ok, true);
+    assert.equal((await manage('10002', 'mute', { botId: '10003', minutes: 5 })).status, 403);
+    assert.equal((await manage('10002', 'mute', { botId: '10004', minutes: 5 })).ok, true);
+    assert.equal((await f.rpc('10004', 'message.send', { kind: 'group', target: f.groupId, text: '被禁言' })).status, 403);
+    await manage('10002', 'unmute', { botId: '10004' });
+    await manage('10002', 'quiet', { windows: [{ start: '23:00', end: '07:00' }] });
+    f.set('2026-10-30T23:30:00+08:00');
+    assert.equal((await f.rpc('10004', 'message.send', { kind: 'group', target: f.groupId, text: '时段禁言' })).status, 403);
+    assert.equal((await manage('10002', 'announce', { text: '新公告' })).ok, true);
+    assert.equal((await f.ok('10002', 'snapshot')).messageQuota.used, 1);
+    assert.equal((await manage('10002', 'title', { botId: '10004', title: '夜航员' })).ok, true);
+    const info = (await manage('10004', 'info')).result;
+    assert.equal(info.titles['10004'], '夜航员'); assert.equal(info.announcement.text, '新公告');
+    assert.equal((await manage('10002', 'kick', { botId: '10004' })).ok, true);
+    assert.equal((await manage('10004', 'info')).status, 404);
+    await f.ok('10002', 'group.leave', { groupId: f.groupId });
+    assert.equal(f.app.store.get('groups', f.groupId).admins.includes('10002'), false);
+    assert.equal((await manage('10003', 'mention_all', { text: '受额度限制' })).ok, true);
+    await f.ok('10003', 'snapshot', {}, { maxMessagesPerDay: 0 });
+    assert.equal((await manage('10003', 'announce', { text: '失败不覆盖公告' })).status, 429);
+    assert.equal(f.app.store.get('groups', f.groupId).announcement.text, '新公告');
+  } finally { await f.close(); }
+});
+
 test('狼人杀预约限制时段、集合提醒只发一次、缺席不占人数与次数，随机身份只经私密频道送达', async () => {
   const f = await fixture();
   try {
