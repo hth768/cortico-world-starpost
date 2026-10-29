@@ -145,6 +145,7 @@ export class StarpostWorld implements World {
   private quota: MessageQuota | null = null;
   private quotaReceivedAt = 0;
   private quotaNoticeKey = '';
+  private suspendedUntil = 0;
   constructor(private readonly cfg: StarpostConfigSection, private readonly botDir: string, _packageDir: string, private readonly dataDir: string, private readonly timezone: string, private readonly secret: (name: string) => string, private readonly clock: () => number = Date.now, private readonly extensionVersion: () => unknown = () => JSON.parse(readFileSync(STARPOST_PACKAGE_FILE, 'utf8')).version) {
     this.cursorFile = join(dataDir, 'starpost-cursor.json');
     this.identityFile = join(dataDir, 'starpost-identity.json');
@@ -247,10 +248,10 @@ export class StarpostWorld implements World {
     const response = await postJson(new URL('/rpc', this.serverBase()), { action, args, limits: { private: this.cfg.maxPrivateChats, groups: this.cfg.maxGroups,
       maxMessagesPerDay: this.cfg.maxMessagesPerDay ?? 300,
       periods: this.cfg.periodLimits ?? { morning: 60, afternoon: 60, sleep: 6 } } }, { authorization: `Bearer ${identity.token}`, 'x-starpost-id': identity.botId }, options);
-    const body = response.body as { ok: boolean; result?: any; error?: string; messageQuota?: unknown };
+    const body = response.body as { ok: boolean; result?: any; error?: string; messageQuota?: unknown; suspendedUntil?: number };
     const quota = parseMessageQuota(body.messageQuota ?? (action === 'snapshot' ? body.result?.messageQuota : action === 'message.send' ? body.result?.quota : null));
     if (quota && (!this.quota || Date.parse(quota.observedAt) >= Date.parse(this.quota.observedAt))) { this.quota = quota; this.quotaReceivedAt = this.clock(); }
-    if (!body.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
+    if (!body.ok) { if(Number.isSafeInteger(body.suspendedUntil)&&body.suspendedUntil!>this.clock())await this.pauseDelivery(body.suspendedUntil!); throw new Error(body.error ?? `HTTP ${response.status}`); }
     return body.result;
   }
   private image(file: unknown): { mime: string; base64: string } | null {
@@ -427,11 +428,16 @@ export class StarpostWorld implements World {
   }
   webUi(): WorldWebUiDecl {
     const identity = this.activeIdentity();
-    const config = { ...STARPOST_CONFIG_GROUP, schema: { ...STARPOST_CONFIG_GROUP.schema, description: identity ? `手机登录 ID：${identity.botId}　凭据：${identity.token}　请勿转发凭据。` : '注册后在此明文显示手机登录 ID 和凭据。' } };
+    const config = { ...STARPOST_CONFIG_GROUP, schema: { ...STARPOST_CONFIG_GROUP.schema, description: (identity ? `手机登录 ID：${identity.botId}　凭据：${identity.token}　请勿转发凭据。` : '注册后在此明文显示手机登录 ID 和凭据。')+' 青少年模式开关和审批位于星邮页面顶部“设置 · 青少年模式”，与手机设置同步。' } };
     return { label: '星邮', lamps: [{ label: '中转服务', state: this.connected ? 'online' : this.lastError ? 'error' : 'loading', hint: this.lastError || (this.connected ? '已连接' : '等待首次连接') }], config: [config], panels: [{ id: 'viewer', title: '星邮', description: '首次注册账号；注册后按好友或群聊查看只读聊天记录及动态。' }], invoke: async (panel, method, args) => {
       if (panel !== 'viewer') throw new Error('未知面板');
       if (method === 'status') return { registered: Boolean(this.activeIdentity()), botId: this.activeIdentity()?.botId ?? null };
       if (method === 'mobileLoginInfo') { const current = this.activeIdentity(); return { botId: current?.botId ?? '', credential: current?.token ?? '', apkUrl: 'https://github.com/hth768/cortico-world-starpost/releases/latest/download/starpost-android.apk' }; }
+      if(method==='teenControl'){
+        const current=this.activeIdentity();if(!current)throw new Error('请先注册');
+        const response=await postJson(new URL('/owner/control',this.serverBase()),{operation:args?.[0],args:args?.[1]??{}},{authorization:`Bearer ${current.token}`,'x-starpost-id':current.botId});
+        if(!response.body.ok)throw new Error(response.body.error??'操作失败');return response.body.result;
+      }
       if (method === 'register') return this.register();
       if (method === 'login') return this.login(args?.[0], args?.[1]);
       if (method === 'search') return this.rpc('directory.search', { query: args?.[0] });
@@ -456,6 +462,7 @@ export class StarpostWorld implements World {
         this.pendingSinceMs = Number.isSafeInteger(saved.pendingSinceMs) ? saved.pendingSinceMs : null;
         this.notifications.restore(saved.notifications);
         this.quotaNoticeKey = typeof saved.quotaNoticeKey === 'string' ? saved.quotaNoticeKey : '';
+        this.suspendedUntil = Number.isSafeInteger(saved.suspendedUntil)?saved.suspendedUntil:0;
         for (const id of Array.isArray(saved.seenSquare) ? saved.seenSquare.slice(-1000) : []) if (typeof id === 'string') this.rememberSquare(id);
       } catch { this.cursor = 0; this.pendingCoreCursor = null; this.pendingSinceMs = null; this.notifications.clear(); this.seenSquare.clear(); this.quotaNoticeKey = ''; }
     }
@@ -468,7 +475,7 @@ export class StarpostWorld implements World {
     mkdirSync(this.dataDir, { recursive: true });
     const temp = `${this.cursorFile}.${process.pid}.tmp`;
     writeFileSync(temp, JSON.stringify({ cursor: this.cursor, pendingCoreCursor: this.pendingCoreCursor, pendingSinceMs: this.pendingSinceMs,
-      notifications: this.notifications.state(), seenSquare: [...this.seenSquare], quotaNoticeKey: this.quotaNoticeKey }), { mode: 0o600 });
+      notifications: this.notifications.state(), seenSquare: [...this.seenSquare], quotaNoticeKey: this.quotaNoticeKey, suspendedUntil:this.suspendedUntil }), { mode: 0o600 });
     renameSync(temp, this.cursorFile);
   }
   private async announceRelease(version: unknown, changes: unknown = []): Promise<void> {
@@ -494,6 +501,7 @@ export class StarpostWorld implements World {
     } catch { /* 旧中转服务尚未支持版本查询时，聊天仍可继续。 */ }
   }
   private async announceQuota(): Promise<void> {
+    if(this.suspendedUntil>this.clock())return;
     const quota = this.quota, identity = this.activeIdentity();
     if (!this.host || !quota || !identity) return;
     const key = `${this.serverBase().origin}:${identity.botId}:${quota.day}:${quota.period.id}:${quota.period.limit}:${quota.limit}`;
@@ -519,6 +527,7 @@ export class StarpostWorld implements World {
     this.notifications.clear(); this.saveCursor();
   }
   private async flushPending(): Promise<void> {
+    if(this.suspendedUntil>this.clock())return;
     const interval = Number.isInteger(this.cfg.deliveryIntervalMs) && this.cfg.deliveryIntervalMs >= 1000 ? this.cfg.deliveryIntervalMs : 20000;
     const chatDue = this.host?.promotePending && this.pendingCoreCursor !== null && this.pendingSinceMs !== null
       && this.clock() - this.pendingSinceMs >= interval;
@@ -541,6 +550,17 @@ export class StarpostWorld implements World {
       let ownerWakeCursor: number | null = null;
       for (const event of events) {
         const data = event.data;
+        if(event.type==='moderation.warning'){
+          if(Number.isSafeInteger(data?.count)&&data.count>=1&&data.count<=10&&Number.isSafeInteger(data?.until)&&data.until>=0){
+            if(data.until>this.clock())await this.pauseDelivery(data.until);
+            await this.host.pushEvent({type:'starpost.moderation_warning',ts:event.at,source:this.id,origin:'internal',senderKey:'starpost.system',text:'不准说这些无意义重复的句子'+(data.until>this.clock()?'。5 分钟内触发 10 次，暂停星邮活动和消息投递 30 分钟。':'')},{trigger:'flush'});
+          }
+          this.cursor=event.seq;this.saveCursor();continue;
+        }
+        if(event.type==='moderation.restored'){
+          this.suspendedUntil=0;await this.host.pushEvent({type:'starpost.moderation_restored',ts:event.at,source:this.id,origin:'internal',senderKey:'starpost.system',text:'星邮暂停期已结束，活动权限和消息投递已恢复。期间服务端暂存的事件会补投，需要时可查历史记录。'},{trigger:'flush'});
+          this.cursor=event.seq;this.saveCursor();continue;
+        }
         const square = event.type === 'square.bot' || event.type === 'square.group';
         if ((square && this.seenSquare.has(data?.id)) || this.notifications.enqueue(event, notificationSettings(this.cfg.notifications), this.clock())) {
           this.cursor = event.seq; this.saveCursor(); continue;
@@ -577,6 +597,7 @@ export class StarpostWorld implements World {
         }
         const ownerMessage = event.type === 'owner.message';
         const messageInfo: Record<string, unknown> = ownerMessage ? { text: data.text, address: data.address, image: Boolean(data.image) } : event.type === 'message' ? { kind: data.kind, sender: data.sender, senderNickname: data.senderNickname ?? '', target: data.target, text: data.text, emoji: data.emoji, image: Boolean(data.image), mentions: data.mentions } : {};
+        for(const key of ['emoji','image','mentions'])if(!messageInfo[key]||Array.isArray(messageInfo[key])&&!(messageInfo[key] as unknown[]).length)delete messageInfo[key];
         let text = event.type === 'message' ? `[星邮消息] ${JSON.stringify(messageInfo)}`
           : `[星邮 ${event.type}] ${JSON.stringify(data, (key, value) => key === 'base64' ? undefined : value)}`;
         const incomingImage = (event.type === 'message' || ownerMessage) && data.image;
@@ -631,5 +652,10 @@ export class StarpostWorld implements World {
       await this.checkRelease();
     } catch (error) { this.connected = false; this.lastError = (error as Error).message; }
     finally { this.busy = false; }
+  }
+  private async pauseDelivery(until:number):Promise<void>{
+    this.suspendedUntil=until;
+    await this.host?.drainPendingEvents?.(event=>event.source===this.id&&event.origin==='external');
+    this.pendingCoreCursor=null;this.pendingSinceMs=null;this.notifications.clear();this.saveCursor();
   }
 }

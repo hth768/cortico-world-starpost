@@ -3,8 +3,8 @@ const digest = value => createHash('sha256').update(value).digest('hex');
 const fail = (message, status = 400) => { const e = new Error(message); e.status = status; throw e; };
 const short = (value, max) => typeof value === 'string' && value.length <= max && !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value) ? value.trim() : fail('文字格式或长度不合法');
 export class MobileAccess {
-  constructor(store, { login, fingerprint, snapshot, history, rpc, games, image, clock = Date.now }) {
-    Object.assign(this, { store, login, fingerprint, snapshot, history, rpc, games, image, clock });
+  constructor(store, { login, fingerprint, snapshot, history, rpc, games, image, ownerControl, clock = Date.now }) {
+    Object.assign(this, { store, login, fingerprint, snapshot, history, rpc, games, image, ownerControl, clock });
     this.attempts = new Map();
   }
   signIn(input, remote) {
@@ -56,6 +56,11 @@ export class MobileAccess {
   call(session, action, args = {}) {
     const who = session.owner;
     switch (action) {
+      case 'teen.status': return this.ownerControl(who,'status',args);
+      case 'teen.set': return this.ownerControl(who,'set',args);
+      case 'teen.decide': return this.ownerControl(who,'decide',args);
+      case 'teen.leave': return this.ownerControl(who,'leave',args);
+      case 'teen.removeFriend': return this.ownerControl(who,'removeFriend',args);
       case 'overview': {
         const value = this.snapshot(who, true);
         return { ...value, posts: value.posts.map(post => ({ id: post.id, author: post.author, text: post.text.slice(0, 160), image: Boolean(post.image), at: post.at })) };

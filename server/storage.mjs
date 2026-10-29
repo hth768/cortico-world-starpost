@@ -119,6 +119,10 @@ export class StarpostStorage {
     if (collection === 'deferredChat') target = v.recipient;
     if (collection === 'mobileSessions') owner = v.owner;
     if (collection === 'ownerMessages') { owner = v.botId; kind = v.direction; }
+    if (collection === 'heldEvents') target = v.recipient;
+    if (collection === 'conduct') { kind = v.until > 0 ? 'active' : 'idle'; at = v.until ? new Date(v.until).toISOString() : ''; }
+    if (collection === 'teenIntents') { owner = v.actor; target = v.signature; kind = v.status; }
+    if (collection === 'teenAccess') owner = v.owner;
     return [owner, target, kind, scope, at];
   }
   remove(collection, key) { this.statement('DELETE FROM documents WHERE collection=? AND key=?').run(collection, String(key)); }
@@ -167,9 +171,13 @@ export class StarpostStorage {
   emit(recipients, type, data, at = new Date().toISOString()) {
     const insert = this.statement('INSERT INTO events(recipient,type,at,data) VALUES(?,?,?,?)');
     const json = JSON.stringify(this.externalize(data));
-    for (const who of recipients) insert.run(who, type, at, json);
-    if (this.pendingRecipients) for (const who of recipients) this.pendingRecipients.add(who);
-    else this.onEmit?.(recipients);
+    const delivered=[];
+    for (const who of recipients) {
+      if(this.holdEvent?.(who,type))this.put('heldEvents',randomUUID(),{recipient:who,type,at,data:JSON.parse(json)});
+      else {insert.run(who,type,at,json);delivered.push(who);}
+    }
+    if (this.pendingRecipients) for (const who of delivered) this.pendingRecipients.add(who);
+    else this.onEmit?.(delivered);
   }
   deliveryState(who) {
     return this.statement('SELECT ack_seq,dropped_through,dropped_count FROM event_delivery WHERE recipient=?').get(who)

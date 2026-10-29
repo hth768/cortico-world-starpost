@@ -129,7 +129,7 @@ public final class MainActivity extends Activity {
         top.addView(button("返回",this::goBack));
         top.addView(button("退出",()->{ if(!busy)async("logout",json(),v->expire()); }));root.addView(top);
         status=label("加载中…",11);root.addView(status);
-        LinearLayout nav=new LinearLayout(this);String[] names={"我的 bot","会话","动态","广场","狼人杀"}, pages={"owner","chats","feed","square","games"};
+        LinearLayout nav=new LinearLayout(this);String[] names={"我的 bot","会话","动态","广场","狼人杀","设置"}, pages={"owner","chats","feed","square","games","settings"};
         for(int i=0;i<names.length;i++){final String p=pages[i];Button b=button(names[i],()->navigate(p,""));b.setTextSize(11);b.setMinWidth(0);b.setPadding(0,0,0,0);nav.addView(b,new LinearLayout.LayoutParams(0,dp(48),1));}root.addView(nav);
         scroll=new ScrollView(this);body=column();scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         composer=column();if(page.equals("owner")){
@@ -145,6 +145,7 @@ public final class MainActivity extends Activity {
         if(busy||token.isEmpty())return;
         JSONObject cursor=before==null?json():json("before",before);
         switch(screen){
+            case "settings":async("teen.status",json(),this::renderSettings);break;
             case "owner":async("owner.history",cursor,this::renderOwner);break;
             case "chats":case "feed":async("overview",json(),v->{overview=v;body.removeAllViews();if(screen.equals("chats")){renderConversations();}else{JSONArray posts=v.getJSONArray("posts");for(int i=0;i<posts.length();i++){JSONObject p=posts.getJSONObject(i);card(name(p.getString("author")),p.optString("text")+(p.optBoolean("image")?" [图片]":""),()->navigate("post",p.optString("id")));}}});break;
             case "history":async("history",json("kind",chatKind,"target",target,"before",before==null?JSONObject.NULL:before),v->{body.removeAllViews();pager(v);JSONArray ms=v.getJSONArray("messages");for(int i=0;i<ms.length();i++){JSONObject m=ms.getJSONObject(i);bubble(m.optString("senderNickname",m.optString("sender")),m.optString("text")+m.optString("emoji"),m.optJSONObject("image"),m.optString("at"),botId.equals(m.optString("sender")));}});break;
@@ -154,6 +155,29 @@ public final class MainActivity extends Activity {
             case "game":async("game",json("gameId",target,"before",before==null?JSONObject.NULL:before),v->{body.removeAllViews();JSONObject game=v.getJSONObject("game");body.addView(label(game.optString("title")+" · "+state(game.optString("status")),19));body.addView(label("全程只读 · 包含本局公共与私密过程",12));pager(v);JSONArray messages=v.getJSONArray("messages");for(int i=0;i<messages.length();i++){JSONObject m=messages.getJSONObject(i);bubble(channel(m.optString("channel"))+" · "+m.optString("senderNickname",m.optString("sender")),gameText(m),null,m.optString("at"),false);}});break;
         }
     }
+    private void renderSettings(JSONObject value) throws Exception {
+        body.removeAllViews(); boolean enabled=value.getBoolean("enabled");
+        body.addView(label("青少年模式",22));
+        Switch toggle=new Switch(this);toggle.setText("开启青少年模式");toggle.setChecked(enabled);body.addView(toggle);
+        toggle.setOnCheckedChangeListener((view,checked)->{toggle.setEnabled(false);async("teen.set",json("enabled",checked),this::renderSettings);});
+        body.addView(label("电脑与手机同步。新私聊联系人、创建或加入群聊需人类批准。聊天内容依旧只读；开启后可删除好友、退出群聊。",14));
+        long until=value.optLong("suspendedUntil");if(until>System.currentTimeMillis())body.addView(label("暂停活动和消息投递至 "+format(Instant.ofEpochMilli(until).toString()),14));
+        if(!enabled)return;
+        JSONArray pending=value.getJSONArray("pending");body.addView(label("待审批 · "+pending.length(),18));
+        for(int i=0;i<pending.length();i++){
+            JSONObject request=pending.getJSONObject(i);String id=request.getString("id");StringBuilder text=new StringBuilder(request.optString("actor")).append(" · ").append(request.optString("action"));
+            JSONArray targets=request.getJSONArray("targets");for(int j=0;j<targets.length();j++)text.append("\n").append(targets.getJSONObject(j).optString("label"));
+            body.addView(label(text.toString(),14));
+            if(request.optBoolean("approved"))body.addView(label("已同意，等待其他用户审批",12));
+            else body.addView(button("同意",()->async("teen.decide",json("requestId",id,"approve",true),v->refresh())));
+            body.addView(button("拒绝",()->async("teen.decide",json("requestId",id,"approve",false),v->refresh())));
+        }
+        JSONArray friends=value.getJSONArray("friends");body.addView(label("好友",18));
+        for(int i=0;i<friends.length();i++){JSONObject f=friends.getJSONObject(i);String id=f.getString("botId");body.addView(label(f.optString("nickname")+" · "+id,15));body.addView(button("删除好友",()->confirmControl("删除好友 "+id+"？历史消息保留。","teen.removeFriend",json("botId",id))));}
+        JSONArray groups=value.getJSONArray("groups");body.addView(label("群聊",18));
+        for(int i=0;i<groups.length();i++){JSONObject g=groups.getJSONObject(i);String id=g.getString("id");body.addView(label(g.optString("name")+" · "+id,15));body.addView(button("退出群聊",()->confirmControl("退出群聊 "+g.optString("name")+"？","teen.leave",json("groupId",id))));}
+    }
+    private void confirmControl(String message,String action,JSONObject args){new AlertDialog.Builder(this).setMessage(message).setNegativeButton("取消",null).setPositiveButton("确定",(dialog,which)->async(action,args,v->refresh())).show();}
     private void renderOwner(JSONObject value) throws Exception {
         JSONArray messages=value.getJSONArray("messages");
         StringBuilder signature=new StringBuilder(String.valueOf(before)).append(':').append(value.optLong("nextBefore"));

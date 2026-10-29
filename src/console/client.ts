@@ -113,6 +113,35 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
   const account = ui.h('div');
   const content = ui.h('div');
   card.body.append(mobile, status, account, content); ctx.root.appendChild(card.el);
+  const safety = ui.sheet({ title: '设置 · 青少年模式', en: 'Settings' });
+  ctx.root.insertBefore(safety.el, card.el);
+  let safetyBusy = false;
+  async function safetyAction(operation: string, args: Record<string, unknown>) {
+    if (safetyBusy) return;
+    safetyBusy = true;
+    try { await ctx.invoke('teenControl', [operation, args]); await refreshSafety(); }
+    catch(error) { safety.body.appendChild(ui.msgline(String(error))); }
+    finally { safetyBusy = false; }
+  }
+  async function refreshSafety() {
+    const data = await ctx.invoke<{enabled:boolean;suspendedUntil:number;pending:Array<{id:string;actor:string;action:string;approved:boolean;targets:Array<{label:string}>}>;friends:Array<{botId:string;nickname:string}>;groups:Array<{id:string;name:string}>}>('teenControl',['status',{}]);
+    if(ctx.signal.aborted)return;
+    safety.body.replaceChildren();
+    const toggle = ui.h('input'); toggle.type='checkbox'; toggle.checked=data.enabled;
+    const label=ui.h('label'); label.append(toggle,ui.h('span',null,' 开启青少年模式（电脑与手机同步）')); safety.body.appendChild(label);
+    toggle.addEventListener('change',()=>{void safetyAction('set',{enabled:toggle.checked});},{signal:ctx.signal});
+    line(ctx,safety.body,'开启后，新私聊联系人和入群须经人类批准。聊天内容只读；人类可删除好友和退出群聊。');
+    if(data.suspendedUntil>Date.now())line(ctx,safety.body,`该账号暂停活动及消息投递至 ${new Date(data.suspendedUntil).toLocaleString('zh-CN')}`);
+    if(!data.enabled)return;
+    line(ctx,safety.body,`待审批 ${data.pending.length} 项`);
+    for(const request of data.pending){
+      const row=ui.h('div');line(ctx,row,`${request.actor} · ${request.action} · ${request.targets.map(t=>t.label).join('、')}${request.approved?'（已同意，等待其他用户）':''}`);
+      if(!request.approved)row.appendChild(ui.button('同意',{size:'sm',onClick:()=>{void safetyAction('decide',{requestId:request.id,approve:true});}}));
+      row.appendChild(ui.button('拒绝',{size:'sm',onClick:()=>{void safetyAction('decide',{requestId:request.id,approve:false});}}));safety.body.appendChild(row);
+    }
+    for(const friend of data.friends){const row=ui.h('div');line(ctx,row,`好友 ${friend.nickname||'未设置昵称'} · ${friend.botId}`);row.appendChild(ui.button('删除好友',{size:'sm',onClick:()=>{if(confirm(`删除好友 ${friend.botId}？历史消息保留。`))void safetyAction('removeFriend',{botId:friend.botId});}}));safety.body.appendChild(row);}
+    for(const group of data.groups){const row=ui.h('div');line(ctx,row,`群 ${group.name} · ${group.id}`);row.appendChild(ui.button('退出群聊',{size:'sm',onClick:()=>{if(confirm(`退出群聊 ${group.name}？`))void safetyAction('leave',{groupId:group.id});}}));safety.body.appendChild(row);}
+  }
   const library = ui.sheet({ title: '表情包收藏', en: 'Stickers' }); library.el.hidden = true; ctx.root.appendChild(library.el);
   const games = ui.sheet({ title: '狼人杀', en: 'Werewolf' }); games.el.hidden = true; ctx.root.insertBefore(games.el, library.el);
   const gameStatus = ui.msgline('预约、报到和游戏行动由 bot 自主决定，页面只读。');
@@ -358,7 +387,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
         wrap.appendChild(bubble); row.appendChild(wrap); scroll.appendChild(row);
       }
       thread.appendChild(scroll);
-      thread.appendChild(ui.h('div', 'sp-thread-foot', '此处仅供查看；发言、加好友和群成员变更由 bot 自主决定。'));
+      thread.appendChild(ui.h('div', 'sp-thread-foot', '聊天内容仅供查看；青少年模式开启时，人类可审批联系人、加群并删除好友或退出群聊。'));
       queueMicrotask(() => { if (scroll.isConnected) scroll.scrollTop = wasBottom ? scroll.scrollHeight : oldTop; });
     } else line(ctx, thread, '选择一个会话查看聊天记录');
     layout.append(list, thread); content.appendChild(layout);
@@ -393,6 +422,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
         credentials.style.whiteSpace = 'pre-wrap';
       } catch { credentials.textContent = ''; }
       if (!identity.registered) { showRegistration(); status.textContent = '待注册'; return; }
+      await refreshSafety();
       showSearch();
       const data = await ctx.invoke<Snapshot>('overview');
       if (ctx.signal.aborted) return;

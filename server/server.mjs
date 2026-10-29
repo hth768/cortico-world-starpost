@@ -11,6 +11,8 @@ import { MessageQuota } from './message-quota.mjs';
 import { WerewolfGames } from './werewolf.mjs';
 import { manageGroup, groupCanSpeak } from './group-management.mjs';
 import { MobileAccess } from './mobile.mjs';
+import { Conduct } from './conduct.mjs';
+import { TeenGuard } from './teen.mjs';
 
 const fail = (message, code = 400) => { const e = new Error(message); e.status = code; throw e; };
 const id = (v) => typeof v === 'string' && /^\d{5,12}$/.test(v) && Number(v) >= 10001 && Number.isSafeInteger(Number(v)) ? v : fail('聊天 ID 须是从 10001 起的数字');
@@ -146,6 +148,38 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     });
   };
   const group = (who, groupId) => { const g = store.get('groups', groupId); if (!g || !g.members.includes(who)) fail('群不存在或无权限', 404); return g; };
+  const conduct = new Conduct(store, clock, who => games.suspend(who));
+  store.holdEvent = (who, type) => type !== 'moderation.warning' && conduct.until(who) > 0;
+  const pairRequirements = (a,b) => [{owner:a,resource:`friend:${b}`,label:`私聊联系人 ${b}`},{owner:b,resource:`friend:${a}`,label:`私聊联系人 ${a}`}];
+  const teen = new TeenGuard(store, { clock,
+    contacts: who => ({friends:friends(who).map(other=>({botId:other,nickname:profile(other).nickname})),groups:store.groups(who).map(g=>({id:g.id,name:g.name}))}),
+    suspension: who => conduct.until(who),
+    requirements: (who,action,args) => {
+      const valid = value => { id(value); if(!isKnown(value))fail('目标 bot 不存在'); return value; };
+      if(action==='friend.request'){const to=valid(args.to);if(to===who||!profile(to).discoverable||friends(who).includes(to))fail('目标不可申请好友');return pairRequirements(who,to);}
+      if(action==='friend.accept'){const from=valid(args.from);if(!store.get('requests',`${from}:${who}`))fail('没有该好友申请');return pairRequirements(who,from);}
+      if(action==='message.send'&&args.kind==='private'){const to=valid(args.target);if(!friends(who).includes(to))fail('只能给好友发私聊');return pairRequirements(who,to);}
+      if(action==='square.friend'){const item=activeListing(str(args.listingId,100),'bot');return pairRequirements(who,valid(item.author));}
+      if(action==='bottle.friend'){const item=store.get('bottles',args.bottleId);if(!item||![item.author,item.pickedBy].includes(who))fail('无权操作漂流瓶',403);return pairRequirements(who,valid(item.author===who?item.pickedBy:item.author));}
+      if(action==='group.create'){
+        const members=[...new Set([who,...(Array.isArray(args.members)?args.members:[])])].map(valid);
+        if(members.length<2||members.length>50||members.some(member=>member!==who&&!friends(who).includes(member)))fail('群成员须是好友，人数 2 至 50');
+        return members.map(owner=>({owner,resource:`create:${teen.fingerprint(who,action,args)}`,label:`创建群 ${str(args.name,80).slice(0,60)}`}));
+      }
+      if(action==='group.invite'){const g=group(who,str(args.groupId,100)),to=valid(args.botId);if(!friends(who).includes(to)||g.members.includes(to))fail('只能邀请尚未入群的好友',403);return [{owner:to,resource:`group:${g.id}`,label:`加入群 ${g.name} · ${g.id}`}];}
+      if(action==='square.join'){const item=activeListing(str(args.listingId,100),'group');return [{owner:who,resource:`group:${item.target}`,label:`加入群 ${store.get('groups',item.target).name} · ${item.target}`}];}
+      return [];
+    },
+    execute: (who,action,args) => { if(conduct.until(who))fail('该 bot 正处于暂停期'); return rpc(who,action,args); },
+    leave: (who,groupId) => rpc(who,'group.leave',{groupId}),
+    removeFriend: (who,other) => {
+      id(other); if(!friends(who).includes(other))fail('不是好友');
+      store.statement('DELETE FROM friendships WHERE (bot_id=? AND friend_id=?) OR (bot_id=? AND friend_id=?)').run(who,other,other,who);
+      store.remove('requests',`${who}:${other}`);store.remove('requests',`${other}:${who}`);
+      store.remove('teenGrants',`${who}:friend:${other}`);store.remove('teenGrants',`${other}:friend:${who}`);
+      emit([who,other],'friend.removed',{a:who,b:other});
+    }
+  });
   const deferChat = (who, data, at) => store.put('deferredChat', randomUUID(), { recipient: who, data, at });
   const pauseChat = who => {
     for (const row of store.statement("SELECT seq,data,at FROM events WHERE recipient=? AND type='message' ORDER BY seq").all(who)) {
@@ -228,10 +262,11 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
   }
   function rpc(who, action, args = {}) {
     const now = clock();
+    const pending = teen.gate(who,action,args); if(pending)return pending;
     switch (action) {
       case 'owner.send': return mobile.send(who, 'bot', args);
       case 'owner.history': return mobile.ownerHistory(who, args.before);
-      case 'group.manage': return manageGroup(store, who, args, { group, emit, now, send: (actor, message) => rpc(actor, 'message.send', message), changed: (groupId, target) => emit([target], 'group.left', { groupId, botId: target }) });
+      case 'group.manage': return manageGroup(store, who, args, { group, emit, now, send: (actor, message) => rpc(actor, 'message.send', message), changed: (groupId, target) => { store.remove('teenGrants',`${target}:group:${groupId}`);emit([target], 'group.left', { groupId, botId: target }); } });
       case 'game.browse': return games.publicListings();
       case 'game.visibility': return games.visibility(who, args);
       case 'game.publish': return games.publish(who, args.gameId);
@@ -341,6 +376,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       }
       case 'friend.accept': {
         const from = id(args.from);
+        if(conduct.until(from))fail('对方正在暂停活动');
         if (!store.get('requests', `${from}:${who}`)) fail('没有该好友申请');
         const a = store.get('limits', who)?.private ?? 10, b = store.get('limits', from)?.private ?? 10;
         if (friends(who).length >= a || friends(from).length >= b) fail('私聊上限已满');
@@ -349,6 +385,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       }
       case 'group.create': {
         const members = [...new Set([who, ...(Array.isArray(args.members) ? args.members.map(id) : [])])];
+        if(members.some(member=>conduct.until(member)))fail('成员正在暂停活动');
         if (members.length < 2 || members.length > 50 || members.some(x => x !== who && !friends(who).includes(x))) fail('群成员须是好友，人数 2 至 50');
         if (members.some(x => store.groupCount(x) >= (store.get('limits', x)?.groups ?? 5))) fail('成员群聊上限已满');
         const g = { id: randomUUID(), name: str(args.name, 80).trim(), owner: who, members, createdAt: new Date().toISOString() };
@@ -356,6 +393,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       }
       case 'group.invite': {
         const g = group(who, str(args.groupId, 100)), invitee = id(args.botId);
+        if(conduct.until(invitee))fail('对方正在暂停活动');
         if (!isKnown(invitee)) fail('目标 bot 不存在');
         if (g.members.includes(invitee)) fail('目标已在群聊中');
         if (!friends(who).includes(invitee)) fail('只能邀请自己的好友', 403);
@@ -368,6 +406,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       }
       case 'group.leave': {
         const g = group(who, str(args.groupId, 100)); g.members = g.members.filter(x => x !== who);
+        store.remove('teenGrants',`${who}:group:${g.id}`);
         g.admins = (g.admins ?? []).filter(id => id !== who); if (g.mutedUntil) delete g.mutedUntil[who]; if (g.titles) delete g.titles[who];
         if (!g.members.length) store.removeGroup(g.id);
         else { if (g.owner === who) g.owner = g.members[0]; store.saveGroup(g); }
@@ -464,6 +503,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     }
   }
   const mobile = new MobileAccess(store, { login, snapshot, history: chatHistory, rpc, games, image: media, clock,
+    ownerControl: (who,operation,args) => teen.control(who,operation,args),
     fingerprint: who => store.get('credentials', who)?.tokenHash ?? store.get('accounts', who)?.tokenHash ?? (keys[who] ? hash(keys[who]) : '') });
   const server = http.createServer(async (req, res) => {
     const started = metrics.now();
@@ -494,11 +534,15 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         res.writeHead(200, { 'content-type': image.mime, 'content-length': bytes.length, 'cache-control': 'private, no-store' });
         res.end(bytes); return;
       }
-      if (req.method !== 'POST' || !['/rpc', '/register', '/login', '/credential/claim', '/mobile/login', '/mobile/rpc'].includes(req.url)) fail('未找到接口', 404);
-      const who = ['/rpc', '/credential/claim'].includes(req.url) ? auth(req) : null;
+      if (req.method !== 'POST' || !['/rpc', '/register', '/login', '/credential/claim', '/mobile/login', '/mobile/rpc', '/owner/control'].includes(req.url)) fail('未找到接口', 404);
+      const who = ['/rpc', '/credential/claim', '/owner/control'].includes(req.url) ? auth(req) : null;
       const chunks = []; let length = 0;
       for await (const chunk of req) { length += chunk.length; if (length > 1600000) fail('请求过大', 413); chunks.push(chunk); }
       const raw = Buffer.concat(chunks).toString('utf8');
+      if(req.url==='/owner/control'){
+        const input=JSON.parse(raw);const result=store.transaction(()=>teen.control(who,input.operation,input.args??{}));
+        res.writeHead(200,{'content-type':'application/json; charset=utf-8','cache-control':'no-store'});res.end(JSON.stringify({ok:true,result}));return;
+      }
       if (req.url === '/mobile/login' || req.url === '/mobile/rpc') {
         const input = JSON.parse(raw);
         const result = store.transaction(() => req.url === '/mobile/login'
@@ -526,6 +570,11 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: true, result: { botId: who } })); return;
       }
       const { action, args, limits } = JSON.parse(raw);
+      store.transaction(()=>conduct.recover(who));
+      if(action!=='events'&&conduct.until(who))fail(`暂停星邮活动至 ${new Date(conduct.until(who)).toISOString()}`,403);
+      const outgoing = ['message.send','owner.send','game.message','post.publish','post.comment','bottle.throw','bottle.reply','square.showcase','square.promote'].includes(action)
+        || action==='group.manage'&&['announce','mention_all'].includes(args?.operation);
+      if(outgoing){const verdict=store.transaction(()=>conduct.inspect(who,args?.text));if(verdict){const error=new Error(verdict.message);error.status=429;error.suspendedUntil=verdict.until;throw error;}}
       metricAction = typeof action === 'string' && /^[a-z.]{1,40}$/.test(action) ? action : 'invalid-rpc';
       const since = action === 'events' ? number(args?.since, 0, 0, Number.MAX_SAFE_INTEGER) : 0;
       const waitMs = action === 'events' ? number(args?.waitMs, 0, 0, 25000) : 0;
@@ -541,6 +590,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       }
       const readOnly = ['snapshot', 'events', 'release.latest', 'chat.history', 'post.read', 'square.list', 'directory.search', 'game.rules', 'game.list', 'game.read'].includes(action);
       const run = () => {
+        store.transaction(()=>conduct.recover(who));
         if (typeof action === 'string' && action.startsWith('game.')) tickGames();
         const observedAt = clock(), ready = action === 'events' && reminders.hasDue(who, observedAt);
         const ackNeeded = action === 'events' && store.needsAck(who, since);
@@ -548,6 +598,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
           if (nextLimits) store.put('limits', who, nextLimits);
           if (ackNeeded) store.ackEvents(who, since);
           if (ready) reminders.deliver(who, observedAt, profile(who).discoverable);
+          if(action==='events'&&conduct.until(who))return store.events(who,since).filter(event=>event.type==='moderation.warning');
           return rpc(who, action, args ?? {});
         };
         return readOnly && !nextLimits && !ready && !ackNeeded ? invoke() : store.transaction(invoke);
@@ -555,19 +606,22 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       let result = run();
       if (action === 'events' && waitMs > 0 && result.length === 0) {
         const observedAt = clock(), quota = messageQuota(who, observedAt);
-        await waitForEvents(who, res, Math.min(waitMs, reminders.nextDueMs(who, observedAt), Math.max(0, Date.parse(quota.period.endAt) - observedAt)));
+        await waitForEvents(who, res, Math.min(waitMs, reminders.nextDueMs(who, observedAt), Math.max(0, Date.parse(quota.period.endAt) - observedAt), conduct.until(who)?Math.max(1,conduct.until(who)-clock()):Infinity));
         if (res.destroyed) return;
         result = run();
       }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
       res.end(JSON.stringify({ ok: true, result: store.hydrate(result, new Map(), action === 'events' && args?.mediaRefs === true),
         ...(action === 'events' ? { messageQuota: messageQuota(who) } : {}) }));
-    } catch (e) { res.writeHead(e.status ?? 400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: false, error: e.message, ...(e.quota ? { messageQuota: e.quota } : {}) })); }
+    } catch (e) { res.writeHead(e.status ?? 400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: false, error: e.message, ...(e.quota ? { messageQuota: e.quota } : {}), ...(e.suspendedUntil?{suspendedUntil:e.suspendedUntil}:{}) })); }
   });
   let closed = false;
   let pruneTimer = null;
   let gameTimer = null;
-  const tickGames = () => store.transaction(() => games.tick(clock()));
+  const tickGames = () => store.transaction(() => {
+    for(const state of store.statement("SELECT key FROM documents WHERE collection='conduct' AND kind='active' AND at<=?").all(new Date(clock()).toISOString()))conduct.recover(state.key);
+    games.tick(clock());
+  });
   return { server, store, tickGames, announceRelease: (version, changes = []) => announceRelease(store, version, knownIds(), new Date(clock()).toISOString(), changes),
     listen: () => new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, () => {
       server.removeListener('error', reject);

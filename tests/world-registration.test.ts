@@ -56,7 +56,7 @@ test('初始面板注册后，本机身份与 bot 资料工具可跨重启使用
     const chat = external.find(event => event.type === 'starpost.message');
     assert.equal(chat?.origin, 'external');
     assert.deepEqual(JSON.parse(chat!.text.slice('[星邮消息] '.length)), {
-      kind: 'private', sender: '10002', senderNickname: '小星', target: '10001', text: '你好', emoji: '', image: true, mentions: [], sticker: 'sticker.png',
+      kind: 'private', sender: '10002', senderNickname: '小星', target: '10001', text: '你好', image: true, sticker: 'sticker.png',
     });
     assert.equal(chat!.blobs?.[0].mime, 'image/png');
     assert.deepEqual(Buffer.from(chat!.blobs![0].bytes), stickerBytes);

@@ -498,4 +498,26 @@ export class WerewolfGames {
       'game.cancelled', { gameId: game.id, reason: '发起人取消预约' });
     return { gameId, cancelled: true };
   }
+  suspend(who) {
+    for(const game of this.store.list('games',`kind IN (${ACTIVE.map(()=>'?').join(',')})`,ACTIVE,{limit:-1})){
+      game.spectators=(game.spectators??[]).filter(id=>id!==who);
+      if(game.status==='scheduled'){
+        game.joined=game.joined.filter(id=>id!==who);game.checkedIn=game.checkedIn.filter(id=>id!==who);
+        if(game.judgeBotId===who){game.judgeAccepted=false;game.judgeCheckedIn=false;}
+        this.save(game);continue;
+      }
+      if(game.status==='finished'){this.save(game);continue;}
+      if(game.judgeBotId===who){game.judgeBotId=null;game.judgeMode='program';game.assignmentMode='random';if(game.status==='assigning'){this.start(game);continue;}}
+      if(game.alive.includes(who)){
+        game.alive=game.alive.filter(id=>id!==who);
+        if(game.night?.wolfVotes)delete game.night.wolfVotes[who];if(game.votes)delete game.votes[who];
+        if(game.night?.victim===who)game.night.victim=null;
+        this.public(game,{kind:'forfeit',botId:who});
+        const winner=this.winner(game);if(winner){this.finish(game,winner);continue;}
+      }
+      if(game.pendingHunter===who){game.pendingHunter=null;this.afterElimination(game,game.hunterResume==='day'?'day':'night');continue;}
+      this.save(game);
+    }
+    this.store.remove('gameBusy',who);this.resumeChat(who);
+  }
 }
