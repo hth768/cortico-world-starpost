@@ -1,0 +1,31 @@
+name: Publish signed Android companion
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag
+        required: true
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - name: Verify signed distribution checksum
+        working-directory: android/distribution
+        run: sha256sum --check starpost-android.apk.sha256
+      - name: Publish APK to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --title "星邮 $RELEASE_TAG" --notes-file server/android-release-notes.md
+          fi
+          gh release upload "$RELEASE_TAG" android/distribution/starpost-android.apk android/distribution/starpost-android.apk.sha256 android/distribution/signing-certificate.txt --clobber

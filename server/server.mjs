@@ -10,6 +10,7 @@ import { RelayMetrics } from './metrics.mjs';
 import { MessageQuota } from './message-quota.mjs';
 import { WerewolfGames } from './werewolf.mjs';
 import { manageGroup, groupCanSpeak } from './group-management.mjs';
+import { MobileAccess } from './mobile.mjs';
 
 const fail = (message, code = 400) => { const e = new Error(message); e.status = code; throw e; };
 const id = (v) => typeof v === 'string' && /^\d{5,12}$/.test(v) && Number(v) >= 10001 && Number.isSafeInteger(Number(v)) ? v : fail('聊天 ID 须是从 10001 起的数字');
@@ -228,6 +229,8 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
   function rpc(who, action, args = {}) {
     const now = clock();
     switch (action) {
+      case 'owner.send': return mobile.send(who, 'bot', args);
+      case 'owner.history': return mobile.ownerHistory(who, args.before);
       case 'group.manage': return manageGroup(store, who, args, { group, emit, now, send: (actor, message) => rpc(actor, 'message.send', message), changed: (groupId, target) => emit([target], 'group.left', { groupId, botId: target }) });
       case 'game.browse': return games.publicListings();
       case 'game.visibility': return games.visibility(who, args);
@@ -460,6 +463,8 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       default: fail('未知操作');
     }
   }
+  const mobile = new MobileAccess(store, { login, snapshot, history: chatHistory, rpc, games, image: media, clock,
+    fingerprint: who => store.get('credentials', who)?.tokenHash ?? store.get('accounts', who)?.tokenHash ?? (keys[who] ? hash(keys[who]) : '') });
   const server = http.createServer(async (req, res) => {
     const started = metrics.now();
     const metricPath = req.url?.startsWith('/media/') ? '/media/:seq' : req.url?.split('?')[0] ?? '';
@@ -477,7 +482,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         const seq = match ? Number(match[1]) : NaN;
         if (!Number.isSafeInteger(seq)) fail('图片地址不合法', 404);
         const who = auth(req);
-        const row = store.statement("SELECT data FROM events WHERE seq=? AND recipient=? AND type='message'").get(seq, who);
+        const row = store.statement("SELECT data FROM events WHERE seq=? AND recipient=? AND type IN ('message','owner.message')").get(seq, who);
         if (!row) fail('图片不存在或无权限', 404);
         const image = JSON.parse(row.data).image;
         if (!image?.mediaId) fail('该消息没有图片', 404);
@@ -489,11 +494,19 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         res.writeHead(200, { 'content-type': image.mime, 'content-length': bytes.length, 'cache-control': 'private, no-store' });
         res.end(bytes); return;
       }
-      if (req.method !== 'POST' || !['/rpc', '/register', '/login', '/credential/claim'].includes(req.url)) fail('未找到接口', 404);
+      if (req.method !== 'POST' || !['/rpc', '/register', '/login', '/credential/claim', '/mobile/login', '/mobile/rpc'].includes(req.url)) fail('未找到接口', 404);
       const who = ['/rpc', '/credential/claim'].includes(req.url) ? auth(req) : null;
       const chunks = []; let length = 0;
       for await (const chunk of req) { length += chunk.length; if (length > 1600000) fail('请求过大', 413); chunks.push(chunk); }
       const raw = Buffer.concat(chunks).toString('utf8');
+      if (req.url === '/mobile/login' || req.url === '/mobile/rpc') {
+        const input = JSON.parse(raw);
+        const result = store.transaction(() => req.url === '/mobile/login'
+          ? mobile.signIn(input, ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) ? String(req.headers['x-real-ip'] ?? req.socket.remoteAddress) : req.socket.remoteAddress)
+          : mobile.call(mobile.authenticate(req.headers.authorization), input.action, input.args ?? {}));
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+        res.end(JSON.stringify({ ok: true, result: store.hydrate(Array.isArray(result) ? { items: result } : result) })); return;
+      }
       if (req.url === '/register') {
         if (raw.length > 4096) fail('注册请求过大', 413);
         const result = store.transaction(() => register(JSON.parse(raw)));

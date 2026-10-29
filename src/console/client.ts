@@ -106,9 +106,13 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
   const style = ui.h('style'); style.textContent = chatCss; ctx.root.appendChild(style);
   const card = ui.sheet({ title: '星邮', en: 'Starpost' });
   const status = ui.msgline('加载中');
+  const mobile = ui.h('div');
+  const apk = ui.h('a', null, '下载 Android APK'); apk.href = 'https://github.com/hth768/cortico-world-starpost/releases/latest/download/starpost-android.apk'; apk.target = '_blank'; apk.rel = 'noopener'; apk.download = 'starpost-android.apk';
+  const credentials = ui.h('div'); credentials.style.overflowWrap = 'anywhere'; credentials.style.userSelect = 'text';
+  mobile.append(apk, credentials);
   const account = ui.h('div');
   const content = ui.h('div');
-  card.body.append(status, account, content); ctx.root.appendChild(card.el);
+  card.body.append(mobile, status, account, content); ctx.root.appendChild(card.el);
   const library = ui.sheet({ title: '表情包收藏', en: 'Stickers' }); library.el.hidden = true; ctx.root.appendChild(library.el);
   const games = ui.sheet({ title: '狼人杀', en: 'Werewolf' }); games.el.hidden = true; ctx.root.insertBefore(games.el, library.el);
   const gameStatus = ui.msgline('预约、报到和游戏行动由 bot 自主决定，页面只读。');
@@ -383,6 +387,11 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
     refreshBusy = true;
     try {
       const identity = await ctx.invoke<{ registered: boolean; botId: string | null }>('status');
+      try {
+        const info = await ctx.invoke<{ botId: string; credential: string }>('mobileLoginInfo');
+        credentials.textContent = info.botId ? `手机登录 ID：${info.botId}\n凭据：${info.credential}` : '注册后在此显示手机登录 ID 和凭据';
+        credentials.style.whiteSpace = 'pre-wrap';
+      } catch { credentials.textContent = ''; }
       if (!identity.registered) { showRegistration(); status.textContent = '待注册'; return; }
       showSearch();
       const data = await ctx.invoke<Snapshot>('overview');

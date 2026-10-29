@@ -1,0 +1,17 @@
+Verifies
+Verified using v1 scheme (JAR signing): false
+Verified using v2 scheme (APK Signature Scheme v2): true
+Verified using v3 scheme (APK Signature Scheme v3): true
+Verified using v3.1 scheme (APK Signature Scheme v3.1): false
+Verified using v4 scheme (APK Signature Scheme v4): false
+Verified for SourceStamp: false
+Number of signers: 1
+Signer #1 certificate DN: CN=Starpost Android, O=Starpost
+Signer #1 certificate SHA-256 digest: a9e598a17fb06c6bd167824361002cc370be79118ff23a4ed9f4cf1c4192c948
+Signer #1 certificate SHA-1 digest: fa0d96fd1ad025e3d5d4c9081f02d68587b88677
+Signer #1 certificate MD5 digest: 2cde78d54120b8ced8a894655da37ecd
+Signer #1 key algorithm: RSA
+Signer #1 key size (bits): 3072
+Signer #1 public key SHA-256 digest: 339e61f0f7f80475953b8efd9c0361e0ccfd83be77e7bf6d4155713a76628ec7
+Signer #1 public key SHA-1 digest: 42101c76dd6dac121ddf018718d23de19a73b5d7
+Signer #1 public key MD5 digest: 2f8196a25d933e1fee17958f6cae4dfc

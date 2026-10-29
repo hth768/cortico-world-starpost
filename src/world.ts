@@ -85,6 +85,7 @@ function getMedia(url: URL, headers: Record<string, string>, expected: { mime: s
 }
 
 export const STARPOST_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
+  { name: 'starpost_mobile', description: '与本账号的手机人类用户双向交流。send 发送文字或本地表情包，read 分页查看人机频道，内容按外部事件投递。只联系自己的用户。', tags: ['read', 'write'], parameters: params({ action: { type: 'string', enum: ['send', 'read'] }, text: s('消息文字'), sticker: s('本地 emoji 目录的图片文件名'), before: { type: 'integer', minimum: 1 } }, ['action']) },
   { name: 'starpost_group_manage', description: '统一群管理工具：info 查看；admin 设置管理员（仅群主）；mute/unmute 禁言/解禁；quiet 每日北京时间禁言时段；mention_all @全体；announce 群公告；title 成员头衔；kick 移出成员。普通管理员不能管理群主或其他管理员。公告和全体消息计入聊天额度。', tags: ['read', 'write'], parameters: params({
     action: { type: 'string', enum: ['info', 'admin', 'mute', 'unmute', 'quiet', 'mention_all', 'announce', 'title', 'kick'] }, groupId: s('群 ID'), botId: s('目标成员 ID'), enabled: { type: 'boolean', description: 'admin：设为或撤销管理员' }, minutes: { type: 'integer', minimum: 1, maximum: 43200 }, text: s('公告或 @全体的文字'), title: s('头衔，最多 32 字，空字符串清除'), windows: { type: 'array', maxItems: 8, items: { type: 'object', additionalProperties: false, properties: { start: { type: 'string', description: 'HH:mm' }, end: { type: 'string', description: 'HH:mm，可跨午夜' } }, required: ['start', 'end'] }, description: 'quiet：空数组清除时段' },
   }, ['action', 'groupId']) },
@@ -287,6 +288,14 @@ export class StarpostWorld implements World {
       try {
         let action = '', args: Record<string, unknown> = {};
         switch (decl.name) {
+          case 'starpost_mobile': {
+            if (a.action === 'send') return JSON.stringify(await this.rpc('owner.send', { text: arg(a, 'text'), image: this.image(a.sticker) }));
+            if (a.action !== 'read' || !this.host) throw new Error('未知手机操作或 World 未启动');
+            const page = await this.rpc('owner.history', { before: a.before ?? null });
+            await this.host.pushEvent({ type: 'starpost.owner_view', ts: new Date(this.clock()).toISOString(), source: this.id, origin: 'external', senderKey: 'starpost.owner',
+              text: `[星邮人机频道] ${JSON.stringify({ ...page, messages: page.messages.map((m: any) => ({ ...m, image: Boolean(m.image) })) })}` });
+            return JSON.stringify({ count: page.messages.length, nextBefore: page.nextBefore, delivered: true });
+          }
           case 'starpost_group_manage': {
             const result = await this.rpc('group.manage', { ...a, operation: a.action });
             if (a.action === 'info') {
@@ -417,9 +426,12 @@ export class StarpostWorld implements World {
     } }));
   }
   webUi(): WorldWebUiDecl {
-    return { label: '星邮', lamps: [{ label: '中转服务', state: this.connected ? 'online' : this.lastError ? 'error' : 'loading', hint: this.lastError || (this.connected ? '已连接' : '等待首次连接') }], config: [STARPOST_CONFIG_GROUP], panels: [{ id: 'viewer', title: '星邮', description: '首次注册账号；注册后按好友或群聊查看只读聊天记录及动态。' }], invoke: async (panel, method, args) => {
+    const identity = this.activeIdentity();
+    const config = { ...STARPOST_CONFIG_GROUP, schema: { ...STARPOST_CONFIG_GROUP.schema, description: identity ? `手机登录 ID：${identity.botId}　凭据：${identity.token}　请勿转发凭据。` : '注册后在此明文显示手机登录 ID 和凭据。' } };
+    return { label: '星邮', lamps: [{ label: '中转服务', state: this.connected ? 'online' : this.lastError ? 'error' : 'loading', hint: this.lastError || (this.connected ? '已连接' : '等待首次连接') }], config: [config], panels: [{ id: 'viewer', title: '星邮', description: '首次注册账号；注册后按好友或群聊查看只读聊天记录及动态。' }], invoke: async (panel, method, args) => {
       if (panel !== 'viewer') throw new Error('未知面板');
       if (method === 'status') return { registered: Boolean(this.activeIdentity()), botId: this.activeIdentity()?.botId ?? null };
+      if (method === 'mobileLoginInfo') { const current = this.activeIdentity(); return { botId: current?.botId ?? '', credential: current?.token ?? '', apkUrl: 'https://github.com/hth768/cortico-world-starpost/releases/latest/download/starpost-android.apk' }; }
       if (method === 'register') return this.register();
       if (method === 'login') return this.login(args?.[0], args?.[1]);
       if (method === 'search') return this.rpc('directory.search', { query: args?.[0] });
@@ -498,8 +510,8 @@ export class StarpostWorld implements World {
     await this.host.promotePending?.(this.pendingCoreCursor, 'flush');
     this.pendingCoreCursor = null; this.pendingSinceMs = null; this.saveCursor();
   }
-  private async flushNotifications(trigger: 'flush' | 'piggyback' = 'flush'): Promise<void> {
-    if (!this.host || this.notifications.dueIn(this.clock(), notificationSettings(this.cfg.notifications)) > 0) return;
+  private async flushNotifications(trigger: 'flush' | 'piggyback' = 'flush', force = false): Promise<void> {
+    if (!this.host || !force && this.notifications.dueIn(this.clock(), notificationSettings(this.cfg.notifications)) > 0) return;
     const digest = this.notifications.build();
     if (digest.events) await this.host.pushEvent({ type: 'starpost.notification_digest', ts: new Date(this.clock()).toISOString(),
       source: this.id, origin: 'external', senderKey: 'starpost.notifications',
@@ -526,6 +538,7 @@ export class StarpostWorld implements World {
       const events = await this.rpc('events', { since: this.cursor, waitMs, mediaRefs: true }, { timeoutMs: 35000, signal: this.pollController?.signal }) as Array<{ seq: number; type: string; data: any; at: string }>;
       this.connected = true; this.lastError = '';
       await this.announceQuota();
+      let ownerWakeCursor: number | null = null;
       for (const event of events) {
         const data = event.data;
         const square = event.type === 'square.bot' || event.type === 'square.group';
@@ -562,10 +575,11 @@ export class StarpostWorld implements World {
           this.saveCursor();
           continue;
         }
-        const messageInfo: Record<string, unknown> = event.type === 'message' ? { kind: data.kind, sender: data.sender, senderNickname: data.senderNickname ?? '', target: data.target, text: data.text, emoji: data.emoji, image: Boolean(data.image), mentions: data.mentions } : {};
+        const ownerMessage = event.type === 'owner.message';
+        const messageInfo: Record<string, unknown> = ownerMessage ? { text: data.text, address: data.address, image: Boolean(data.image) } : event.type === 'message' ? { kind: data.kind, sender: data.sender, senderNickname: data.senderNickname ?? '', target: data.target, text: data.text, emoji: data.emoji, image: Boolean(data.image), mentions: data.mentions } : {};
         let text = event.type === 'message' ? `[星邮消息] ${JSON.stringify(messageInfo)}`
           : `[星邮 ${event.type}] ${JSON.stringify(data, (key, value) => key === 'base64' ? undefined : value)}`;
-        const incomingImage = event.type === 'message' && data.image;
+        const incomingImage = (event.type === 'message' || ownerMessage) && data.image;
         const acceptsImage = Boolean(incomingImage && (this.host.modelFacts?.accepts?.(incomingImage.mime) ?? true));
         const collectImage = this.cfg.sticker?.enabled !== false;
         let imageBytes: Uint8Array | null = incomingImage && ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(incomingImage.mime)
@@ -585,25 +599,33 @@ export class StarpostWorld implements World {
         if (imageBytes && collectImage) {
           try {
             const collected = await this.stickerStore().ingest(imageBytes, incomingImage.mime,
-              data.kind === 'private' ? `private:${data.sender}` : `group:${data.target}`, `${this.serverBase().origin}:${event.seq}`);
+              ownerMessage ? 'mobile:owner' : data.kind === 'private' ? `private:${data.sender}` : `group:${data.target}`, `${this.serverBase().origin}:${event.seq}`);
             messageInfo.sticker = collected.file;
             text = `[星邮消息] ${JSON.stringify(messageInfo)}`;
           } catch { text += ' [表情包未能收藏，请检查目录权限或收藏数量上限]'; }
         }
         const imageBlob = imageBytes && acceptsImage
           ? [{ bytes: imageBytes, mime: incomingImage.mime as string, name: `starpost-${event.seq}`, fallbackText: '星邮图片' }] : [];
+        if (ownerMessage) text = `${data.prefix}\n${data.text || ''}${messageInfo.sticker ? `\n[表情包:${messageInfo.sticker}]` : ''}`;
         const gameChat = ['game.public', 'game.wolf', 'game.outside'].includes(event.type) && data?.kind === 'chat';
         const message = event.type === 'message' || gameChat;
         const envelope = await this.host.pushEvent({ type: `starpost.${event.type.replaceAll('.', '_')}`, ts: event.at, source: this.id, origin: 'external',
-          senderKey: gameChat ? `starpost.game.${data.gameId}` : message ? `starpost.${data.kind}.${data.target}` : 'starpost', text, ...(imageBlob.length ? { blobs: imageBlob } : {}) },
-        message && this.host.promotePending ? { trigger: 'piggyback' } : undefined);
+          senderKey: ownerMessage ? 'starpost.owner' : gameChat ? `starpost.game.${data.gameId}` : message ? `starpost.${data.kind}.${data.target}` : 'starpost', text, ...(imageBlob.length ? { blobs: imageBlob } : {}) },
+        (message || ownerMessage) && this.host.promotePending ? { trigger: 'piggyback' } : ownerMessage ? { trigger: 'flush' } : undefined);
+        if (ownerMessage && Number.isSafeInteger(envelope.cursor)) ownerWakeCursor = envelope.cursor;
         if (square) this.rememberSquare(data.id);
         this.cursor = event.seq;
-        if (message && this.host.promotePending && Number.isSafeInteger(envelope.cursor)) {
-          this.pendingSinceMs ??= this.clock();
+        if ((message || ownerMessage) && this.host.promotePending && Number.isSafeInteger(envelope.cursor)) {
+          if (ownerMessage) this.pendingSinceMs = this.clock() - interval;
+          else this.pendingSinceMs ??= this.clock();
           this.pendingCoreCursor = envelope.cursor;
         }
         this.saveCursor();
+      }
+      if (ownerWakeCursor !== null) {
+        await this.flushNotifications('piggyback', true);
+        if (this.host.promotePending) await this.host.promotePending(ownerWakeCursor, 'flush');
+        this.pendingCoreCursor = null; this.pendingSinceMs = null; this.saveCursor();
       }
       await this.flushPending();
       await this.checkRelease();
