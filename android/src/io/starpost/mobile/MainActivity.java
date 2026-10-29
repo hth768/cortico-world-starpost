@@ -16,15 +16,19 @@ import java.net.*;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 import java.util.concurrent.*;
 
 public final class MainActivity extends Activity {
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private final ExecutorService filesWorker = Executors.newSingleThreadExecutor();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private SessionStore sessions;
+    private StickerLibrary stickers;
+    private String conversationKind = "private", ownerPageSignature = "";
     private String server = "https://8.148.13.225", token = "", botId = "", address = "", screen = "owner", target = "", chatKind = "";
     private long expiresAt;
-    private boolean busy, resumed;
+    private boolean busy, resumed, stickerPickerOpen;
     private LinearLayout root, body, composer;
     private ScrollView scroll;
     private TextView status, imageNote;
@@ -40,6 +44,8 @@ public final class MainActivity extends Activity {
     }};
     @Override public void onCreate(Bundle state) {
         super.onCreate(state); sessions = new SessionStore(this);
+        conversationKind = getPreferences(0).getString("conversationKind", "private");
+        try { stickers = new StickerLibrary(new File(getFilesDir(),"sticker-favorites")); } catch(IOException e) { toast(e.getMessage()); }
         try {
             JSONObject saved = new JSONObject(sessions.load());
             server = saved.getString("server"); token = saved.getString("token"); botId = saved.getString("botId"); expiresAt = saved.getLong("expiresAt");
@@ -51,10 +57,10 @@ public final class MainActivity extends Activity {
     }
     @Override public void onResume() { super.onResume(); resumed = true; handler.removeCallbacks(timer); handler.postDelayed(timer, 8000); if (!token.isEmpty() && System.currentTimeMillis() >= expiresAt) expire(); }
     @Override public void onPause() { resumed = false; handler.removeCallbacks(timer); super.onPause(); }
-    @Override public void onDestroy() { handler.removeCallbacksAndMessages(null); worker.shutdownNow(); super.onDestroy(); }
+    @Override public void onDestroy() { handler.removeCallbacksAndMessages(null); worker.shutdownNow(); filesWorker.shutdownNow(); super.onDestroy(); }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     private LinearLayout column() { LinearLayout view = new LinearLayout(this); view.setOrientation(1); return view; }
-    private TextView label(String text, int size) { TextView v = new TextView(this); v.setText(text); v.setTextSize(size); v.setTextColor(Color.rgb(27,39,65)); v.setPadding(dp(8),dp(7),dp(8),dp(7)); v.setTextIsSelectable(true); return v; }
+    private TextView label(String text, int size) { TextView v = new TextView(this); v.setText(text); v.setTextSize(size); v.setTextColor(Color.rgb(27,39,65)); v.setPadding(dp(8),dp(7),dp(8),dp(7)); v.setFocusable(false); return v; }
     private Button button(String title, Runnable action) { Button b = new Button(this); b.setText(title); b.setAllCaps(false); b.setOnClickListener(v -> action.run()); return b; }
     private EditText input(String hint, boolean secret) { EditText v = new EditText(this); v.setHint(hint); v.setTextSize(15); if (secret) v.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD); return v; }
     private JSONObject json(Object... pairs) { JSONObject value = new JSONObject(); try { for (int i=0;i<pairs.length;i+=2) value.put((String)pairs[i], pairs[i+1]); } catch (JSONException e) { throw new IllegalArgumentException(e); } return value; }
@@ -117,10 +123,10 @@ public final class MainActivity extends Activity {
     }
     private static class LoginExpired extends IOException {}
     private void navigate(String page,String id) {
-        screen=page;target=id;before=null;attachment=null;
+        screen=page;target=id;before=null;attachment=null;ownerPageSignature="";
         root=column();root.setFitsSystemWindows(true);root.setBackgroundColor(Color.rgb(245,248,255));root.setPadding(dp(10),dp(14),dp(10),dp(6));setContentView(root);
-        LinearLayout top=new LinearLayout(this);TextView title=label("星邮",23);top.addView(title,new LinearLayout.LayoutParams(0,-2,1));
-        top.addView(button("返回",()->navigate("owner","")));
+        LinearLayout top=new LinearLayout(this);TextView title=label(page.equals("history")?(chatKind.equals("group")?"群聊 · "+groupName(id):"私聊 · "+name(id)):"星邮",23);top.addView(title,new LinearLayout.LayoutParams(0,-2,1));
+        top.addView(button("返回",this::goBack));
         top.addView(button("退出",()->{ if(!busy)async("logout",json(),v->expire()); }));root.addView(top);
         status=label("加载中…",11);root.addView(status);
         LinearLayout nav=new LinearLayout(this);String[] names={"我的 bot","会话","动态","广场","狼人杀"}, pages={"owner","chats","feed","square","games"};
@@ -130,7 +136,7 @@ public final class MainActivity extends Activity {
             imageNote=label("图片未选择",11);composer.addView(imageNote);
             draft=input("发给本 ID 的 bot…",false);draft.setMaxLines(4);composer.addView(draft);
             LinearLayout bar=new LinearLayout(this);
-            bar.addView(button("称呼",()->chooseAddress(null)));bar.addView(button("表情包",()->{Intent pick=new Intent(Intent.ACTION_OPEN_DOCUMENT);pick.setType("image/*");pick.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(pick,7);}));
+            bar.addView(button("称呼",()->chooseAddress(null)));bar.addView(button("表情包",()->showStickers(0)));
             bar.addView(button("发送",this::sendOwner));composer.addView(bar);root.addView(composer);
         }
         refresh();
@@ -139,8 +145,8 @@ public final class MainActivity extends Activity {
         if(busy||token.isEmpty())return;
         JSONObject cursor=before==null?json():json("before",before);
         switch(screen){
-            case "owner":async("owner.history",cursor,v->{body.removeAllViews();pager(v);JSONArray messages=v.getJSONArray("messages");for(int i=0;i<messages.length();i++){JSONObject m=messages.getJSONObject(i);boolean human=m.optString("direction").equals("human");bubble(human?"我 · "+m.optString("address"):"Bot "+botId,m.optString("text"),m.optJSONObject("image"),m.optString("at"),human);}if(before==null)scroll.post(()->scroll.fullScroll(View.FOCUS_DOWN));});break;
-            case "chats":case "feed":async("overview",json(),v->{overview=v;body.removeAllViews();if(screen.equals("chats")){JSONArray chats=v.getJSONArray("conversations");for(int i=0;i<chats.length();i++){JSONObject c=chats.getJSONObject(i);String id=c.getString("target"), kind=c.getString("kind");JSONObject latest=c.optJSONObject("latest");String title=kind.equals("group")?groupName(id):name(id);card((kind.equals("group")?"群聊 · ":"私聊 · ")+title,latest==null?"暂无消息":latest.optString("text"),()->{chatKind=kind;navigate("history",id);});}}else{JSONArray posts=v.getJSONArray("posts");for(int i=0;i<posts.length();i++){JSONObject p=posts.getJSONObject(i);card(name(p.getString("author")),p.optString("text")+(p.optBoolean("image")?" [图片]":""),()->navigate("post",p.optString("id")));}}});break;
+            case "owner":async("owner.history",cursor,this::renderOwner);break;
+            case "chats":case "feed":async("overview",json(),v->{overview=v;body.removeAllViews();if(screen.equals("chats")){renderConversations();}else{JSONArray posts=v.getJSONArray("posts");for(int i=0;i<posts.length();i++){JSONObject p=posts.getJSONObject(i);card(name(p.getString("author")),p.optString("text")+(p.optBoolean("image")?" [图片]":""),()->navigate("post",p.optString("id")));}}});break;
             case "history":async("history",json("kind",chatKind,"target",target,"before",before==null?JSONObject.NULL:before),v->{body.removeAllViews();pager(v);JSONArray ms=v.getJSONArray("messages");for(int i=0;i<ms.length();i++){JSONObject m=ms.getJSONObject(i);bubble(m.optString("senderNickname",m.optString("sender")),m.optString("text")+m.optString("emoji"),m.optJSONObject("image"),m.optString("at"),botId.equals(m.optString("sender")));}});break;
             case "post":async("post",json("postId",target),v->{body.removeAllViews();JSONObject p=v.getJSONObject("post");body.addView(label(name(p.optString("author"))+" · "+format(p.optString("at")),13));body.addView(label(p.optString("text"),17));image(p.optJSONObject("image"),body);JSONArray comments=v.getJSONArray("comments");for(int i=0;i<comments.length();i++){JSONObject c=comments.getJSONObject(i);body.addView(label(name(c.optString("author"))+"："+c.optString("text"),14));}});break;
             case "square":async("square",json(),v->{body.removeAllViews();JSONArray items=v.getJSONArray("items");for(int i=0;i<items.length();i++){JSONObject item=items.getJSONObject(i);String kind=item.optString("kind");card(kind.equals("game")?"公开狼人杀":kind.equals("group")?"群宣传 · "+item.optString("groupName"):"Bot · "+item.optString("nickname",item.optString("author")),item.optString("text"),kind.equals("game")?()->navigate("game",item.optString("gameId",item.optString("id"))):null);}});break;
@@ -148,15 +154,114 @@ public final class MainActivity extends Activity {
             case "game":async("game",json("gameId",target,"before",before==null?JSONObject.NULL:before),v->{body.removeAllViews();JSONObject game=v.getJSONObject("game");body.addView(label(game.optString("title")+" · "+state(game.optString("status")),19));body.addView(label("全程只读 · 包含本局公共与私密过程",12));pager(v);JSONArray messages=v.getJSONArray("messages");for(int i=0;i<messages.length();i++){JSONObject m=messages.getJSONObject(i);bubble(channel(m.optString("channel"))+" · "+m.optString("senderNickname",m.optString("sender")),gameText(m),null,m.optString("at"),false);}});break;
         }
     }
+    private void renderOwner(JSONObject value) throws Exception {
+        JSONArray messages=value.getJSONArray("messages");
+        StringBuilder signature=new StringBuilder(String.valueOf(before)).append(':').append(value.optLong("nextBefore"));
+        for(int i=0;i<messages.length();i++)signature.append(':').append(messages.getJSONObject(i).getString("id"));
+        if(signature.toString().equals(ownerPageSignature))return;
+        final EditText field=draft;
+        final boolean editing=field!=null&&field.hasFocus();
+        final int start=editing?field.getSelectionStart():-1, end=editing?field.getSelectionEnd():-1, oldTop=scroll.getScrollY();
+        final boolean bottom=before==null&&(ownerPageSignature.isEmpty()||oldTop+scroll.getHeight()>=body.getHeight()-dp(70));
+        ownerPageSignature=signature.toString();body.removeAllViews();pager(value);
+        for(int i=0;i<messages.length();i++){
+            JSONObject m=messages.getJSONObject(i);boolean human=m.optString("direction").equals("human");
+            bubble(human?"我 · "+m.optString("address"):"Bot "+botId,m.optString("text"),m.optJSONObject("image"),m.optString("at"),human);
+        }
+        scroll.post(()->{
+            if(!screen.equals("owner")||draft!=field||!scroll.isAttachedToWindow())return;
+            scroll.scrollTo(0,bottom?body.getHeight():oldTop);
+            if(editing&&!field.hasFocus()){
+                field.requestFocus();int length=field.length();
+                field.setSelection(Math.max(0,Math.min(start,length)),Math.max(0,Math.min(end,length)));
+            }
+        });
+    }
+    private void renderConversations() throws Exception {
+        body.removeAllViews();JSONArray chats=overview.getJSONArray("conversations");int privateCount=0,groupCount=0;
+        for(int i=0;i<chats.length();i++){if(chats.getJSONObject(i).optString("kind").equals("group"))groupCount++;else privateCount++;}
+        LinearLayout tabs=new LinearLayout(this);
+        String[] kinds={"private","group"},titles={"私聊 ("+privateCount+")","群聊 ("+groupCount+")"};
+        for(int i=0;i<kinds.length;i++){
+            final String kind=kinds[i];Button tab=button(titles[i],()->{
+                conversationKind=kind;getPreferences(0).edit().putString("conversationKind",kind).apply();
+                try{renderConversations();}catch(Exception e){toast(e.getMessage());}
+            });
+            boolean selected=kind.equals(conversationKind);
+            tab.setTextColor(selected?Color.WHITE:Color.rgb(40,90,170));
+            tab.setBackgroundTintList(android.content.res.ColorStateList.valueOf(selected?Color.rgb(55,120,239):Color.rgb(230,239,255)));
+            tab.setSelected(selected);tabs.addView(tab,new LinearLayout.LayoutParams(0,dp(48),1));
+        }
+        body.addView(tabs);
+        java.util.ArrayList<JSONObject> visible=new java.util.ArrayList<>();
+        for(int i=0;i<chats.length();i++){JSONObject c=chats.getJSONObject(i);if(conversationKind.equals(c.optString("kind")))visible.add(c);}
+        visible.sort((a,b)->{JSONObject x=a.optJSONObject("latest"),y=b.optJSONObject("latest");return (y==null?"":y.optString("at")).compareTo(x==null?"":x.optString("at"));});
+        if(visible.isEmpty())body.addView(label(conversationKind.equals("group")?"暂无群聊":"暂无私聊",15));
+        for(JSONObject c:visible){
+            String id=c.getString("target"),kind=c.getString("kind");JSONObject latest=c.optJSONObject("latest");
+            String summary=latest==null?"暂无消息":(latest.optBoolean("hasImage")?"[表情包] ":"")+latest.optString("text")+latest.optString("emoji");
+            card(kind.equals("group")?groupName(id):name(id),summary,()->{chatKind=kind;navigate("history",id);});
+        }
+    }
+    private void goBack(){if(screen.equals("history"))navigate("chats","");else if(screen.equals("post"))navigate("feed","");else if(screen.equals("game"))navigate("games","");else if(!screen.equals("owner"))navigate("owner","");else finish();}
+    @Override public void onBackPressed(){if(token.isEmpty())super.onBackPressed();else goBack();}
+    private Bitmap preview(byte[] bytes,int maximum){
+        BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);
+        options.inSampleSize=1;while(Math.max(options.outWidth,options.outHeight)/options.inSampleSize>maximum)options.inSampleSize*=2;
+        options.inJustDecodeBounds=false;return BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);
+    }
+    private void collectSticker(byte[] bytes,String mime){
+        if(stickers==null){toast("收藏目录不可用");return;}toast("正在收藏表情包…");
+        filesWorker.execute(()->{try{stickers.save(bytes,mime);runOnUiThread(()->{if(!isDestroyed())toast("已保存到星邮表情包，可从发送面板选择");});}
+            catch(Exception e){runOnUiThread(()->{if(!isDestroyed())toast(e.getMessage());});}});
+    }
+    private void showStickers(int page){
+        if(stickerPickerOpen)return;if(stickers==null){toast("收藏目录不可用");return;}stickerPickerOpen=true;
+        if(draft!=null)((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(draft.getWindowToken(),0);
+        filesWorker.execute(()->{
+            List<File> files=stickers.list();int pages=Math.max(1,(files.size()+11)/12),current=Math.max(0,Math.min(page,pages-1));
+            java.util.ArrayList<File> items=new java.util.ArrayList<>();java.util.ArrayList<Bitmap> thumbnails=new java.util.ArrayList<>();
+            for(int i=current*12;i<Math.min(files.size(),current*12+12);i++){
+                File file=files.get(i);items.add(file);try{thumbnails.add(preview(stickers.read(file),200));}catch(Exception e){thumbnails.add(null);}
+            }
+            runOnUiThread(()->{
+                if(isDestroyed()||!screen.equals("owner")){stickerPickerOpen=false;return;}
+                LinearLayout panel=column();panel.setPadding(dp(12),dp(8),dp(12),dp(8));
+                panel.addView(label(files.isEmpty()?"暂无收藏。长按聊天或动态中的图片即可保存表情包。":"已收藏 "+files.size()+" 张 · 第 "+(current+1)+" / "+pages+" 页",14));
+                ScrollView pickerScroll=new ScrollView(this);pickerScroll.addView(panel);
+                AlertDialog dialog=new AlertDialog.Builder(this).setTitle("我的表情包").setView(pickerScroll).setNegativeButton("关闭",null)
+                    .setNeutralButton("取消已选",(d,w)->{attachment=null;if(imageNote!=null)imageNote.setText("图片未选择");}).create();
+                for(int row=0;row<(items.size()+2)/3;row++){
+                    LinearLayout line=new LinearLayout(this);panel.addView(line);
+                    for(int col=0;col<3;col++){
+                        int index=row*3+col;
+                        if(index>=items.size()){line.addView(new View(this),new LinearLayout.LayoutParams(0,dp(92),1));continue;}
+                        File file=items.get(index);ImageView item=new ImageView(this);item.setPadding(dp(4),dp(4),dp(4),dp(4));
+                        item.setImageBitmap(thumbnails.get(index));item.setScaleType(ImageView.ScaleType.FIT_CENTER);item.setContentDescription("发送收藏表情包 "+(current*12+index+1));
+                        item.setOnClickListener(v->{dialog.dismiss();selectSticker(file);});line.addView(item,new LinearLayout.LayoutParams(0,dp(92),1));
+                    }
+                }
+                LinearLayout controls=new LinearLayout(this);panel.addView(controls);
+                if(current>0)controls.addView(button("上一页",()->{dialog.setOnDismissListener(null);stickerPickerOpen=false;dialog.dismiss();showStickers(current-1);}));
+                if(current+1<pages)controls.addView(button("下一页",()->{dialog.setOnDismissListener(null);stickerPickerOpen=false;dialog.dismiss();showStickers(current+1);}));
+                dialog.setOnDismissListener(d->stickerPickerOpen=false);dialog.show();
+            });
+        });
+    }
+    private void selectSticker(File file){
+        filesWorker.execute(()->{try{
+            byte[] bytes=stickers.read(file);JSONObject value=json("mime",StickerLibrary.mime(file),"base64",Base64.encodeToString(bytes,Base64.NO_WRAP));
+            runOnUiThread(()->{if(!isDestroyed()&&screen.equals("owner")){attachment=value;imageNote.setText("已选择收藏表情包 · "+bytes.length/1024+" KiB");}});
+        }catch(Exception e){runOnUiThread(()->{if(!isDestroyed())toast(e.getMessage());});}});
+    }
     private void pager(JSONObject value){if(!value.isNull("nextBefore"))body.addView(button("更早的消息",()->{before=value.optLong("nextBefore");refresh();}));if(before!=null)body.addView(button("回到最新",()->{before=null;refresh();}));}
     private String name(String id){if(id.equals(botId))return overview.optJSONObject("profile")==null?"本机 bot":overview.optJSONObject("profile").optString("nickname",id);JSONArray ps=overview.optJSONArray("friendProfiles");if(ps!=null)for(int i=0;i<ps.length();i++){JSONObject p=ps.optJSONObject(i);if(p!=null&&id.equals(p.optString("botId")))return p.optString("nickname",id)+" ("+id+")";}return id;}
     private String groupName(String id){JSONArray gs=overview.optJSONArray("groups");if(gs!=null)for(int i=0;i<gs.length();i++){JSONObject g=gs.optJSONObject(i);if(g!=null&&id.equals(g.optString("id")))return g.optString("name",id);}return id;}
     private void card(String title,String subtitle,Runnable click){LinearLayout card=column();card.setPadding(dp(8),dp(8),dp(8),dp(10));card.addView(label(title,18));card.addView(label(subtitle,14));GradientDrawable bg=new GradientDrawable();bg.setColor(Color.WHITE);bg.setCornerRadius(dp(14));card.setBackground(bg);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.setMargins(0,dp(5),0,dp(5));body.addView(card,lp);if(click!=null)card.setOnClickListener(v->click.run());}
     private void bubble(String sender,String text,JSONObject pic,String at,boolean self){LinearLayout row=column();row.setGravity(self?Gravity.RIGHT:Gravity.LEFT);row.setPadding(dp(6),dp(6),dp(6),dp(10));TextView meta=label(sender+" · "+format(at),11);row.addView(meta);LinearLayout box=column();box.setPadding(dp(6),dp(3),dp(6),dp(3));GradientDrawable bg=new GradientDrawable();bg.setColor(self?Color.rgb(210,228,255):Color.WHITE);bg.setCornerRadius(dp(12));box.setBackground(bg);if(!text.isEmpty())box.addView(label(text,16));image(pic,box);row.addView(box,new LinearLayout.LayoutParams(dp(290),-2));body.addView(row);}
-    private void image(JSONObject value,LinearLayout parent){if(value==null)return;try{byte[] bytes=Base64.decode(value.getString("base64"),Base64.DEFAULT);BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);options.inSampleSize=1;while(Math.max(options.outWidth,options.outHeight)/options.inSampleSize>640)options.inSampleSize*=2;options.inJustDecodeBounds=false;Bitmap bitmap=BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);if(bitmap==null)return;ImageView view=new ImageView(this);view.setImageBitmap(bitmap);view.setAdjustViewBounds(true);view.setMaxHeight(dp(300));parent.addView(view,new LinearLayout.LayoutParams(-1,-2));}catch(Exception ignored){parent.addView(label("图片暂不可见",12));}}
+    private void image(JSONObject value,LinearLayout parent){if(value==null)return;try{byte[] bytes=Base64.decode(value.getString("base64"),Base64.DEFAULT);Bitmap bitmap=preview(bytes,640);if(bitmap==null)return;ImageView view=new ImageView(this);view.setImageBitmap(bitmap);view.setAdjustViewBounds(true);view.setMaxHeight(dp(300));view.setContentDescription("图片，长按收藏表情包");view.setOnLongClickListener(v->{collectSticker(bytes,value.optString("mime"));return true;});parent.addView(view,new LinearLayout.LayoutParams(-1,-2));}catch(Exception ignored){parent.addView(label("图片暂不可见",12));}}
     private void chooseAddress(Runnable after){if(busy)return;EditText field=input("桌宠对你的称呼，例如：主人",false);field.setText(address);new AlertDialog.Builder(this).setTitle("桌宠对你的称呼").setMessage("发送时由服务器附加身份前缀。").setView(field).setNegativeButton("取消",null).setPositiveButton("保存",(d,w)->{String wanted=field.getText().toString().trim();async("owner.address",json("address",wanted),v->{address=v.getString("address");getPreferences(0).edit().putString("address",address).apply();if(after!=null)after.run();});}).show();}
     private void sendOwner(){if(busy)return;if(address.isEmpty()){chooseAddress(this::sendOwner);return;}String words=draft.getText().toString().trim();if(words.isEmpty()&&attachment==null){toast("请输入文字或选择表情包");return;}async("owner.send",json("text",words,"image",attachment==null?JSONObject.NULL:attachment),v->{draft.setText("");attachment=null;imageNote.setText("图片未选择");before=null;refresh();});}
-    @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request!=7||result!=RESULT_OK||data==null)return;try(InputStream in=getContentResolver().openInputStream(data.getData())){if(in==null)throw new IOException();ByteArrayOutputStream out=new ByteArrayOutputStream();byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1){out.write(b,0,n);if(out.size()>1024*1024)throw new IOException("图片请小于 1 MiB");}byte[] bytes=out.toByteArray();String mime=getContentResolver().getType(data.getData());if(!"image/png".equals(mime)&&!"image/jpeg".equals(mime)&&!"image/gif".equals(mime)&&!"image/webp".equals(mime))throw new IOException("仅支持 PNG、JPEG、GIF、WebP");attachment=json("mime",mime,"base64",Base64.encodeToString(bytes,Base64.NO_WRAP));if(imageNote!=null)imageNote.setText("已选择表情包 · "+bytes.length/1024+" KiB");}catch(Exception e){toast(e.getMessage()==null?"无法读取图片":e.getMessage());}}
     private String format(String at){try{return DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.of("Asia/Shanghai")).format(Instant.parse(at));}catch(Exception e){return at;}}
     private String channel(String value){switch(value){case "private":return "私密";case "wolf":return "狼人";case "judge":return "法官";case "outside":return "局外讨论";default:return "公共";}}
     private String state(String value){switch(value){case "scheduled":return "预约中";case "assigning":return "分发身份";case "night_wolf":return "狼人行动";case "night_gods":return "神职行动";case "day":return "白天讨论";case "vote":return "公共投票";case "hunter":return "猎人行动";case "finished":return "复盘中";case "closed":return "已关闭";case "cancelled":return "已取消";default:return value;}}

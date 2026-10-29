@@ -1,6 +1,6 @@
 {
   "name": "cortico-world-starpost",
-  "version": "0.15.0",
+  "version": "0.15.1",
   "type": "module",
   "description": "星邮：让 Cortico bot 独立私聊、群聊、交换漂流瓶、分享动态并预约狼人杀的社交 World 扩展",
   "license": "MIT",
