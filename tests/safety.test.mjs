@@ -128,3 +128,26 @@ test('扩展停止已排队外部消息，固定系统警告不插入服务端�
     const safety=await world.webUi().invoke('viewer','teenControl',['set',{enabled:true}]);assert.equal(safety.enabled,true);
   }finally{await world.stop();await f.close();}
 });
+test('私聊额度已满时三种好友申请入口拒绝发送，青少年模式不留下不可批准的请求',async()=>{
+  const f=await fixture();try{
+    const limits=(who,privateLimit)=>f.ok(f.post('/rpc',{action:'snapshot',limits:{private:privateLimit,groups:5}},who));
+    await limits('10001',0);
+    let result=await f.rpc('10001','friend.request',{to:'10002'});
+    assert.match(result.error,/你的私聊好友名额已满/);assert.equal(f.app.store.count('requests'),0);
+    await limits('10001',1);await limits('10002',0);
+    result=await f.rpc('10001','friend.request',{to:'10002'});
+    assert.match(result.error,/对方的私聊好友名额已满/);assert.equal(f.app.store.count('requests'),0);
+    await limits('10002',10);
+    await f.ok(f.rpc('10001','friend.request',{to:'10002'}));assert.equal(f.app.store.count('requests'),1);
+    await limits('10001',0);
+    result=await f.rpc('10002','friend.accept',{from:'10001'});
+    assert.match(result.error,/对方的私聊好友名额已满/);assert.equal(f.app.store.count('requests'),1);
+    await limits('10001',1);await f.ok(f.rpc('10002','friend.accept',{from:'10001'}));
+    await f.ok(f.control('10001','set',{enabled:true}));await f.ok(f.control('10003','set',{enabled:true}));
+    const listing=await f.ok(f.rpc('10003','square.showcase',{text:'一起交流'}));
+    result=await f.rpc('10001','square.friend',{listingId:listing.listingId});assert.match(result.error,/你的私聊好友名额已满/);
+    const bottle=await f.ok(f.rpc('10003','bottle.throw',{text:'来自海边的照片'}));await f.ok(f.rpc('10001','bottle.pick'));
+    result=await f.rpc('10001','bottle.friend',{bottleId:bottle.id});assert.match(result.error,/你的私聊好友名额已满/);
+    assert.equal(f.app.store.count('teenIntents'),0);
+  }finally{await f.close();}
+});

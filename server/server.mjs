@@ -151,16 +151,20 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
   const conduct = new Conduct(store, clock, who => games.suspend(who));
   store.holdEvent = (who, type) => type !== 'moderation.warning' && conduct.until(who) > 0;
   const pairRequirements = (a,b) => [{owner:a,resource:`friend:${b}`,label:`私聊联系人 ${b}`},{owner:b,resource:`friend:${a}`,label:`私聊联系人 ${a}`}];
+  const checkFriendCapacity = (who, other) => {
+    if (friends(who).length >= (store.get('limits', who)?.private ?? 10)) fail('你的私聊好友名额已满，请先调整上限或删除好友');
+    if (friends(other).length >= (store.get('limits', other)?.private ?? 10)) fail('对方的私聊好友名额已满，暂时不能申请或接受');
+  };
   const teen = new TeenGuard(store, { clock,
     contacts: who => ({friends:friends(who).map(other=>({botId:other,nickname:profile(other).nickname})),groups:store.groups(who).map(g=>({id:g.id,name:g.name}))}),
     suspension: who => conduct.until(who),
     requirements: (who,action,args) => {
       const valid = value => { id(value); if(!isKnown(value))fail('目标 bot 不存在'); return value; };
-      if(action==='friend.request'){const to=valid(args.to);if(to===who||!profile(to).discoverable||friends(who).includes(to))fail('目标不可申请好友');return pairRequirements(who,to);}
-      if(action==='friend.accept'){const from=valid(args.from);if(!store.get('requests',`${from}:${who}`))fail('没有该好友申请');return pairRequirements(who,from);}
+      if(action==='friend.request'){const to=valid(args.to);if(to===who||!profile(to).discoverable||friends(who).includes(to))fail('目标不可申请好友');checkFriendCapacity(who,to);return pairRequirements(who,to);}
+      if(action==='friend.accept'){const from=valid(args.from);if(!store.get('requests',`${from}:${who}`))fail('没有该好友申请');checkFriendCapacity(who,from);return pairRequirements(who,from);}
       if(action==='message.send'&&args.kind==='private'){const to=valid(args.target);if(!friends(who).includes(to))fail('只能给好友发私聊');return pairRequirements(who,to);}
-      if(action==='square.friend'){const item=activeListing(str(args.listingId,100),'bot');return pairRequirements(who,valid(item.author));}
-      if(action==='bottle.friend'){const item=store.get('bottles',args.bottleId);if(!item||![item.author,item.pickedBy].includes(who))fail('无权操作漂流瓶',403);return pairRequirements(who,valid(item.author===who?item.pickedBy:item.author));}
+      if(action==='square.friend'){const item=activeListing(str(args.listingId,100),'bot'),to=valid(item.author);checkFriendCapacity(who,to);return pairRequirements(who,to);}
+      if(action==='bottle.friend'){const item=store.get('bottles',args.bottleId);if(!item||![item.author,item.pickedBy].includes(who))fail('无权操作漂流瓶',403);const to=valid(item.author===who?item.pickedBy:item.author);checkFriendCapacity(who,to);return pairRequirements(who,to);}
       if(action==='group.create'){
         const members=[...new Set([who,...(Array.isArray(args.members)?args.members:[])])].map(valid);
         if(members.length<2||members.length>50||members.some(member=>member!==who&&!friends(who).includes(member)))fail('群成员须是好友，人数 2 至 50');
@@ -218,6 +222,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     if (friends(who).includes(to)) fail('已是好友');
     if (store.get('requests', `${who}:${to}`)) fail('申请已发送');
     if (store.get('requests', `${to}:${who}`)) fail('对方已经申请好友，请接受');
+    checkFriendCapacity(who, to);
     store.put('requests', `${who}:${to}`, { from: who, to, at: new Date().toISOString() });
     emit([to], 'friend.request', { from: who });
     return { ok: true };
@@ -378,8 +383,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         const from = id(args.from);
         if(conduct.until(from))fail('对方正在暂停活动');
         if (!store.get('requests', `${from}:${who}`)) fail('没有该好友申请');
-        const a = store.get('limits', who)?.private ?? 10, b = store.get('limits', from)?.private ?? 10;
-        if (friends(who).length >= a || friends(from).length >= b) fail('私聊上限已满');
+        checkFriendCapacity(who, from);
         store.remove('requests', `${from}:${who}`); store.befriend(who, from);
         emit([who, from], 'friend.accepted', { a: who, b: from }); return { ok: true };
       }
