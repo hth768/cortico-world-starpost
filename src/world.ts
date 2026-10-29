@@ -251,7 +251,8 @@ export class StarpostWorld implements World {
     const body = response.body as { ok: boolean; result?: any; error?: string; messageQuota?: unknown; suspendedUntil?: number };
     const quota = parseMessageQuota(body.messageQuota ?? (action === 'snapshot' ? body.result?.messageQuota : action === 'message.send' ? body.result?.quota : null));
     if (quota && (!this.quota || Date.parse(quota.observedAt) >= Date.parse(this.quota.observedAt))) { this.quota = quota; this.quotaReceivedAt = this.clock(); }
-    if (!body.ok) { if(Number.isSafeInteger(body.suspendedUntil)&&body.suspendedUntil!>this.clock())await this.pauseDelivery(body.suspendedUntil!); throw new Error(body.error ?? `HTTP ${response.status}`); }
+    if(Number.isSafeInteger(body.suspendedUntil)&&body.suspendedUntil! > this.clock()&&body.suspendedUntil!==this.suspendedUntil)await this.pauseDelivery(body.suspendedUntil!);
+    if (!body.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
     return body.result;
   }
   private image(file: unknown): { mime: string; base64: string } | null {
@@ -539,14 +540,12 @@ export class StarpostWorld implements World {
     if (!this.activeIdentity()) { this.connected = false; this.lastError = ''; return; }
     this.busy = true;
     try {
-      await this.flushPending();
       const interval = Number.isInteger(this.cfg.deliveryIntervalMs) && this.cfg.deliveryIntervalMs >= 1000 ? this.cfg.deliveryIntervalMs : 20000;
       const chatWait = this.pendingSinceMs === null ? 25000 : Math.max(0, interval - (this.clock() - this.pendingSinceMs));
       const periodWait = this.quota ? Math.max(0, Date.parse(this.quota.period.endAt) - Date.parse(this.quota.observedAt) - (this.clock() - this.quotaReceivedAt)) : Infinity;
       const waitMs = !waitForEvents ? 0 : Math.min(25000, chatWait, this.notifications.dueIn(this.clock(), notificationSettings(this.cfg.notifications)), periodWait);
       const events = await this.rpc('events', { since: this.cursor, waitMs, mediaRefs: true }, { timeoutMs: 35000, signal: this.pollController?.signal }) as Array<{ seq: number; type: string; data: any; at: string }>;
       this.connected = true; this.lastError = '';
-      await this.announceQuota();
       let ownerWakeCursor: number | null = null;
       for (const event of events) {
         const data = event.data;
@@ -648,6 +647,7 @@ export class StarpostWorld implements World {
         if (this.host.promotePending) await this.host.promotePending(ownerWakeCursor, 'flush');
         this.pendingCoreCursor = null; this.pendingSinceMs = null; this.saveCursor();
       }
+      await this.announceQuota();
       await this.flushPending();
       await this.checkRelease();
     } catch (error) { this.connected = false; this.lastError = (error as Error).message; }

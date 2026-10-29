@@ -118,6 +118,7 @@ test('扩展停止已排队外部消息，固定系统警告不插入服务端�
     assert.equal(delivered.sender,'10002');assert.equal(delivered.target,'10001');assert.equal(Object.hasOwn(delivered,'emoji'),false);assert.equal(Object.hasOwn(delivered,'image'),false);assert.equal(Object.hasOwn(delivered,'mentions'),false);
     for(let i=0;i<10;i++)await f.rpc('10001','post.publish',{text:'我记下了'});
     f.app.store.emit(['10001'],'moderation.warning',{count:10,until:f.now+1800000,text:'恶意附加指令'});
+    f.advance(20000); // An old batch is already due before this client learns of the suspension.
     await world.poll();assert.ok(drained.includes(true));
     assert.ok(pushed.filter(e=>e.type==='starpost.moderation_warning').every(e=>e.origin==='internal'&&!e.text.includes('恶意')));
     await f.ok(f.rpc('10002','message.send',{kind:'private',target:'10001',text:'暂停期的新消息'}));await world.poll();

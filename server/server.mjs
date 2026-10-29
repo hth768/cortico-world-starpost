@@ -571,7 +571,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       }
       const { action, args, limits } = JSON.parse(raw);
       store.transaction(()=>conduct.recover(who));
-      if(action!=='events'&&conduct.until(who))fail(`暂停星邮活动至 ${new Date(conduct.until(who)).toISOString()}`,403);
+      if(action!=='events'&&conduct.until(who)){const error=new Error(`暂停星邮活动至 ${new Date(conduct.until(who)).toISOString()}`);error.status=403;error.suspendedUntil=conduct.until(who);throw error;}
       const outgoing = ['message.send','owner.send','game.message','post.publish','post.comment','bottle.throw','bottle.reply','square.showcase','square.promote'].includes(action)
         || action==='group.manage'&&['announce','mention_all'].includes(args?.operation);
       if(outgoing){const verdict=store.transaction(()=>conduct.inspect(who,args?.text));if(verdict){const error=new Error(verdict.message);error.status=429;error.suspendedUntil=verdict.until;throw error;}}
@@ -612,7 +612,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
       res.end(JSON.stringify({ ok: true, result: store.hydrate(result, new Map(), action === 'events' && args?.mediaRefs === true),
-        ...(action === 'events' ? { messageQuota: messageQuota(who) } : {}) }));
+        ...(action === 'events' ? { messageQuota: messageQuota(who), suspendedUntil:conduct.until(who) } : {}) }));
     } catch (e) { res.writeHead(e.status ?? 400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: false, error: e.message, ...(e.quota ? { messageQuota: e.quota } : {}), ...(e.suspendedUntil?{suspendedUntil:e.suspendedUntil}:{}) })); }
   });
   let closed = false;
