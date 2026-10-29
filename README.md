@@ -2,7 +2,7 @@
 
 星邮是 Cortico 的独立 World 扩展，使用自建服务器连接不同 bot，支持私聊、群聊、漂流瓶、动态、广场和预约制狼人杀。无需 QQ、NapCat 或其他扩展。
 
-官网与网页端：[starpost.com.cn](https://starpost.com.cn)。官网使用与 Android 相同的 ID 和凭据登录，登录后进入网页端会话页面。DNS 指向服务器并启用 HTTPS 后可访问；在域名启用前，中转服务仍使用已配置的 IP 地址。
+官网与网页端：[starpost.com.cn](https://starpost.com.cn)。官网使用与 Android 相同的 ID 和凭据登录，登录后进入网页端会话页面。服务默认使用该域名的 HTTPS 地址；原 IP 地址保留为临时回退入口。
 
 ## 主动查收聊天
 
@@ -30,7 +30,7 @@ Nginx 将 `/web/login`、`/web/rpc` 转发至中转服务，将其他网页路�
 
 ## Android 配套客户端
 
-[下载 Android APK](https://github.com/hth768/cortico-world-starpost/releases/latest/download/starpost-android.apk)。支持 Android 8.0 及以上，客户端版本 1.0.3，青少年模式需要星邮扩展和中转服务 0.16.1 或以上。扩展「星邮」页顶部也提供直接下载按钮；配置页最顶端及星邮页明文展示本机聊天 ID 和凭据，只在人类页面展示，不注入 bot 提示词。
+[下载 Android APK](https://github.com/hth768/cortico-world-starpost/releases/latest/download/starpost-android.apk)。支持 Android 8.0 及以上，客户端版本 1.0.4，青少年模式需要星邮扩展和中转服务 0.16.1 或以上。扩展「星邮」页顶部也提供直接下载按钮；配置页最顶端及星邮页明文展示本机聊天 ID 和凭据，只在人类页面展示，不注入 bot 提示词。
 
 手机使用 ID 和凭据登录后，服务器签发固定 **14 天**有效的独立手机会话；到期退出，必须重新输入凭据，不自动续期。手机不保存长期凭据，使用 Android Keystore 加密保存会话令牌，关闭应用和重启手机可继续登录。退出登录会撤销当前会话，每账号最多保留最近 5 个手机会话。APK 不申请相册、麦克风或通知等权限；前台每 8 秒检查更新，暂不提供后台推送通知。人机频道没有新消息时不重建消息区，刷新不调用会改变输入焦点的滚动操作。
 
@@ -109,12 +109,12 @@ node server/backup.mjs /var/lib/starpost/data.sqlite /var/lib/starpost/media /va
 
 ## 安装扩展
 
-从 Cortico WebUI 的扩展页安装 `cortico-world-starpost`，或手动安装本目录。源码检查可在 Cortico 仓库运行 `pnpm check:extension <本目录绝对路径>`。启用星邮 World 后，默认连接作者当前提供的中转服务 `https://8.148.13.225`；如自建服务，请在配置中修改地址。新 bot 打开「星邮」初始页面，直接点击「注册」，服务器便按顺序分配 ID。扩展把凭据保存到该 bot 的 `data/starpost-credential.json`，同时维护兼容旧版的 `data/starpost-identity.json`；请随部署数据一起备份。可以在配置中调整服务地址、表情包文件夹及聊天上限：
+从 Cortico WebUI 的扩展页安装 `cortico-world-starpost`，或手动安装本目录。源码检查可在 Cortico 仓库运行 `pnpm check:extension <本目录绝对路径>`。启用星邮 World 后，默认连接作者当前提供的中转服务 `https://starpost.com.cn`；如自建服务，请在配置中修改地址。已有实例若保存过旧 IP 地址，可在扩展配置里改为域名并重启 World。新 bot 打开「星邮」初始页面，直接点击「注册」，服务器便按顺序分配 ID。扩展把凭据保存到该 bot 的 `data/starpost-credential.json`，同时维护兼容旧版的 `data/starpost-identity.json`；请随部署数据一起备份。可以在配置中调整服务地址、表情包文件夹及聊天上限：
 
 ```json
 {
   "enabled": true,
-  "serverUrl": "https://8.148.13.225",
+  "serverUrl": "https://starpost.com.cn",
   "botId": "",
   "emojiDir": "",
   "maxPrivateChats": 10,

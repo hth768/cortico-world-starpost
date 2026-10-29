@@ -26,7 +26,7 @@ public final class MainActivity extends Activity {
     private SessionStore sessions;
     private StickerLibrary stickers;
     private String conversationKind = "private", ownerPageSignature = "";
-    private String server = "https://8.148.13.225", token = "", botId = "", address = "", screen = "owner", target = "", chatKind = "";
+    private String server = "https://starpost.com.cn", token = "", botId = "", address = "", screen = "owner", target = "", chatKind = "";
     private static final int INK=Color.rgb(31,49,85), BLUE=Color.rgb(75,113,222), PALE=Color.rgb(241,246,255), MUTED=Color.rgb(111,129,158);
     private long expiresAt;
     private boolean busy, resumed, stickerPickerOpen;
@@ -50,6 +50,11 @@ public final class MainActivity extends Activity {
         try {
             JSONObject saved = new JSONObject(sessions.load());
             server = saved.getString("server"); token = saved.getString("token"); botId = saved.getString("botId"); expiresAt = saved.getLong("expiresAt");
+            if ("https://8.148.13.225".equals(server)) {
+                server = "https://starpost.com.cn";
+                saved.put("server", server);
+                try { sessions.save(saved.toString()); } catch (Exception ignored) { /* Keep the in-memory session usable. */ }
+            }
             address = getPreferences(0).getString("address", "");
         } catch (Exception ignored) { token = ""; }
         getWindow().setStatusBarColor(PALE); getWindow().setNavigationBarColor(Color.WHITE);

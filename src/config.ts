@@ -21,7 +21,7 @@ export interface StarpostConfigSection {
 }
 
 export const STARPOST_DEFAULTS: StarpostConfigSection = {
-  enabled: false, serverUrl: 'https://8.148.13.225', botId: '', tokenSecret: 'CORTICO_STARPOST_TOKEN', emojiDir: '',
+  enabled: false, serverUrl: 'https://starpost.com.cn', botId: '', tokenSecret: 'CORTICO_STARPOST_TOKEN', emojiDir: '',
   sticker: { enabled: true, maxFiles: 10000, qqIndexFile: '' },
   maxPrivateChats: 10, maxGroups: 5, maxMessagesPerDay: 300,
   periodLimits: { morning: 60, afternoon: 60, sleep: 6 },
