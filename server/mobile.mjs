@@ -63,7 +63,7 @@ export class MobileAccess {
       case 'teen.removeFriend': return this.ownerControl(who,'removeFriend',args);
       case 'overview': {
         const value = this.snapshot(who, true);
-        return { ...value, posts: value.posts.map(post => ({ id: post.id, author: post.author, text: post.text.slice(0, 160), image: Boolean(post.image), at: post.at })) };
+        return { ...value, ownerAddress: this.store.get('mobileProfile', who)?.address ?? '', posts: value.posts.map(post => ({ id: post.id, author: post.author, text: post.text.slice(0, 160), image: Boolean(post.image), at: post.at })) };
       }
       case 'history': {
         const page = this.history(who, args), messages = page.messages.slice(-8);

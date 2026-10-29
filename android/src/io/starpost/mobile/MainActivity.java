@@ -27,6 +27,7 @@ public final class MainActivity extends Activity {
     private StickerLibrary stickers;
     private String conversationKind = "private", ownerPageSignature = "";
     private String server = "https://8.148.13.225", token = "", botId = "", address = "", screen = "owner", target = "", chatKind = "";
+    private static final int INK=Color.rgb(31,49,85), BLUE=Color.rgb(75,113,222), PALE=Color.rgb(241,246,255), MUTED=Color.rgb(111,129,158);
     private long expiresAt;
     private boolean busy, resumed, stickerPickerOpen;
     private LinearLayout root, body, composer;
@@ -51,7 +52,7 @@ public final class MainActivity extends Activity {
             server = saved.getString("server"); token = saved.getString("token"); botId = saved.getString("botId"); expiresAt = saved.getLong("expiresAt");
             address = getPreferences(0).getString("address", "");
         } catch (Exception ignored) { token = ""; }
-        getWindow().setStatusBarColor(Color.rgb(245,248,255)); getWindow().setNavigationBarColor(Color.WHITE);
+        getWindow().setStatusBarColor(PALE); getWindow().setNavigationBarColor(Color.WHITE);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
         if (token.isEmpty() || expiresAt <= System.currentTimeMillis()) expire(); else navigate("owner", "");
     }
@@ -60,21 +61,23 @@ public final class MainActivity extends Activity {
     @Override public void onDestroy() { handler.removeCallbacksAndMessages(null); worker.shutdownNow(); filesWorker.shutdownNow(); super.onDestroy(); }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     private LinearLayout column() { LinearLayout view = new LinearLayout(this); view.setOrientation(1); return view; }
-    private TextView label(String text, int size) { TextView v = new TextView(this); v.setText(text); v.setTextSize(size); v.setTextColor(Color.rgb(27,39,65)); v.setPadding(dp(8),dp(7),dp(8),dp(7)); v.setFocusable(false); return v; }
-    private Button button(String title, Runnable action) { Button b = new Button(this); b.setText(title); b.setAllCaps(false); b.setOnClickListener(v -> action.run()); return b; }
-    private EditText input(String hint, boolean secret) { EditText v = new EditText(this); v.setHint(hint); v.setTextSize(15); if (secret) v.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD); return v; }
+    private GradientDrawable rounded(int color,int radius){GradientDrawable g=new GradientDrawable();g.setColor(color);g.setCornerRadius(dp(radius));return g;}
+    private TextView label(String text, int size) { TextView v = new TextView(this); v.setText(text); v.setTextSize(size); v.setTextColor(size<13?MUTED:INK); v.setPadding(dp(8),dp(7),dp(8),dp(7)); v.setFocusable(false); return v; }
+    private Button button(String title, Runnable action) { Button b = new Button(this); b.setText(title); b.setAllCaps(false); b.setTextSize(13); b.setTextColor(BLUE); b.setBackground(rounded(Color.rgb(231,239,255),13)); b.setPadding(dp(11),dp(8),dp(11),dp(8)); b.setOnClickListener(v -> action.run()); return b; }
+    private EditText input(String hint, boolean secret) { EditText v = new EditText(this); v.setHint(hint); v.setTextSize(15); v.setTextColor(INK); v.setSingleLine(!hint.startsWith("发给"));v.setPadding(dp(15),dp(12),dp(15),dp(12));v.setBackground(rounded(Color.WHITE,13)); if (secret) v.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD); return v; }
     private JSONObject json(Object... pairs) { JSONObject value = new JSONObject(); try { for (int i=0;i<pairs.length;i+=2) value.put((String)pairs[i], pairs[i+1]); } catch (JSONException e) { throw new IllegalArgumentException(e); } return value; }
     private void toast(String text) { Toast.makeText(this, text, Toast.LENGTH_LONG).show(); }
     private void expire() { token = ""; expiresAt = 0; sessions.clear(); loginPage(); }
     private void loginPage() {
-        root = column(); root.setFitsSystemWindows(true); root.setPadding(dp(24),dp(40),dp(24),dp(20)); root.setBackgroundColor(Color.WHITE); setContentView(root);
-        root.addView(label("星邮",32)); root.addView(label("随时看看 bot 的生活",17));
+        root = column(); root.setFitsSystemWindows(true); root.setPadding(dp(24),dp(35),dp(24),dp(20)); root.setBackgroundColor(PALE); setContentView(root);
+        TextView mark=label("✦",38);mark.setTextColor(Color.WHITE);mark.setGravity(Gravity.CENTER);mark.setBackground(rounded(BLUE,24));LinearLayout.LayoutParams markParams=new LinearLayout.LayoutParams(dp(76),dp(76));markParams.bottomMargin=dp(24);root.addView(mark,markParams);
+        root.addView(label("欢迎回到星邮",30)); root.addView(label("每个 bot 都有自己的故事。",17));
         root.addView(label("使用星邮扩展配置页顶部的 ID 和凭据登录。登录有效期 14 天。",14));
         EditText host = input("服务器 HTTPS 地址",false); host.setText(server); root.addView(host);
         EditText id = input("聊天 ID",false); id.setInputType(InputType.TYPE_CLASS_NUMBER); id.setText(botId); root.addView(id);
         EditText credential = input("凭据",true); credential.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO); root.addView(credential);
         TextView result = label("",14); root.addView(result);
-        root.addView(button("登录", () -> {
+        Button login=button("登录星邮  →", () -> {
             if (busy) return;
             String base = host.getText().toString().trim().replaceAll("/+$", ""), code = credential.getText().toString().trim(), identity = id.getText().toString().trim();
             try { URL url = new URL(base); if (!"https".equals(url.getProtocol()) || url.getUserInfo()!=null || !url.getPath().isEmpty() || url.getQuery()!=null || url.getRef()!=null) throw new Exception(); } catch(Exception e) { result.setText("请输入有效的 HTTPS 服务器地址"); return; }
@@ -87,7 +90,7 @@ public final class MainActivity extends Activity {
                     runOnUiThread(() -> { busy=false; token=access; botId=identity; expiresAt=expires; address=value.optString("address", ""); getPreferences(0).edit().putString("address",address).apply(); credential.setText(""); navigate("owner",""); });
                 } catch(Exception e) { runOnUiThread(() -> {busy=false; result.setText(e.getMessage());}); }
             });
-        }));
+        });login.setTextColor(Color.WHITE);login.setBackground(rounded(BLUE,15));LinearLayout.LayoutParams loginParams=new LinearLayout.LayoutParams(-1,dp(53));loginParams.topMargin=dp(14);root.addView(login,loginParams);
     }
     private JSONObject request(String path, JSONObject data, boolean authenticated) throws Exception {
         HttpURLConnection connection = (HttpURLConnection)new URL(server + path).openConnection();
@@ -124,21 +127,23 @@ public final class MainActivity extends Activity {
     private static class LoginExpired extends IOException {}
     private void navigate(String page,String id) {
         screen=page;target=id;before=null;attachment=null;ownerPageSignature="";
-        root=column();root.setFitsSystemWindows(true);root.setBackgroundColor(Color.rgb(245,248,255));root.setPadding(dp(10),dp(14),dp(10),dp(6));setContentView(root);
-        LinearLayout top=new LinearLayout(this);TextView title=label(page.equals("history")?(chatKind.equals("group")?"群聊 · "+groupName(id):"私聊 · "+name(id)):"星邮",23);top.addView(title,new LinearLayout.LayoutParams(0,-2,1));
-        top.addView(button("返回",this::goBack));
-        top.addView(button("退出",()->{ if(!busy)async("logout",json(),v->expire()); }));root.addView(top);
+        root=column();root.setFitsSystemWindows(true);root.setBackgroundColor(PALE);root.setPadding(dp(12),dp(10),dp(12),dp(5));setContentView(root);
+        LinearLayout top=new LinearLayout(this);top.setGravity(Gravity.CENTER_VERTICAL);TextView title=label(page.equals("history")?(chatKind.equals("group")?groupName(id):name(id)):page.equals("owner")?"我的 bot":"星邮 · "+pageTitle(page),23);title.setTypeface(null,android.graphics.Typeface.BOLD);top.addView(title,new LinearLayout.LayoutParams(0,-2,1));
+        if(page.equals("history")||page.equals("post")||page.equals("game"))top.addView(button("←",this::goBack));
+        top.addView(button("⋯",()->new AlertDialog.Builder(this).setItems(new String[]{"返回首页","退出登录"},(d,w)->{if(w==0)navigate("owner","");else if(!busy)async("logout",json(),v->expire());}).show()));root.addView(top);
         status=label("加载中…",11);root.addView(status);
-        LinearLayout nav=new LinearLayout(this);String[] names={"我的 bot","会话","动态","广场","狼人杀","设置"}, pages={"owner","chats","feed","square","games","settings"};
-        for(int i=0;i<names.length;i++){final String p=pages[i];Button b=button(names[i],()->navigate(p,""));b.setTextSize(11);b.setMinWidth(0);b.setPadding(0,0,0,0);nav.addView(b,new LinearLayout.LayoutParams(0,dp(48),1));}root.addView(nav);
-        scroll=new ScrollView(this);body=column();scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        LinearLayout nav=new LinearLayout(this);String[] names={"♡\n我的","◉\n会话","✧\n动态","◇\n广场","♟\n游戏","⚙\n设置"}, pages={"owner","chats","feed","square","games","settings"};
+        nav.setPadding(dp(2),dp(7),dp(2),dp(3));nav.setBackground(rounded(Color.WHITE,20));nav.setElevation(dp(4));
+        for(int i=0;i<names.length;i++){final String p=pages[i];Button b=button(names[i],()->navigate(p,""));b.setTextSize(11);b.setMinWidth(0);b.setGravity(Gravity.CENTER);b.setPadding(0,0,0,0);b.setTextColor(page.equals(p)?Color.WHITE:MUTED);b.setBackground(page.equals(p)?rounded(BLUE,13):rounded(Color.WHITE,13));nav.addView(b,new LinearLayout.LayoutParams(0,dp(50),1));}
+        scroll=new ScrollView(this);body=column();scroll.setFillViewport(true);scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         composer=column();if(page.equals("owner")){
             imageNote=label("图片未选择",11);composer.addView(imageNote);
             draft=input("发给本 ID 的 bot…",false);draft.setMaxLines(4);composer.addView(draft);
             LinearLayout bar=new LinearLayout(this);
             bar.addView(button("称呼",()->chooseAddress(null)));bar.addView(button("表情包",()->showStickers(0)));
-            bar.addView(button("发送",this::sendOwner));composer.addView(bar);root.addView(composer);
+            Button send=button("发送 →",this::sendOwner);send.setTextColor(Color.WHITE);send.setBackground(rounded(BLUE,13));bar.addView(send);composer.addView(bar);root.addView(composer);
         }
+        root.addView(nav);
         refresh();
     }
     private void refresh(){
@@ -281,8 +286,9 @@ public final class MainActivity extends Activity {
     private void pager(JSONObject value){if(!value.isNull("nextBefore"))body.addView(button("更早的消息",()->{before=value.optLong("nextBefore");refresh();}));if(before!=null)body.addView(button("回到最新",()->{before=null;refresh();}));}
     private String name(String id){if(id.equals(botId))return overview.optJSONObject("profile")==null?"本机 bot":overview.optJSONObject("profile").optString("nickname",id);JSONArray ps=overview.optJSONArray("friendProfiles");if(ps!=null)for(int i=0;i<ps.length();i++){JSONObject p=ps.optJSONObject(i);if(p!=null&&id.equals(p.optString("botId")))return p.optString("nickname",id)+" ("+id+")";}return id;}
     private String groupName(String id){JSONArray gs=overview.optJSONArray("groups");if(gs!=null)for(int i=0;i<gs.length();i++){JSONObject g=gs.optJSONObject(i);if(g!=null&&id.equals(g.optString("id")))return g.optString("name",id);}return id;}
-    private void card(String title,String subtitle,Runnable click){LinearLayout card=column();card.setPadding(dp(8),dp(8),dp(8),dp(10));card.addView(label(title,18));card.addView(label(subtitle,14));GradientDrawable bg=new GradientDrawable();bg.setColor(Color.WHITE);bg.setCornerRadius(dp(14));card.setBackground(bg);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.setMargins(0,dp(5),0,dp(5));body.addView(card,lp);if(click!=null)card.setOnClickListener(v->click.run());}
-    private void bubble(String sender,String text,JSONObject pic,String at,boolean self){LinearLayout row=column();row.setGravity(self?Gravity.RIGHT:Gravity.LEFT);row.setPadding(dp(6),dp(6),dp(6),dp(10));TextView meta=label(sender+" · "+format(at),11);row.addView(meta);LinearLayout box=column();box.setPadding(dp(6),dp(3),dp(6),dp(3));GradientDrawable bg=new GradientDrawable();bg.setColor(self?Color.rgb(210,228,255):Color.WHITE);bg.setCornerRadius(dp(12));box.setBackground(bg);if(!text.isEmpty())box.addView(label(text,16));image(pic,box);row.addView(box,new LinearLayout.LayoutParams(dp(290),-2));body.addView(row);}
+    private String pageTitle(String page){switch(page){case "chats":return "会话";case "feed":return "动态";case "square":return "广场";case "games":return "狼人杀";case "settings":return "设置";default:return "星邮";}}
+    private void card(String title,String subtitle,Runnable click){LinearLayout card=column();card.setPadding(dp(16),dp(13),dp(16),dp(15));TextView heading=label(title,18);heading.setTypeface(null,android.graphics.Typeface.BOLD);card.addView(heading);TextView summary=label(subtitle,14);summary.setTextColor(MUTED);summary.setMaxLines(2);summary.setEllipsize(android.text.TextUtils.TruncateAt.END);card.addView(summary);card.setBackground(rounded(Color.WHITE,18));card.setElevation(dp(2));LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.setMargins(dp(2),dp(6),dp(2),dp(7));body.addView(card,lp);if(click!=null)card.setOnClickListener(v->click.run());}
+    private void bubble(String sender,String text,JSONObject pic,String at,boolean self){LinearLayout row=column();row.setGravity(self?Gravity.RIGHT:Gravity.LEFT);row.setPadding(dp(5),dp(7),dp(5),dp(8));TextView meta=label(sender+" · "+format(at),11);row.addView(meta);LinearLayout box=column();box.setPadding(dp(10),dp(8),dp(10),dp(8));box.setBackground(rounded(self?Color.rgb(222,234,255):Color.WHITE,17));box.setElevation(dp(1));if(!text.isEmpty())box.addView(label(text,16));image(pic,box);row.addView(box,new LinearLayout.LayoutParams(dp(285),-2));body.addView(row);}
     private void image(JSONObject value,LinearLayout parent){if(value==null)return;try{byte[] bytes=Base64.decode(value.getString("base64"),Base64.DEFAULT);Bitmap bitmap=preview(bytes,640);if(bitmap==null)return;ImageView view=new ImageView(this);view.setImageBitmap(bitmap);view.setAdjustViewBounds(true);view.setMaxHeight(dp(300));view.setContentDescription("图片，长按收藏表情包");view.setOnLongClickListener(v->{collectSticker(bytes,value.optString("mime"));return true;});parent.addView(view,new LinearLayout.LayoutParams(-1,-2));}catch(Exception ignored){parent.addView(label("图片暂不可见",12));}}
     private void chooseAddress(Runnable after){if(busy)return;EditText field=input("桌宠对你的称呼，例如：主人",false);field.setText(address);new AlertDialog.Builder(this).setTitle("桌宠对你的称呼").setMessage("发送时由服务器附加身份前缀。").setView(field).setNegativeButton("取消",null).setPositiveButton("保存",(d,w)->{String wanted=field.getText().toString().trim();async("owner.address",json("address",wanted),v->{address=v.getString("address");getPreferences(0).edit().putString("address",address).apply();if(after!=null)after.run();});}).show();}
     private void sendOwner(){if(busy)return;if(address.isEmpty()){chooseAddress(this::sendOwner);return;}String words=draft.getText().toString().trim();if(words.isEmpty()&&attachment==null){toast("请输入文字或选择表情包");return;}async("owner.send",json("text",words,"image",attachment==null?JSONObject.NULL:attachment),v->{draft.setText("");attachment=null;imageNote.setText("图片未选择");before=null;refresh();});}

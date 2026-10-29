@@ -108,8 +108,9 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
   const status = ui.msgline('加载中');
   const mobile = ui.h('div');
   const apk = ui.h('a', null, '下载 Android APK'); apk.href = 'https://github.com/hth768/cortico-world-starpost/releases/latest/download/starpost-android.apk'; apk.target = '_blank'; apk.rel = 'noopener'; apk.download = 'starpost-android.apk';
+  const official = ui.h('a', null, '星邮官网 · 网页端登录'); official.href = 'https://starpost.com.cn'; official.target = '_blank'; official.rel = 'noopener noreferrer'; official.style.marginRight = '1.2rem';
   const credentials = ui.h('div'); credentials.style.overflowWrap = 'anywhere'; credentials.style.userSelect = 'text';
-  mobile.append(apk, credentials);
+  mobile.append(official, apk, credentials);
   const account = ui.h('div');
   const content = ui.h('div');
   card.body.append(mobile, status, account, content); ctx.root.appendChild(card.el);

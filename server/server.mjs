@@ -254,7 +254,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     if (kind === 'group') group(who, target);
     const before = args.before == null ? Number.MAX_SAFE_INTEGER : args.before;
     const after = args.after == null ? null : args.after;
-    if (!Number.isSafeInteger(before) || before < 1 || (after !== null && (!Number.isSafeInteger(after) || after < 1)) || (after !== null && args.before != null)) fail('消息游标不合法');
+    if (!Number.isSafeInteger(before) || before < 1 || (after !== null && (!Number.isSafeInteger(after) || after < 0)) || (after !== null && args.before != null)) fail('消息游标不合法');
     const scope = kind === 'group' ? `group:${target}` : `private:${[who, target].sort().join(':')}`;
     const rows = after === null
       ? store.statement("SELECT rowid,data FROM documents WHERE collection='messages' AND scope=? AND rowid<? ORDER BY rowid DESC LIMIT 16").all(scope, before)
@@ -264,6 +264,21 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     return { messages: page.map(row => ({ ...withSenderNickname(JSON.parse(row.data)), cursor: row.rowid })),
       nextBefore: after === null && hasMore ? page[0].rowid : null,
       nextAfter: after !== null && hasMore ? page.at(-1).rowid : null };
+  }
+  function inboxPeek(who, args) {
+    if (store.get('gameBusy', who)) return { conversations: [], gameBusy: true };
+    const after = args?.after && typeof args.after === 'object' && !Array.isArray(args.after) ? args.after : {};
+    const conversations = [
+      ...friends(who).map(target => ({ kind: 'private', target })),
+      ...store.groups(who).map(group => ({ kind: 'group', target: group.id })),
+    ];
+    return { conversations: conversations.map(({ kind, target }) => {
+      const scope = kind === 'group' ? `group:${target}` : `private:${[who, target].sort().join(':')}`;
+      const cursor = after[scope] ?? 0;
+      if (!Number.isSafeInteger(cursor) || cursor < 0) fail('未读游标不合法');
+      const count = store.statement("SELECT count(*) AS n, max(rowid) AS latest FROM documents WHERE collection='messages' AND scope=? AND rowid>? AND owner<>?").get(scope, cursor, who);
+      return { kind, target, unread: count.n, latestCursor: count.latest ?? cursor };
+    }).filter(item => item.unread > 0), gameBusy: false };
   }
   function rpc(who, action, args = {}) {
     const now = clock();
@@ -291,6 +306,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       case 'game.vote': return games.vote(who, args);
       case 'game.cancel': return games.cancel(who, args.gameId);
       case 'snapshot': return snapshot(who, args.omitMessages === true);
+      case 'inbox.peek': return inboxPeek(who, args);
       case 'chat.history': return chatHistory(who, args);
       case 'post.read': {
         const p = post(str(args.postId, 100));
@@ -449,10 +465,12 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         }
         const m = { id: randomUUID(), kind, target, sender: who, senderNickname: profile(who).nickname, text, emoji, image: picture, mentions, at: new Date(now).toISOString() };
         const saved = store.put('messages', m.id, m);
+        const messageCursor = store.statement("SELECT rowid FROM documents WHERE collection='messages' AND key=?").get(m.id).rowid;
+        const delivered = { ...saved, cursor: messageCursor };
         quotas.record(who, quota);
         for (const recipient of g ? g.members.filter(x => x !== who) : [target]) {
-          if (store.get('gameBusy', recipient)) deferChat(recipient, saved, saved.at);
-          else emit([recipient], 'message', saved);
+          if (store.get('gameBusy', recipient)) deferChat(recipient, delivered, saved.at);
+          else emit([recipient], 'message', delivered);
         }
         return { id: m.id, quota: messageQuota(who, now) };
       }
@@ -538,11 +556,30 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         res.writeHead(200, { 'content-type': image.mime, 'content-length': bytes.length, 'cache-control': 'private, no-store' });
         res.end(bytes); return;
       }
-      if (req.method !== 'POST' || !['/rpc', '/register', '/login', '/credential/claim', '/mobile/login', '/mobile/rpc', '/owner/control'].includes(req.url)) fail('未找到接口', 404);
+      if (req.method !== 'POST' || !['/rpc', '/register', '/login', '/credential/claim', '/mobile/login', '/mobile/rpc', '/owner/control', '/web/login', '/web/rpc'].includes(req.url)) fail('未找到接口', 404);
       const who = ['/rpc', '/credential/claim', '/owner/control'].includes(req.url) ? auth(req) : null;
       const chunks = []; let length = 0;
       for await (const chunk of req) { length += chunk.length; if (length > 1600000) fail('请求过大', 413); chunks.push(chunk); }
       const raw = Buffer.concat(chunks).toString('utf8');
+      if (req.url === '/web/login' || req.url === '/web/rpc') {
+        const origin = req.headers.origin;
+        if (typeof origin !== 'string' || ![ `https://${req.headers.host}`, `http://${req.headers.host}` ].includes(origin)) fail('网页请求来源无效', 403);
+        const input = JSON.parse(raw);
+        const cookie = (value, age) => `starpost_session=${value}; Path=/web; HttpOnly; Secure; SameSite=Strict; Max-Age=${age}`;
+        let result;
+        if (req.url === '/web/login') {
+          const loginResult = store.transaction(() => mobile.signIn(input, ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) ? String(req.headers['x-real-ip'] ?? req.socket.remoteAddress) : req.socket.remoteAddress));
+          res.setHeader('Set-Cookie', cookie(loginResult.accessToken, 14 * 86400));
+          result = { botId: loginResult.botId, expiresAt: loginResult.expiresAt, address: loginResult.address };
+        } else {
+          const token = /(?:^|;\s*)starpost_session=([a-f0-9]{64})(?:;|$)/.exec(req.headers.cookie ?? '')?.[1] ?? '';
+          const session = mobile.authenticate(`Bearer ${token}`);
+          result = store.transaction(() => mobile.call(session, input.action, input.args ?? {}));
+          if (input.action === 'logout') res.setHeader('Set-Cookie', cookie('', 0));
+        }
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'private, no-store' });
+        res.end(JSON.stringify({ ok: true, result: store.hydrate(Array.isArray(result) ? { items: result } : result) })); return;
+      }
       if(req.url==='/owner/control'){
         const input=JSON.parse(raw);const result=store.transaction(()=>teen.control(who,input.operation,input.args??{}));
         res.writeHead(200,{'content-type':'application/json; charset=utf-8','cache-control':'no-store'});res.end(JSON.stringify({ok:true,result}));return;
