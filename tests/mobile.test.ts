@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { createStarpostServer } from '../server/server.mjs';
 import { STARPOST_DEFAULTS } from '../src/config.ts';
 import { StarpostWorld } from '../src/world.ts';
+import { familyTool } from './tool-invoke.ts';
 const image = { mime: 'image/png', base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lX8AAAAASUVORK5CYII=' };
 
 async function fixture() {
@@ -129,7 +130,7 @@ test('手机消息立即唤醒并合批积压、重置计时，来图自动收�
     const state = JSON.parse(readFileSync(join(f.dir, 'starpost-cursor.json'), 'utf8'));
     assert.equal(state.pendingSinceMs, null); assert.equal(state.pendingCoreCursor, null);
     f.time = f.now + 20000; await poll(); assert.equal(promotions.length, 1);
-    const tools = world.tools(); const stats: any = await tools.find(tool => tool.name === 'starpost_sticker')!.handler({ action: 'stats' }, {} as never);
+    const stats: any = await familyTool(world, 'sticker').handler({ action: 'stats' }, {} as never);
     assert.equal(typeof stats, 'string', stats?.text);
     assert.equal(JSON.parse(String(stats)).total, 1);
     const panel = world.webUi(); const info: any = await panel.invoke!('viewer', 'mobileLoginInfo', []);

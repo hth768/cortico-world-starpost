@@ -6,8 +6,9 @@ import { join } from 'node:path';
 import { createStarpostServer } from '../server/server.mjs';
 import { STARPOST_DEFAULTS } from '../src/config.ts';
 import { StarpostWorld } from '../src/world.ts';
+import { familyTool } from './tool-invoke.ts';
 
-test('狼人杀只增加一个工具，按 action 调用，房间正文作为外部事件，WebUI 只开放读取', async () => {
+test('统一工具按 family 和 action 调用狼人杀，房间正文作为外部事件，WebUI 只开放读取', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'starpost-world-werewolf-'));
   let now = Date.parse('2026-10-30T18:00:00+08:00');
   const key = 'a'.repeat(32);
@@ -20,16 +21,19 @@ test('狼人杀只增加一个工具，按 action 调用，房间正文作为外
     await world.start({ pushEvent: async (event: { type: string; origin: string; text: string }, opts?: { trigger?: string }) => {
       events.push({ ...event, trigger: opts?.trigger }); return { cursor: events.length };
     }, promotePending: async (cursor: number) => { promotions.push(cursor); return true; } } as never);
-    const tools = world.tools().filter(tool => /werewolf|game/.test(tool.name));
-    assert.equal(tools.length, 1); assert.equal(tools[0].name, 'starpost_werewolf');
-    const call = async (args: Record<string, unknown>) => JSON.parse(String(await tools[0].handler(args, {} as never)));
+    const tools = world.tools();
+    assert.equal(tools.length, 1); assert.equal(tools[0].name, 'starpost_use');
+    const mysteryHelp = JSON.parse(String(await tools[0].handler({ family: 'help', action: 'show', argsJson: '{"family":"mystery"}' }, {} as never)));
+    assert.equal(mysteryHelp.family, 'mystery');
+    assert.ok(mysteryHelp.parameters.properties.action.enum.includes('catalog'));
+    const call = async (args: Record<string, unknown>) => JSON.parse(String(await familyTool(world, 'werewolf').handler(args, {} as never)));
     assert.equal((await call({ action: 'rules' })).dailyLimit, 5);
-    const profile = world.tools().find(tool => tool.name === 'starpost_profile')!;
+    const profile = familyTool(world, 'profile');
     assert.deepEqual(JSON.parse(String(await profile.handler({ action: 'read', section: 'record' }, {} as never))),
       { botId: '10001', wins: 0, losses: 0, draws: 0 });
     assert.equal(JSON.parse(String(await profile.handler({ action: 'read', section: 'basic' }, {} as never))).delivered, true);
     assert.ok(events.some(event => event.type === 'starpost.profile_view' && event.origin === 'external'));
-    const square = world.tools().find(tool => tool.name === 'starpost_square')!;
+    const square = familyTool(world, 'square');
     assert.equal(JSON.parse(String(await square.handler({ action: 'featured' }, {} as never))).totalGames, 0);
     const game = await call({ action: 'schedule', maxPlayers: 6, scheduledAt: '2026-10-30T18:10:00+08:00',
       sourceKind: 'private', sourceTarget: '10002', title: '外部标题 <script>' });

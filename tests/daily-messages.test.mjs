@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { createStarpostServer } from '../server/server.mjs';
 import { STARPOST_DEFAULTS } from '../src/config.ts';
 import { StarpostWorld } from '../src/world.ts';
+import { familyTool } from './tool-invoke.ts';
 
 async function setup(clock = Date.now, timezone = 'Asia/Shanghai') {
   const dir = mkdtempSync(join(tmpdir(), 'starpost-daily-messages-'));
@@ -96,14 +97,14 @@ test('本机配置传到中转服务，bot 可查额度并从发送回执获知�
   const world = new StarpostWorld({ ...structuredClone(STARPOST_DEFAULTS), enabled: true, botId: '10001',
     serverUrl: h.base(), maxMessagesPerDay: 2 }, h.dir, h.dir, h.dir, 'Asia/Shanghai', () => h.keys[10001]);
   try {
-    const send = world.tools().find(tool => tool.name === 'starpost_send');
+    const send = familyTool(world, 'send');
     for (let i = 0; i < 2; i++) {
       const receipt = JSON.parse(String(await send.handler({ kind: 'private', target: '10002', text: `配置额度 ${i}` }, {})));
       assert.equal(receipt.quota.limit, 2); assert.equal(receipt.quota.remaining, 1 - i);
     }
     const blocked = await send.handler({ kind: 'private', target: '10002', text: '超出额度' }, {});
     assert.equal(blocked.failed, true);
-    const read = world.tools().find(tool => tool.name === 'starpost_read');
+    const read = familyTool(world, 'read');
     const quota = JSON.parse(String(await read.handler({ section: 'quota' }, {})));
     assert.equal(quota.used, 2); assert.equal(quota.remaining, 0); assert.equal(quota.timezone, 'Asia/Shanghai');
     assert.equal((await world.webUi().invoke('viewer', 'overview', [])).messageQuota.limit, 2);

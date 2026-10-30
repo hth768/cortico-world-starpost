@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { createStarpostServer } from '../server/server.mjs';
 import { STARPOST_DEFAULTS } from '../src/config.ts';
 import { StarpostWorld } from '../src/world.ts';
+import { familyTool } from './tool-invoke.ts';
 import { parseMessageQuota, quotaStatusText } from '../src/quota.ts';
 
 const bj = (time: string) => Date.parse(`2026-10-28T${time}+08:00`);
@@ -102,7 +103,7 @@ test('每个新时段发送一次可信系统额度通知，凌晨提醒睡觉�
   try {
     await world.start(host); assert.equal(notices.length, 1); assert.equal(notices[0].origin, 'internal');
     assert.match(notices[0].text, /0\/6.*0\/300.*该睡觉了/);
-    const sent = await world.tools().find(t => t.name === 'starpost_send')!.handler({ kind: 'private', target: '10002', text: '必要沟通' }, {} as never);
+    const sent = await familyTool(world, 'send').handler({ kind: 'private', target: '10002', text: '必要沟通' }, {} as never);
     assert.match(JSON.parse(String(sent)).quota.statusText, /1\/6.*1\/300/);
     await world.stop(); world = h.world(); await world.start(host); assert.equal(notices.length, 1);
     for (const time of ['06:00:00', '09:00:00', '12:00:00', '14:00:00', '18:00:00']) {

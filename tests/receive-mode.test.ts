@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { createStarpostServer } from '../server/server.mjs';
 import { STARPOST_DEFAULTS } from '../src/config.ts';
 import { StarpostWorld } from '../src/world.ts';
+import { familyTool } from './tool-invoke.ts';
 import { randomUUID } from 'node:crypto';
 
 for (const receiveMode of ['active', 'passive', 'mixed'] as const) test(`${receiveMode} 重新上线仅提醒积压，会话和条数自主选择，部分读取可跨重启续看`, async () => {
@@ -27,7 +28,7 @@ for (const receiveMode of ['active', 'passive', 'mixed'] as const) test(`${recei
       body: JSON.stringify({ action: 'message.send', args: { kind, target, text } }) });
     const result = await response.json(); assert.equal(result.ok, true, result.error);
   };
-  const call = (args: Record<string, unknown>) => world.tools().find(t => t.name === 'starpost_inbox')!.handler(args, {} as never);
+  const call = (args: Record<string, unknown>) => familyTool(world, 'inbox').handler(args, {} as never);
   const peek = async () => JSON.parse(String(await call({ action: 'peek' })));
   try {
     await world.start(host); await world.stop(); events.length = 0;
@@ -90,7 +91,7 @@ for (const receiveMode of ['active', 'passive'] as const) test(`${receiveMode} �
     const response = await fetch(`${base}/rpc`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-starpost-id': '10002', authorization: `Bearer ${keys[10002]}` }, body: JSON.stringify({ action: 'message.send', args: { kind: 'private', target: '10001', text: '测试接收模式' } }) });
     assert.equal((await response.json()).ok, true);
     await (world as unknown as { poll(): Promise<void> }).poll();
-    const inbox = world.tools().find(tool => tool.name === 'starpost_inbox')!;
+    const inbox = familyTool(world, 'inbox');
     if (receiveMode === 'active') {
       assert.equal(pushed.includes('starpost.message'), false);
       assert.equal(promoted.length, 0);

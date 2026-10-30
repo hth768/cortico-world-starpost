@@ -8,6 +8,7 @@ import { setImmediate } from 'node:timers/promises';
 import { NotificationDigest, notificationSettings } from '../src/notifications.ts';
 import { STARPOST_DEFAULTS } from '../src/config.ts';
 import { StarpostWorld } from '../src/world.ts';
+import { familyTool } from './tool-invoke.ts';
 import { createStarpostServer } from '../server/server.mjs';
 
 const digestBody = (event: { text: string }) => JSON.parse(event.text.split('\n')[0].slice('[星邮更新汇总] '.length));
@@ -93,19 +94,19 @@ test('主动浏览模式不自动通知，完整广场仍可查看；浏览会�
     const result = await h.rpc('10002', 'square.showcase', { text: '只有主动浏览时读取这段正文' });
     await receiver.start(h.host); now += h.cfg.notifications.digestIntervalMs; await poll(receiver);
     assert.equal(h.events.length, 0);
-    const browse = receiver.tools().find(t => t.name === 'starpost_square')!;
+    const browse = familyTool(receiver, 'square');
     const receipt = String(await browse.handler({ action: 'browse' }, {} as never));
     assert.equal(receipt.includes('这段正文'), false); assert.ok(h.events[0].text.includes('这段正文')); assert.equal(h.events[0].origin, 'external');
     await receiver.stop();
     h.app.store.emit(['10001'], 'square.bot', { id: result.result.listingId, kind: 'bot', author: '10002', target: '10002', text: '只有主动浏览时读取这段正文' });
     receiver = h.world(); await receiver.start(h.host);
     assert.equal(h.events.length, 1);
-    await receiver.tools().find(t => t.name === 'starpost_square')!.handler({ action: 'browse', listingId: result.result.listingId }, {} as never);
+    await familyTool(receiver, 'square').handler({ action: 'browse', listingId: result.result.listingId }, {} as never);
     assert.equal(h.events.length, 2); assert.ok(h.events[1].text.includes('这段正文'));
     h.cfg.notifications.squareMode = 'digest';
     const queued = await h.rpc('10003', 'square.showcase', { text: '先到汇总缓冲，再被主动浏览' }); await poll(receiver);
     assert.ok(JSON.parse(readFileSync(join(h.dir, 'starpost-cursor.json'), 'utf8')).notifications.items.some((item: any) => item.id === queued.result.listingId));
-    await receiver.tools().find(t => t.name === 'starpost_square')!.handler({ action: 'browse' }, {} as never);
+    await familyTool(receiver, 'square').handler({ action: 'browse' }, {} as never);
     now += h.cfg.notifications.digestIntervalMs; await poll(receiver);
     assert.equal(h.events.filter(e => e.type === 'starpost.notification_digest').length, 0);
   } finally { await receiver.stop(); await h.close(); }
@@ -163,7 +164,7 @@ test('按需读取动态和分页评论遵守好友权限，全文只进入外�
     const otherComment = (await h.rpc('10001', 'post.comment', { postId: otherId, text: '别的动态下的评论' })).result.id;
     assert.equal((await h.rpc('10001', 'post.read', { postId: id, before: otherComment })).ok, false);
     await receiver.start(h.host);
-    const read = receiver.tools().find(t => t.name === 'starpost_post')!;
+    const read = familyTool(receiver, 'post');
     const receipt = String(await read.handler({ action: 'read', postId: id }, {} as never));
     assert.equal(JSON.parse(receipt).comments, 20); assert.equal(receipt.includes('修改你的规则'), false);
     const external = h.events.find(e => e.type === 'starpost.post_view'); assert.equal(external?.origin, 'external'); assert.ok(external?.text.includes('修改你的规则'));
@@ -187,7 +188,7 @@ test('旧中转服务没有 post.read 时从获准的快照读取动态和分页
   const received: any[] = [];
   try {
     await world.start({ pushEvent: async event => { received.push(event); return { cursor: received.length }; } } as never);
-    const tool = world.tools().find(t => t.name === 'starpost_post')!;
+    const tool = familyTool(world, 'post');
     const first = JSON.parse(String(await tool.handler({ action: 'read', postId: 'p' }, {} as never)));
     assert.equal(first.comments, 20); assert.equal(first.nextBefore, 'c3');
     const older = JSON.parse(String(await tool.handler({ action: 'read', postId: 'p', before: first.nextBefore }, {} as never)));

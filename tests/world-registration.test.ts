@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { createStarpostServer } from '../server/server.mjs';
 import { STARPOST_DEFAULTS } from '../src/config.ts';
 import { StarpostWorld } from '../src/world.ts';
+import { familyTool } from './tool-invoke.ts';
 
 test('初始面板注册后，本机身份与 bot 资料工具可跨重启使用', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'starpost-world-'));
@@ -30,17 +31,17 @@ test('初始面板注册后，本机身份与 bot 资料工具可跨重启使用
     assert.equal(app.store.get('credentials', '10002').tokenHash.length, 64);
     const second = world();
     assert.deepEqual(await second.webUi().invoke!('viewer', 'status', []), { registered: true, botId: '10002' });
-    const profileTool = second.tools().find(tool => tool.name === 'starpost_profile')!;
+    const profileTool = familyTool(second, 'profile');
     const update = await profileTool.handler({ action: 'update', nickname: '小星', bio: '看星星', discoverable: true }, {} as never);
     assert.match(String(update), /小星/);
     app.store.befriend('10001', '10002');
     const stickerBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lX8AAAAASUVORK5CYII=', 'base64');
     writeFileSync(join(dir, 'sticker.png'), stickerBytes);
-    const send = await second.tools().find(tool => tool.name === 'starpost_send')!.handler({ kind: 'private', target: '10001', text: '你好', sticker: 'sticker.png' }, {} as never);
+    const send = await familyTool(second, 'send').handler({ kind: 'private', target: '10001', text: '你好', sticker: 'sticker.png' }, {} as never);
     assert.ok(JSON.parse(String(send)).id);
     const snapshot = await second.webUi().invoke!('viewer', 'snapshot', []) as { profile: { nickname: string } };
     assert.equal(snapshot.profile.nickname, '小星');
-    const squareTool = second.tools().find(tool => tool.name === 'starpost_square')!;
+    const squareTool = familyTool(second, 'square');
     const showcase = await squareTool.handler({ action: 'showcase', text: '来看夜空' }, {} as never);
     const listingId = JSON.parse(String(showcase)).listingId;
     assert.ok(listingId);
@@ -49,14 +50,14 @@ test('初始面板注册后，本机身份与 bot 资料工具可跨重启使用
     await legacy.start({ pushEvent: async (event: { type: string; origin: string; text: string; blobs?: Array<{ bytes: Uint8Array; mime: string }> }) => { external.push(event); } } as never);
     assert.equal(JSON.parse(readFileSync(join(dir, 'legacy', 'starpost-credential.json'), 'utf8')).botId, '10001');
     assert.equal(app.store.get('credentials', '10001').tokenHash.length, 64);
-    const browse = await legacy.tools().find(tool => tool.name === 'starpost_square')!.handler({ action: 'browse' }, {} as never);
+    const browse = await familyTool(legacy, 'square').handler({ action: 'browse' }, {} as never);
     assert.equal(JSON.parse(String(browse))[0].id, listingId);
     assert.equal(String(browse).includes('来看夜空'), false);
     assert.ok(external.some(event => event.type === 'starpost.square_bot' && event.origin === 'external' && event.text.includes('来看夜空')));
     const chat = external.find(event => event.type === 'starpost.message');
     assert.equal(chat, undefined);
     assert.ok(external.some(event => event.type === 'starpost.inbox_backlog'));
-    const read = String(await legacy.tools().find(tool => tool.name === 'starpost_inbox')!.handler({ action: 'read', kind: 'private', target: '10002', limit: 1 }, {} as never));
+    const read = String(await familyTool(legacy, 'inbox').handler({ action: 'read', kind: 'private', target: '10002', limit: 1 }, {} as never));
     assert.match(read, /你好/); assert.match(read, /sticker.png/);
     const picture = external.find(event => event.type === 'starpost.inbox_image')!;
     assert.equal(picture.origin, 'external');
@@ -77,7 +78,7 @@ test('广场冷却提醒经现有轮询送达 bot，保持外部事件来源且�
   const host = { pushEvent: async (event: { type: string; origin: string; text: string }) => { events.push(event); } } as never;
   try {
     await world.start(host);
-    const publish = world.tools().find(tool => tool.name === 'starpost_square')!;
+    const publish = familyTool(world, 'square');
     const result = await publish.handler({ action: 'showcase', text: '自主展示' }, {} as never);
     assert.ok(JSON.parse(String(result)).listingId);
     await world.stop(); now += 12 * 60 * 60 * 1000;
@@ -160,7 +161,7 @@ test('离线事件缺口提醒 bot，聊天历史工具可补看被清理的消�
     await world.start(host);
     assert.equal(pushed.filter(event => event.type === 'starpost.delivery_gap').length, 1);
     assert.equal(pushed.find(event => event.type === 'starpost.delivery_gap')?.origin, 'internal');
-    const history = await world.tools().find(tool => tool.name === 'starpost_history')!.handler({ kind: 'private', target: '10002' }, {} as never);
+    const history = await familyTool(world, 'history').handler({ kind: 'private', target: '10002' }, {} as never);
     const messages = JSON.parse(String(history)).messages;
     assert.deepEqual(messages.map((message: { text: string }) => message.text), ['补看第1条', '补看第2条', '补看第3条']);
   } finally { await world.stop(); await app.close(); rmSync(dir, { recursive: true, force: true }); }
