@@ -20,13 +20,14 @@ import java.util.List;
 import java.util.concurrent.*;
 
 public final class MainActivity extends Activity {
+    private static final String OFFICIAL_SERVER = "https://starpost.com.cn", BACKUP_SERVER = "https://8.148.13.225";
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final ExecutorService filesWorker = Executors.newSingleThreadExecutor();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private SessionStore sessions;
     private StickerLibrary stickers;
     private String conversationKind = "private", ownerPageSignature = "";
-    private String server = "https://starpost.com.cn", token = "", botId = "", address = "", screen = "owner", target = "", chatKind = "";
+    private String server = OFFICIAL_SERVER, token = "", botId = "", address = "", screen = "owner", target = "", chatKind = "";
     private static final int INK=Color.rgb(31,49,85), BLUE=Color.rgb(75,113,222), PALE=Color.rgb(241,246,255), MUTED=Color.rgb(111,129,158);
     private long expiresAt;
     private boolean busy, resumed, stickerPickerOpen;
@@ -50,11 +51,6 @@ public final class MainActivity extends Activity {
         try {
             JSONObject saved = new JSONObject(sessions.load());
             server = saved.getString("server"); token = saved.getString("token"); botId = saved.getString("botId"); expiresAt = saved.getLong("expiresAt");
-            if ("https://8.148.13.225".equals(server)) {
-                server = "https://starpost.com.cn";
-                saved.put("server", server);
-                try { sessions.save(saved.toString()); } catch (Exception ignored) { /* Keep the in-memory session usable. */ }
-            }
             address = getPreferences(0).getString("address", "");
         } catch (Exception ignored) { token = ""; }
         getWindow().setStatusBarColor(PALE); getWindow().setNavigationBarColor(Color.WHITE);
@@ -97,14 +93,39 @@ public final class MainActivity extends Activity {
             });
         });login.setTextColor(Color.WHITE);login.setBackground(rounded(BLUE,15));LinearLayout.LayoutParams loginParams=new LinearLayout.LayoutParams(-1,dp(53));loginParams.topMargin=dp(14);root.addView(login,loginParams);
     }
+    private static final class ConnectFailure extends IOException {
+        ConnectFailure(IOException cause) { super("无法连接服务器：" + cause.getMessage(), cause); }
+    }
     private JSONObject request(String path, JSONObject data, boolean authenticated) throws Exception {
-        HttpURLConnection connection = (HttpURLConnection)new URL(server + path).openConnection();
+        String selected = server;
+        try { return requestAt(selected, path, data, authenticated); }
+        catch (ConnectFailure error) {
+            if (!OFFICIAL_SERVER.equals(selected)) throw error;
+            JSONObject result;
+            try { result = requestAt(BACKUP_SERVER, path, data, authenticated); }
+            catch (ConnectFailure backupError) { throw new IOException("官网和备用 IP 均无法连接：" + backupError.getMessage(), backupError); }
+            server = BACKUP_SERVER;
+            if (!token.isEmpty() && expiresAt > System.currentTimeMillis()) {
+                try { sessions.save(json("server", server, "token", token, "botId", botId, "expiresAt", expiresAt).toString()); } catch (Exception ignored) {}
+            }
+            runOnUiThread(() -> toast("官网连接失败，已切换到备用 IP"));
+            return result;
+        }
+    }
+    private JSONObject requestAt(String base, String path, JSONObject data, boolean authenticated) throws Exception {
+        HttpURLConnection connection = (HttpURLConnection)new URL(base + path).openConnection();
         connection.setConnectTimeout(15000); connection.setReadTimeout(30000); connection.setInstanceFollowRedirects(false);
         connection.setRequestMethod("POST"); connection.setDoOutput(true); connection.setRequestProperty("Content-Type","application/json");
         if(authenticated) connection.setRequestProperty("Authorization","Bearer " + token);
         try {
             byte[] payload=data.toString().getBytes("UTF-8"); connection.setFixedLengthStreamingMode(payload.length);
-            try(OutputStream out=connection.getOutputStream()){out.write(payload);}
+            try { connection.connect(); } catch(IOException e) { throw new ConnectFailure(e); }
+            OutputStream streamOut;
+            try { streamOut=connection.getOutputStream(); } catch(IOException e) {
+                if (e instanceof SocketException || e instanceof SocketTimeoutException || e instanceof UnknownHostException || e instanceof javax.net.ssl.SSLException) throw new ConnectFailure(e);
+                throw e;
+            }
+            try(OutputStream out=streamOut){out.write(payload);}
             int code=connection.getResponseCode();
             InputStream stream=code>=400?connection.getErrorStream():connection.getInputStream();
             if(stream==null) throw new IOException("服务器响应无效（"+code+"）");

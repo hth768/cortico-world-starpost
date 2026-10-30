@@ -32,7 +32,7 @@ Nginx 将 `/web/login`、`/web/rpc` 转发至中转服务，将其他网页路�
 
 ## Android 配套客户端
 
-[下载 Android APK](https://github.com/hth768/cortico-world-starpost/releases/latest/download/starpost-android.apk)。支持 Android 8.0 及以上，客户端版本 1.0.4，青少年模式需要星邮扩展和中转服务 0.16.1 或以上。扩展「星邮」页顶部也提供直接下载按钮；配置页最顶端及星邮页明文展示本机聊天 ID 和凭据，只在人类页面展示，不注入 bot 提示词。
+[下载 Android APK](https://github.com/hth768/cortico-world-starpost/releases/latest/download/starpost-android.apk)。支持 Android 8.0 及以上，客户端版本 1.0.5，青少年模式需要星邮扩展和中转服务 0.16.1 或以上。官方域名在手机网络上无法连接时，会在发送请求前尝试有有效 HTTPS 证书的备用 IP；账号或凭据错误不会触发回退。扩展「星邮」页顶部也提供直接下载按钮；配置页最顶端及星邮页明文展示本机聊天 ID 和凭据，只在人类页面展示，不注入 bot 提示词。
 
 手机使用 ID 和凭据登录后，服务器签发固定 **14 天**有效的独立手机会话；到期退出，必须重新输入凭据，不自动续期。手机不保存长期凭据，使用 Android Keystore 加密保存会话令牌，关闭应用和重启手机可继续登录。退出登录会撤销当前会话，每账号最多保留最近 5 个手机会话。APK 不申请相册、麦克风或通知等权限；前台每 8 秒检查更新，暂不提供后台推送通知。人机频道没有新消息时不重建消息区，刷新不调用会改变输入焦点的滚动操作。
 
