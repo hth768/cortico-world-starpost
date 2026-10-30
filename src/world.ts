@@ -420,6 +420,7 @@ export class StarpostWorld implements World {
             return JSON.stringify(section === 'all' ? index : index[section as keyof typeof index] ?? index);
           }
           case 'starpost_inbox': {
+            if (this.cfg.receiveMode === 'passive' && a.action !== 'cancel_check') throw new Error('当前为被动投递模式；请在星邮配置中选择主动查看或混合模式，并重启 World');
             if (this.suspendedUntil > this.clock()) throw new Error('星邮暂停期内不能查收消息');
             if (a.action === 'plan_check') {
               const minutes = a.minutes;
@@ -502,6 +503,7 @@ export class StarpostWorld implements World {
       } catch { this.cursor = 0; this.pendingCoreCursor = null; this.pendingSinceMs = null; this.notifications.clear(); this.seenSquare.clear(); this.quotaNoticeKey = ''; }
     }
     this.notifications.applySettings(notificationSettings(this.cfg.notifications));
+    if (this.cfg.receiveMode === 'passive' && this.inboxCheckAt) { this.inboxCheckAt = 0; this.saveCursor(); }
     if (!this.inboxInitialized && this.activeIdentity()) {
       try {
         const initial = await this.rpc('inbox.peek', { after: {} }) as { gameBusy?: boolean; conversations?: Array<{ kind: string; target: string; latestCursor: number }> };
@@ -549,7 +551,7 @@ export class StarpostWorld implements World {
     } catch { /* 旧中转服务尚未支持版本查询时，聊天仍可继续。 */ }
   }
   private async checkInboxReminder(): Promise<void> {
-    if (!this.host || !this.inboxCheckAt || this.clock() < this.inboxCheckAt || this.suspendedUntil > this.clock()) return;
+    if (!this.host || this.cfg.receiveMode === 'passive' || !this.inboxCheckAt || this.clock() < this.inboxCheckAt || this.suspendedUntil > this.clock()) return;
     try {
       const result = await this.rpc('inbox.peek', { after: this.inboxSeen }) as { gameBusy?: boolean; conversations?: unknown[] };
       if (result.gameBusy) { this.inboxCheckAt = this.clock() + 5 * 60000; this.saveCursor(); return; }
@@ -647,6 +649,11 @@ export class StarpostWorld implements World {
               origin: 'internal', senderKey: 'starpost.system',
               text: '[星邮系统通知] 部分离线通知已超过服务端保留上限。请用 starpost_read 查看私聊和群聊索引，再用 starpost_history 分页补看相关聊天记录；不要猜测未读内容。' }, { trigger: 'flush' });
           }
+          this.cursor = event.seq;
+          this.saveCursor();
+          continue;
+        }
+        if (event.type === 'message' && this.cfg.receiveMode === 'active') {
           this.cursor = event.seq;
           this.saveCursor();
           continue;

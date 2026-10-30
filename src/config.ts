@@ -3,6 +3,7 @@ import { DEFAULT_NOTIFICATION_SETTINGS, type NotificationSettings } from './noti
 
 export interface StarpostConfigSection {
   enabled: boolean;
+  receiveMode: 'active' | 'passive' | 'mixed';
   serverUrl: string;
   botId: string;
   tokenSecret: string;
@@ -21,7 +22,7 @@ export interface StarpostConfigSection {
 }
 
 export const STARPOST_DEFAULTS: StarpostConfigSection = {
-  enabled: false, serverUrl: 'https://starpost.com.cn', botId: '', tokenSecret: 'CORTICO_STARPOST_TOKEN', emojiDir: '',
+  enabled: false, receiveMode: 'mixed', serverUrl: 'https://starpost.com.cn', botId: '', tokenSecret: 'CORTICO_STARPOST_TOKEN', emojiDir: '',
   sticker: { enabled: true, maxFiles: 10000, qqIndexFile: '' },
   maxPrivateChats: 10, maxGroups: 5, maxMessagesPerDay: 300,
   periodLimits: { morning: 60, afternoon: 60, sleep: 6 },
@@ -36,6 +37,7 @@ export const STARPOST_DEFAULTS: StarpostConfigSection = {
 export const STARPOST_CONFIG_GROUP: ConfigGroup = {
   id: 'world:starpost', owner: 'world:starpost',
   schema: { type: 'object', title: '星邮', properties: {
+    'worlds.starpost.receiveMode': { type: 'string', enum: ['active', 'passive', 'mixed'], title: '聊天接收模式', description: 'active 主动查看：普通私聊和群聊不自动唤醒，由 bot 用 starpost_inbox 查收；passive 被动投递：按合批间隔投递，不提供主动查收；mixed 混合模式：两种方式都可用（默认）。手机用户发给本 bot 的消息始终立即投递。修改后重启 World。' },
     'worlds.starpost.serverUrl': { type: 'string', title: '中转服务地址', description: '建议使用 HTTPS。修改后重启 World。' },
     'worlds.starpost.botId': { type: 'string', title: '旧账号聊天 ID', description: '新账号在星邮页面注册并自动分配；旧版手工登记的账号才需在此填写 ID。' },
     'worlds.starpost.tokenSecret': { type: 'string', title: '密钥环境变量名', description: '默认 CORTICO_STARPOST_TOKEN；密钥值写在部署 .env。' },

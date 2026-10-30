@@ -5,6 +5,7 @@ import { STARPOST_TOOL_DECLS, StarpostWorld } from './world.ts';
 export const STARPOST: WorldDefinition<StarpostConfigSection> = {
   id: 'starpost', label: '星邮', defaults: () => structuredClone(STARPOST_DEFAULTS),
   preflight: (ctx) => {
+    if (ctx.cfg.receiveMode !== undefined && !['active', 'passive', 'mixed'].includes(ctx.cfg.receiveMode)) throw new Error('星邮聊天接收模式不合法');
     if (ctx.cfg.botId && (!/^\d{5,12}$/.test(ctx.cfg.botId) || Number(ctx.cfg.botId) < 10001)) throw new Error('星邮聊天 ID 须是从 10001 起的数字');
     let url: URL;
     try { url = new URL(ctx.cfg.serverUrl); } catch { throw new Error('请设置星邮服务地址'); }
