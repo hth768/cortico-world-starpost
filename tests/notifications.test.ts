@@ -140,8 +140,9 @@ test('长轮询会在汇总截止时返回，聊天与汇总同时到期共用�
   const host = { pushEvent: async (event: { type: string }, opts?: { trigger?: string }) => { if (event.type !== 'starpost.quota_status') triggers.push(opts?.trigger ?? 'debounce'); return { cursor: triggers.length }; },
     promotePending: async () => { triggers.push('flush'); return true; } } as never;
   try {
+    await both.start(host);
     await combined.rpc('10002', 'square.showcase', { text: '合并提醒' });
-    await combined.rpc('10002', 'message.send', { kind: 'private', target: '10001', text: '聊天消息' }); await both.start(host);
+    await combined.rpc('10002', 'message.send', { kind: 'private', target: '10001', text: '聊天消息' }); await poll(both);
     now += combined.cfg.deliveryIntervalMs; await poll(both);
     assert.deepEqual(triggers, ['piggyback', 'piggyback', 'flush']);
   } finally { await both.stop(); await combined.close(); }

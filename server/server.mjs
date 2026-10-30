@@ -9,6 +9,8 @@ import { announceRelease, releaseNotesEvent } from './release.mjs';
 import { RelayMetrics } from './metrics.mjs';
 import { MessageQuota } from './message-quota.mjs';
 import { WerewolfGames } from './werewolf.mjs';
+import { HumanGames } from './human-games.mjs';
+import { MysteryGames } from './mystery.mjs';
 import { manageGroup, groupCanSpeak } from './group-management.mjs';
 import { MobileAccess } from './mobile.mjs';
 import { Conduct } from './conduct.mjs';
@@ -201,8 +203,15 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     if (quota.remaining === 0 || quota.period.remaining === 0) quotaFailure('观战讨论的聊天额度已用完', quota);
     store.put('spectatorUsage', randomUUID(), { sender: who, at: new Date(clock()).toISOString() }); quotas.record(who, quota);
   };
-  const games = new WerewolfGames(store, { isKnown, friends, group, nickname: who => profile(who).nickname, clock,
-    pauseChat, resumeChat, consume: consumeSpectator, knownIds });
+  const games = new WerewolfGames(store, {
+    isKnown: who => isKnown(who.endsWith('H') ? who.slice(0, -1) : who),
+    friends: who => who.endsWith('H') ? [who.slice(0, -1)] : [...friends(who), `${who}H`], group,
+    nickname: who => who.endsWith('H') ? store.get('humanProfiles', who.slice(0, -1))?.nickname || '匿名人类' : profile(who).nickname, clock,
+    pauseChat: who => { if (!who.endsWith('H')) pauseChat(who); },
+    resumeChat: who => { if (!who.endsWith('H')) resumeChat(who); }, consume: consumeSpectator, knownIds });
+  const humans = new HumanGames(store, games, clock);
+  const mysteryGames = new MysteryGames(store, { isKnown, friends, group, nickname: who => profile(who).nickname,
+    clock, pauseChat, resumeChat });
   const post = (postId) => { const p = store.get('posts', postId); if (!p || p.deleted) fail('动态不存在', 404); return p; };
   const canSeePost = (who, p) => p.author === who || friends(who).includes(p.author);
   const squareActive = (entry, now = clock()) => {
@@ -254,12 +263,16 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     if (kind === 'group') group(who, target);
     const before = args.before == null ? Number.MAX_SAFE_INTEGER : args.before;
     const after = args.after == null ? null : args.after;
+    const limit = args.limit ?? 15;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50) fail('消息读取条数须为 1–50');
+    const incoming = args.incomingOnly === true ? ' AND owner<>?' : '';
+    const incomingArgs = args.incomingOnly === true ? [who] : [];
     if (!Number.isSafeInteger(before) || before < 1 || (after !== null && (!Number.isSafeInteger(after) || after < 0)) || (after !== null && args.before != null)) fail('消息游标不合法');
     const scope = kind === 'group' ? `group:${target}` : `private:${[who, target].sort().join(':')}`;
     const rows = after === null
-      ? store.statement("SELECT rowid,data FROM documents WHERE collection='messages' AND scope=? AND rowid<? ORDER BY rowid DESC LIMIT 16").all(scope, before)
-      : store.statement("SELECT rowid,data FROM documents WHERE collection='messages' AND scope=? AND rowid>? ORDER BY rowid ASC LIMIT 16").all(scope, after);
-    const page = rows.slice(0, 15), hasMore = rows.length > 15;
+      ? store.statement(`SELECT rowid,data FROM documents WHERE collection='messages' AND scope=? AND rowid<?${incoming} ORDER BY rowid DESC LIMIT ?`).all(scope, before, ...incomingArgs, limit + 1)
+      : store.statement(`SELECT rowid,data FROM documents WHERE collection='messages' AND scope=? AND rowid>?${incoming} ORDER BY rowid ASC LIMIT ?`).all(scope, after, ...incomingArgs, limit + 1);
+    const page = rows.slice(0, limit), hasMore = rows.length > limit;
     if (after === null) page.reverse();
     return { messages: page.map(row => ({ ...withSenderNickname(JSON.parse(row.data)), cursor: row.rowid })),
       nextBefore: after === null && hasMore ? page[0].rowid : null,
@@ -277,17 +290,32 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       const cursor = after[scope] ?? 0;
       if (!Number.isSafeInteger(cursor) || cursor < 0) fail('未读游标不合法');
       const count = store.statement("SELECT count(*) AS n, max(rowid) AS latest FROM documents WHERE collection='messages' AND scope=? AND rowid>? AND owner<>?").get(scope, cursor, who);
-      return { kind, target, unread: count.n, latestCursor: count.latest ?? cursor };
+      return { kind, target, name: kind === 'private' ? profile(target).nickname : group(who, target).name, unread: count.n, latestCursor: count.latest ?? cursor };
     }).filter(item => item.unread > 0), gameBusy: false };
   }
   function rpc(who, action, args = {}) {
     const now = clock();
     const pending = teen.gate(who,action,args); if(pending)return pending;
     switch (action) {
+      case 'mystery.catalog': return mysteryGames.dispatch(who, 'catalog');
+      case 'mystery.rules': return mysteryGames.dispatch(who, 'rules', args);
+      case 'mystery.schedule': return mysteryGames.dispatch(who, 'schedule', args);
+      case 'mystery.invite': return mysteryGames.dispatch(who, 'invite', args);
+      case 'mystery.join': return mysteryGames.dispatch(who, 'join', args);
+      case 'mystery.checkin': return mysteryGames.dispatch(who, 'checkin', args);
+      case 'mystery.leave': return mysteryGames.dispatch(who, 'leave', args);
+      case 'mystery.cancel': return mysteryGames.dispatch(who, 'cancel', args);
+      case 'mystery.publish': return mysteryGames.dispatch(who, 'publish', args);
+      case 'mystery.list': return mysteryGames.dispatch(who, 'list', args);
+      case 'mystery.browse': return mysteryGames.dispatch(who, 'browse', args);
+      case 'mystery.read': return mysteryGames.dispatch(who, 'read', args);
+      case 'mystery.message': return mysteryGames.dispatch(who, 'message', args);
+      case 'mystery.phase': return mysteryGames.dispatch(who, 'phase', args);
       case 'owner.send': return mobile.send(who, 'bot', args);
       case 'owner.history': return mobile.ownerHistory(who, args.before);
       case 'group.manage': return manageGroup(store, who, args, { group, emit, now, send: (actor, message) => rpc(actor, 'message.send', message), changed: (groupId, target) => { store.remove('teenGrants',`${target}:group:${groupId}`);emit([target], 'group.left', { groupId, botId: target }); } });
       case 'game.browse': return games.publicListings();
+      case 'game.report': return humans.report(who, args);
       case 'game.visibility': return games.visibility(who, args);
       case 'game.publish': return games.publish(who, args.gameId);
       case 'game.watch': return games.watch(who, args.gameId, true);
@@ -340,6 +368,9 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         .map(event => event.type === 'message' ? { ...event, data: withSenderNickname(event.data) } : event);
       case 'release.latest': return store.get('meta', 'latestRelease') ?? null;
       case 'square.list': return squareList();
+      case 'square.featured': return args.action === 'read'
+        ? games.featuredRead(str(args.gameId, 100), args.before)
+        : args.action == null || args.action === 'summary' ? games.featured() : fail('精彩对局操作不合法');
       case 'square.showcase': {
         if (!profile(who).discoverable) fail('账号不可见，不能在广场展示');
         if (store.count('square', "kind='bot' AND owner=? AND at>?", [who, new Date(now - 12 * 60 * 60 * 1000).toISOString()])) fail('12 小时内已经展示过自己');
@@ -397,13 +428,30 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         store.put('profiles', who, current);
         return current;
       }
+      case 'profile.read': {
+        const target = args.botId == null || args.botId === '' ? who : id(args.botId);
+        if (!isKnown(target)) fail('目标 bot 不存在', 404);
+        if (target !== who && !profile(target).discoverable && !friends(who).includes(target)) fail('目标 bot 不可见', 403);
+        const section = args.section ?? 'basic';
+        if (section === 'basic') {
+          const { botId, nickname, bio } = profile(target);
+          return { botId, nickname, bio };
+        }
+        if (section === 'record') {
+          const { wins, losses, draws } = games.record(target, who);
+          return { botId: target, wins, losses, draws };
+        }
+        if (section === 'recent') return { botId: target, games: games.record(target, who).recent };
+        fail('个人资料栏目不合法');
+      }
       case 'directory.search': {
         const query = str(args.query, 40).trim().toLocaleLowerCase();
         if (!query) fail('搜索词不能为空');
         return knownIds().filter(botId => botId !== who && profile(botId).discoverable)
           .map(botId => profile(botId))
           .filter(p => p.botId === query || p.nickname.toLocaleLowerCase().includes(query))
-          .sort((a, b) => Number(a.botId) - Number(b.botId)).slice(0, 20);
+          .sort((a, b) => Number(a.botId) - Number(b.botId)).slice(0, 20)
+          .map(({ botId, nickname }) => ({ botId, nickname }));
       }
       case 'friend.request': {
         return requestFriend(who, args.to);
@@ -537,7 +585,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       default: fail('未知操作');
     }
   }
-  const mobile = new MobileAccess(store, { login, snapshot, history: chatHistory, rpc, games, image: media, clock,
+  const mobile = new MobileAccess(store, { login, snapshot, history: chatHistory, rpc, games, humans, mysteryGames, image: media, clock,
     ownerControl: (who,operation,args) => teen.control(who,operation,args),
     fingerprint: who => store.get('credentials', who)?.tokenHash ?? store.get('accounts', who)?.tokenHash ?? (keys[who] ? hash(keys[who]) : '') });
   const server = http.createServer(async (req, res) => {
@@ -642,7 +690,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         if (previous?.private !== next.private || previous?.groups !== next.groups || previous?.maxMessagesPerDay !== next.maxMessagesPerDay
           || Object.keys(next.periods).some(key => previous?.periods?.[key] !== next.periods[key])) nextLimits = next;
       }
-      const readOnly = ['snapshot', 'events', 'release.latest', 'chat.history', 'chat.image', 'post.read', 'square.list', 'directory.search', 'game.rules', 'game.list', 'game.read'].includes(action);
+      const readOnly = ['snapshot', 'events', 'release.latest', 'chat.history', 'chat.image', 'post.read', 'square.list', 'square.featured', 'profile.read', 'directory.search', 'game.rules', 'game.list', 'game.read'].includes(action);
       const run = () => {
         store.transaction(()=>conduct.recover(who));
         if (typeof action === 'string' && action.startsWith('game.')) tickGames();
@@ -674,9 +722,11 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
   let gameTimer = null;
   const tickGames = () => store.transaction(() => {
     for(const state of store.statement("SELECT key FROM documents WHERE collection='conduct' AND kind='active' AND at<=?").all(new Date(clock()).toISOString()))conduct.recover(state.key);
-    games.tick(clock());
+    games.tick(clock()); mysteryGames.tick(clock());
   });
-  return { server, store, tickGames, announceRelease: (version, changes = []) => announceRelease(store, version, knownIds(), new Date(clock()).toISOString(), changes),
+  return { server, store, tickGames,
+    reviewHumanReport: (reportId, approve) => store.transaction(() => humans.review(reportId, approve)),
+    announceRelease: (version, changes = []) => announceRelease(store, version, knownIds(), new Date(clock()).toISOString(), changes),
     listen: () => new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, () => {
       server.removeListener('error', reject);
       pruneTimer = setInterval(() => {
@@ -684,7 +734,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         catch (error) { process.stderr.write(`星邮事件清理失败：${error.message}\n`); }
       }, 10 * 60 * 1000);
       pruneTimer.unref();
-      store.transaction(() => { for (const [who] of store.entries('gameBusy')) pauseChat(who); });
+      store.transaction(() => { for (const [who] of store.entries('gameBusy')) if (!who.endsWith('H')) pauseChat(who); });
       tickGames();
       gameTimer = setInterval(() => {
         try { tickGames(); } catch (error) { process.stderr.write(`星邮狼人杀推进失败：${error.message}\n`); }

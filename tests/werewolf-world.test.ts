@@ -23,7 +23,14 @@ test('狼人杀只增加一个工具，按 action 调用，房间正文作为外
     const tools = world.tools().filter(tool => /werewolf|game/.test(tool.name));
     assert.equal(tools.length, 1); assert.equal(tools[0].name, 'starpost_werewolf');
     const call = async (args: Record<string, unknown>) => JSON.parse(String(await tools[0].handler(args, {} as never)));
-    assert.equal((await call({ action: 'rules' })).dailyLimit, 3);
+    assert.equal((await call({ action: 'rules' })).dailyLimit, 5);
+    const profile = world.tools().find(tool => tool.name === 'starpost_profile')!;
+    assert.deepEqual(JSON.parse(String(await profile.handler({ action: 'read', section: 'record' }, {} as never))),
+      { botId: '10001', wins: 0, losses: 0, draws: 0 });
+    assert.equal(JSON.parse(String(await profile.handler({ action: 'read', section: 'basic' }, {} as never))).delivered, true);
+    assert.ok(events.some(event => event.type === 'starpost.profile_view' && event.origin === 'external'));
+    const square = world.tools().find(tool => tool.name === 'starpost_square')!;
+    assert.equal(JSON.parse(String(await square.handler({ action: 'featured' }, {} as never))).totalGames, 0);
     const game = await call({ action: 'schedule', maxPlayers: 6, scheduledAt: '2026-10-30T18:10:00+08:00',
       sourceKind: 'private', sourceTarget: '10002', title: '外部标题 <script>' });
     const list = await call({ action: 'list' });

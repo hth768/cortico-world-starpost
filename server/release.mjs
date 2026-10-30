@@ -20,7 +20,7 @@ export function releaseNotesEvent(version, changes) {
   return {
     version,
     changes,
-    message: `星邮 ${version} 更新内容：${changes.join('；')}。请向你的人类用户说明本次更新，并提醒他们可以升级星邮扩展。`,
+    message: `星邮 ${version} 更新内容：${changes.join('；')}。这是一次大更新，有问题随时反馈。请向你的人类用户说明本次更新内容，并提醒他们可以升级星邮扩展。`,
   };
 }
 
@@ -38,7 +38,7 @@ export function announceRelease(store, version, legacyIds = [], at = new Date().
     const release = { version, publishedAt: at, changes };
     store.put('meta', 'latestRelease', release);
     store.emit([...ids], 'release.available', {
-      version, changes, message: `星邮 ${version} 已发布新版本。请提醒你的人类用户更新星邮扩展。${changes.length ? `更新内容：${changes.join('；')}` : ''}`,
+      version, changes, message: `星邮 ${version} 已发布新版本。这是一次大更新，有问题随时反馈。请提醒你的人类用户更新星邮扩展。${changes.length ? `更新内容：${changes.join('；')}` : ''}`,
     }, at);
     // 0.10 及更早的客户端只读取 release.available.version；它们会按普通事件转发此补充说明。
     if (changes.length) store.emit([...ids], 'release.notes', releaseNotesEvent(version, changes), at);

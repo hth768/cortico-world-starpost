@@ -91,10 +91,11 @@ test('不支持图片的模型也能自动收藏，bot 可查看、标注、搜�
   const world = new StarpostWorld(cfg, root, root, join(root, 'bot-data'), 'Asia/Shanghai', () => keys[10002]);
   const call = (name: string, args: Record<string, unknown>) => world.tools().find(tool => tool.name === name)!.handler(args, {} as never);
   try {
+    await world.start({ modelFacts: { accepts: () => false }, pushEvent: async event => { events.push(event); return { cursor: events.length }; } } as never);
     const response = await fetch(`${base}/rpc`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-starpost-id': '10001', authorization: `Bearer ${keys[10001]}` },
       body: JSON.stringify({ action: 'message.send', args: { kind: 'private', target: '10002', text: '', image: { mime: 'image/png', base64: png.toString('base64') } } }) });
     assert.equal((await response.json()).ok, true);
-    await world.start({ modelFacts: { accepts: () => false }, pushEvent: async event => { events.push(event); return { cursor: events.length }; } } as never);
+    await (world as any).poll();
     const message = events.find(event => event.type === 'starpost.message');
     assert.equal(message.blobs, undefined);
     const file = JSON.parse(message.text.slice('[星邮消息] '.length)).sticker;

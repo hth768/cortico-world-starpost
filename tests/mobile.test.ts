@@ -70,8 +70,42 @@ test('手机只可全程查看本 ID 参与的私密局及广场公开局，不�
     assert.equal((await f.phone(other, 'game', { gameId })).status, 403);
     const game = f.app.store.get('games', gameId); game.public = true; game.published = true; f.app.store.put('games', gameId, game);
     assert.equal((await f.phone(other, 'game', { gameId })).result.messages[0].role, 'wolf');
-    assert.equal((await f.phone(other, 'games')).result.items.length, 1);
+    const listed = await f.phone(other, 'games'); assert.equal(listed.ok, true, JSON.stringify(listed));
+    assert.equal(listed.result.items.length, 1);
     assert.equal((await f.rpc(10001, 'game.read', { gameId })).result.messages.some((m: any) => m.role === 'wolf'), false);
+  } finally { await f.close(); }
+});
+
+test('手机和网页按需读取个人资料、战绩和今日精彩对局，私密局不外泄', async () => {
+  const f = await fixture();
+  try {
+    f.time = Date.parse('2026-11-01T00:00:00+08:00');
+    await f.rpc(10002, 'profile.update', { nickname: '月狐', bio: '喜欢推理' });
+    const publicId = randomUUID(), privateId = randomUUID();
+    for (const [gameId, isPublic] of [[publicId, true], [privateId, false]] as const) {
+      f.app.store.put('games', gameId, { id: gameId, title: isPublic ? '公开局' : '私密局', creator: '10002',
+        status: 'closed', scheduledAt: '2026-10-30T22:00:00.000Z', startedAt: '2026-10-30T22:00:00.000Z',
+        finishedAt: isPublic ? '2026-10-30T23:00:00.000Z' : '2026-10-31T01:00:00.000Z',
+        winner: isPublic ? 'village' : 'draw', public: isPublic, published: isPublic,
+        participants: ['10002'], joined: ['10002'], invited: [], roles: { 10002: 'villager' } });
+      f.app.store.put('gameAccess', `10002:${gameId}`, { owner: '10002', gameId });
+    }
+    f.app.store.put('gameMessages', 'featured-role', { id: 'featured-role', gameId: publicId, channel: 'private',
+      to: '10002', sender: 'system', kind: 'role', role: 'villager', at: '2026-10-30T22:00:00.000Z' });
+    const token = (await f.login('10001', f.keys[10001])).result.accessToken;
+    assert.equal((await f.phone(token, 'profile', { botId: '10002', section: 'basic' })).result.bio, '喜欢推理');
+    assert.equal((await f.phone(token, 'profile', { botId: '10002', section: 'record' })).result.wins, 1);
+    const recent = (await f.phone(token, 'profile', { botId: '10002', section: 'recent' })).result.games;
+    assert.equal(recent.find((game: any) => game.title === '私密对局').gameId, undefined);
+    assert.equal((await f.phone(token, 'featured')).result.featured.gameId, publicId);
+    assert.equal((await f.phone(token, 'featured.read', { gameId: publicId })).result.messages[0].role, 'villager');
+    assert.equal((await f.phone(token, 'featured.read', { gameId: privateId })).status, 404);
+    const login = await fetch(`${f.base}/web/login`, { method: 'POST', headers: { origin: f.base, 'content-type': 'application/json' },
+      body: JSON.stringify({ botId: '10001', credential: f.keys[10001] }) });
+    const cookie = login.headers.get('set-cookie')?.split(';')[0] ?? '';
+    const web = await fetch(`${f.base}/web/rpc`, { method: 'POST', headers: { origin: f.base, cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'profile', args: { botId: '10002', section: 'basic' } }) });
+    assert.equal((await web.json()).result.bio, '喜欢推理');
   } finally { await f.close(); }
 });
 

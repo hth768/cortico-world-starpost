@@ -112,7 +112,7 @@ test('扩展停止已排队外部消息，固定系统警告不插入服务端�
   const world=new StarpostWorld(config,f.dir,f.dir,f.dir,'Asia/Shanghai',()=>f.keys['10001'],()=>f.now);
   const host={pushEvent:async(event)=>{pushed.push(event);return {cursor:pushed.length};},promotePending:async(cursor)=>promoted.push(cursor),drainPendingEvents:async(filter)=>{drained.push(filter({source:'starpost',origin:'external'}));assert.equal(filter({source:'other',origin:'external'}),false);}};
   try{
-    f.app.store.befriend('10001','10002');await f.ok(f.rpc('10002','message.send',{kind:'private',target:'10001',text:'本机还未唤醒的消息'}));await world.start(host);
+    f.app.store.befriend('10001','10002');await world.start(host);await f.ok(f.rpc('10002','message.send',{kind:'private',target:'10001',text:'本机还未唤醒的消息'}));await world.poll();
     assert.equal(promoted.length,0);
     const delivered=JSON.parse(pushed.find(e=>e.type==='starpost.message').text.replace('[星邮消息] ',''));
     assert.equal(delivered.sender,'10002');assert.equal(delivered.target,'10001');assert.equal(Object.hasOwn(delivered,'emoji'),false);assert.equal(Object.hasOwn(delivered,'image'),false);assert.equal(Object.hasOwn(delivered,'mentions'),false);

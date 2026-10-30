@@ -213,6 +213,93 @@ test('bot 法官手动分发、私密夜间行动与公共投票、药剂和守�
   } finally { await f.close(); }
 });
 
+test('女巫首夜不能自救，第二夜可用解药自救且解药只消耗一次', async () => {
+  const f = await fixture();
+  const players = f.ids.slice(1, 8);
+  const roles = ['wolf', 'witch', 'guard', 'villager', 'villager', 'villager', 'villager'];
+  try {
+    const gameId = await f.reserve(players, { judgeMode: 'bot', assignmentMode: 'judge',
+      roles: { wolf: 1, witch: 1, guard: 1, villager: 4 } });
+    await f.ok('10001', 'game.assign', { gameId, assignments: players.map((botId, i) => ({ botId, role: roles[i] })) });
+    assert.match((await f.ok('10003', 'game.rules')).rulebook.roles.witch, /首夜不能自救，之后的夜晚可以自救/);
+
+    await f.ok('10002', 'game.act', { gameId, action: 'attack', target: '10003' });
+    f.advance(gameId);
+    let prompt = (await f.ok('10003', 'game.read', { gameId })).messages.filter(message => message.kind === 'witch_prompt').at(-1);
+    assert.equal(prompt.saveAvailable, false);
+    assert.match((await f.rpc('10003', 'game.act', { gameId, action: 'save' })).error, /首夜不能自救/);
+    await f.ok('10004', 'game.act', { gameId, action: 'protect', target: '10003' });
+    f.advance(gameId);
+    assert.ok(f.app.store.get('games', gameId).alive.includes('10003'));
+    f.advance(gameId);
+    for (const who of players) await f.ok(who, 'game.vote', { gameId, target: 'abstain' });
+    assert.equal(f.app.store.get('games', gameId).day, 2);
+
+    await f.ok('10002', 'game.act', { gameId, action: 'attack', target: '10003' });
+    f.advance(gameId);
+    prompt = (await f.ok('10003', 'game.read', { gameId })).messages.filter(message => message.kind === 'witch_prompt').at(-1);
+    assert.equal(prompt.saveAvailable, true);
+    await f.ok('10003', 'game.act', { gameId, action: 'save' });
+    f.advance(gameId);
+    assert.ok(f.app.store.get('games', gameId).alive.includes('10003'));
+    assert.equal(f.app.store.get('games', gameId).uses['10003'].save, true);
+    f.advance(gameId);
+    for (const who of players) await f.ok(who, 'game.vote', { gameId, target: 'abstain' });
+    await f.ok('10002', 'game.act', { gameId, action: 'attack', target: '10003' });
+    f.advance(gameId);
+    prompt = (await f.ok('10003', 'game.read', { gameId })).messages.filter(message => message.kind === 'witch_prompt').at(-1);
+    assert.equal(prompt.saveAvailable, false);
+    assert.match((await f.rpc('10003', 'game.act', { gameId, action: 'save' })).error, /解药不可用/);
+  } finally { await f.close(); }
+});
+
+test('个人资料按栏目读取战绩和最近三局，广场北京时间零点公布前一天最长公开完赛局', async () => {
+  const f = await fixture();
+  try {
+    f.set('2026-10-31T23:59:59+08:00');
+    await f.ok('10002', 'profile.update', { nickname: '月狐', bio: '喜欢推理' });
+    const games = [
+      { id: randomUUID(), title: '公开长局', startedAt: '2026-10-31T06:00:00+08:00', finishedAt: '2026-10-31T08:00:00+08:00', winner: 'wolves', public: true, published: true, role: 'wolf' },
+      { id: randomUUID(), title: '私密更长局', startedAt: '2026-10-31T06:00:00+08:00', finishedAt: '2026-10-31T09:00:00+08:00', winner: 'wolves', public: false, published: false, role: 'villager' },
+      { id: randomUUID(), title: '公开短局', startedAt: '2026-10-31T10:00:00+08:00', finishedAt: '2026-10-31T10:20:00+08:00', winner: 'draw', public: true, published: true, role: 'villager' },
+    ];
+    for (const game of games) {
+      const stored = { ...game, scheduledAt: new Date(game.startedAt).toISOString(), startedAt: new Date(game.startedAt).toISOString(), finishedAt: new Date(game.finishedAt).toISOString(), status: 'closed', participants: ['10002'], joined: ['10002'], invited: [], roles: { 10002: game.role }, creator: '10001', judgeBotId: null };
+      if (game === games[0]) delete stored.finishedAt;
+      f.app.store.put('games', game.id, stored);
+      f.app.store.put('gameAccess', `10002:${game.id}`, { owner: '10002', gameId: game.id });
+    }
+    f.app.store.put('gameMessages', randomUUID(), { id: randomUUID(), gameId: games[0].id, channel: 'private', to: '10002', sender: 'system', kind: 'role', role: 'wolf', at: games[0].startedAt });
+    f.app.store.put('gameMessages', randomUUID(), { id: randomUUID(), gameId: games[0].id, channel: 'public', sender: 'system', kind: 'finished', winner: 'wolves', at: new Date(games[0].finishedAt).toISOString() });
+    assert.deepEqual(await f.ok('10009', 'profile.read', { botId: '10002' }), { botId: '10002', nickname: '月狐', bio: '喜欢推理' });
+    assert.deepEqual(await f.ok('10009', 'profile.read', { botId: '10002', section: 'record' }), { botId: '10002', wins: 1, losses: 1, draws: 1 });
+    const recent = (await f.ok('10009', 'profile.read', { botId: '10002', section: 'recent' })).games;
+    assert.equal(recent.length, 3);
+    assert.equal(recent.find(item => item.title === '私密对局').gameId, undefined);
+    assert.equal((await f.ok('10002', 'profile.read', { section: 'recent' })).games.find(item => item.title === '私密更长局').gameId, games[1].id);
+    assert.equal((await f.ok('10009', 'square.featured')).date, '2026-10-30');
+    assert.equal((await f.ok('10009', 'square.featured')).totalGames, 0);
+    f.set('2026-11-01T00:00:00+08:00');
+    const featured = await f.ok('10009', 'square.featured');
+    assert.equal(featured.date, '2026-10-31');
+    assert.equal(featured.availableAt, '2026-10-31T16:00:00.000Z');
+    assert.equal(featured.totalGames, 3);
+    assert.equal(featured.featured.gameId, games[0].id);
+    assert.equal(featured.featured.durationMs, 2 * 3600000);
+    assert.equal((await f.ok('10009', 'square.featured', { action: 'read', gameId: games[0].id })).messages[0].role, 'wolf');
+    assert.equal((await f.rpc('10009', 'square.featured', { action: 'read', gameId: games[1].id })).status, 404);
+    assert.equal((await f.rpc('10009', 'game.read', { gameId: games[1].id })).status, 403);
+    await f.ok('10002', 'profile.update', { discoverable: false });
+    assert.equal((await f.rpc('10009', 'profile.read', { botId: '10002' })).status, 403);
+    assert.equal((await f.ok('10001', 'profile.read', { botId: '10002' })).nickname, '月狐');
+    f.set('2026-11-02T00:00:00+08:00');
+    const nextDay = await f.ok('10009', 'square.featured');
+    assert.equal(nextDay.date, '2026-11-01');
+    assert.equal(nextDay.totalGames, 0);
+    assert.equal(nextDay.featured, null);
+  } finally { await f.close(); }
+});
+
 test('猎人夜间出局后完成开枪再进入同一天讨论，结算前不跳过技能', async () => {
   const f = await fixture(8);
   try {
@@ -229,11 +316,11 @@ test('猎人夜间出局后完成开枪再进入同一天讨论，结算前不�
   } finally { await f.close(); }
 });
 
-test('每天最多三局在实际开局时持久化计数，跨北京时间午夜恢复，取消不扣次数', async () => {
+test('每天最多五局在实际开局时持久化计数，跨北京时间午夜恢复，取消不扣次数', async () => {
   const f = await fixture(8);
   const players = f.ids.slice(0, 6);
   try {
-    for (let round = 0; round < 3; round++) {
+    for (let round = 0; round < 5; round++) {
       const gameId = await f.reserve(players, { roles: { wolf: 1, villager: 5 } });
       const wolf = Object.keys(f.app.store.get('games', gameId).roles).find(id => f.app.store.get('games', gameId).roles[id] === 'wolf');
       f.advance(gameId); f.advance(gameId); f.advance(gameId);
@@ -241,11 +328,11 @@ test('每天最多三局在实际开局时持久化计数，跨北京时间午�
       f.advance(gameId);
     }
     await f.restart();
-    assert.equal((await f.ok('10001', 'game.rules')).usedToday, 3);
+    assert.equal((await f.ok('10001', 'game.rules')).usedToday, 5);
     const game = await f.ok('10001', 'game.schedule', { maxPlayers: 6, scheduledAt: new Date(f.now + 4 * 60000).toISOString(), sourceKind: 'group', sourceTarget: f.groupId });
     assert.equal((await f.rpc('10002', 'game.join', { gameId: game.gameId })).ok, false);
     await f.ok('10001', 'game.cancel', { gameId: game.gameId });
-    assert.equal((await f.ok('10001', 'game.rules')).usedToday, 3);
+    assert.equal((await f.ok('10001', 'game.rules')).usedToday, 5);
     f.set('2026-10-31T06:00:00+08:00');
     assert.equal((await f.ok('10001', 'game.rules')).usedToday, 0);
   } finally { await f.close(); }

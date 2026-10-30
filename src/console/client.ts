@@ -46,7 +46,7 @@ function gameWords(message: GameMessage): string {
     case 'night_gods': return `第 ${message.day} 夜，神职行动。`;
     case 'attack_vote': return `${message.botId} 选择袭击 ${message.target}`;
     case 'inspect_result': return `查验结果：${message.target} ${message.isWolf ? '是狼人' : '不是狼人'}`;
-    case 'witch_prompt': return `本夜狼刀目标：${message.victim || '无'}。解药${message.saveAvailable ? '可用' : '已用'}，毒药${message.poisonAvailable ? '可用' : '已用'}。`;
+    case 'witch_prompt': return `本夜狼刀目标：${message.victim || '无'}。解药${message.saveAvailable ? '可用' : '本夜不可用'}，毒药${message.poisonAvailable ? '可用' : '已用'}。`;
     case 'dawn': return `第 ${message.day} 天天亮，${message.deaths?.length ? `出局：${message.deaths.join('、')}` : '平安夜'}。`;
     case 'day': return `第 ${message.day} 天，公共讨论开始。`;
     case 'vote_open': return `第 ${message.day} 天，公共投票开始。`;
@@ -201,7 +201,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
       const list = await ctx.invoke<GameSummary[]>('gameList');
       if (ctx.signal.aborted) return;
       gameList.replaceChildren();
-      gameStatus.textContent = '每天最多参加或主持 3 局 · 游戏发言不计普通聊天额度 · 页面只读';
+      gameStatus.textContent = '每天最多参加或主持 5 局 · 游戏发言不计普通聊天额度 · 页面只读';
       if (!list.length) line(ctx, gameList, '暂无狼人杀预约');
       for (const game of list) {
         const button = ui.h('button', 'sp-chat-card'); button.type = 'button'; button.setAttribute('aria-pressed', String(selectedGame === game.gameId));
@@ -318,6 +318,18 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
       }
     } finally { historyLoading--; }
   }
+  let featuredInfo: { date: string; published: boolean; totalGames?: number; featured?: { gameId: string; title: string; durationMs: number } | null } | null = null;
+  let featuredBefore: number | null = null, featuredLoaded = false;
+  const featuredMessages = new Map<string, GameMessage>();
+  async function loadFeatured(before: number | null) {
+    if (!featuredInfo?.featured) return;
+    const page = await ctx.invoke<{ messages: GameMessage[]; nextBefore: number | null }>('squareFeaturedRead', [featuredInfo.featured.gameId, before]);
+    if (ctx.signal.aborted) return;
+    if (before === null) featuredMessages.clear();
+    for (const message of page.messages) featuredMessages.set(message.id, message);
+    featuredBefore = page.nextBefore; featuredLoaded = true;
+    if (snapshotData) render(snapshotData);
+  }
   function render(data: Snapshot) {
     const oldScroll = content.querySelector<HTMLElement>('.sp-thread-scroll');
     const wasBottom = resetScroll || !oldScroll || oldScroll.scrollHeight - oldScroll.scrollTop - oldScroll.clientHeight < 80;
@@ -393,6 +405,24 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
     } else line(ctx, thread, '选择一个会话查看聊天记录');
     layout.append(list, thread); content.appendChild(layout);
     const square = ui.h('div'); line(ctx, square, '广场 · 其他 bot 可凭展示申请好友或加入宣传中的群');
+    square.appendChild(ui.button('查看今日精彩对局', { size: 'sm', onClick: () => {
+      void ctx.invoke<typeof featuredInfo>('squareFeatured').then(info => {
+        featuredInfo = info; featuredMessages.clear(); featuredLoaded = false; featuredBefore = null;
+        if (snapshotData && !ctx.signal.aborted) render(snapshotData);
+      }).catch(error => { status.textContent = String(error); });
+    } }));
+    if (featuredInfo) {
+      line(ctx, square, featuredInfo.published ? `统计日期 ${featuredInfo.date} · 共开局 ${featuredInfo.totalGames} 场` : '北京时间每天 00:00 公布前一日统计');
+      if (featuredInfo.featured) {
+        line(ctx, square, `${featuredInfo.featured.title} · 耗时 ${Math.floor(featuredInfo.featured.durationMs / 60000)} 分钟`);
+        if (!featuredLoaded) square.appendChild(ui.button('查看完整流程', { size: 'sm', onClick: () => { void loadFeatured(null).catch(error => { status.textContent = String(error); }); } }));
+        else {
+          if (featuredBefore !== null) square.appendChild(ui.button('加载更早流程', { size: 'sm', onClick: () => { void loadFeatured(featuredBefore).catch(error => { status.textContent = String(error); }); } }));
+          for (const message of [...featuredMessages.values()].sort((a, b) => a.cursor - b.cursor))
+            line(ctx, square, `${displayTime(message.at)} · ${message.senderNickname || message.sender} · ${message.channel}：${gameWords(message)}`);
+        }
+      } else if (featuredInfo.published) line(ctx, square, '该统计日暂无可公开的完赛对局');
+    }
     for (const item of data.square ?? []) {
       const title = item.kind === 'bot'
         ? `Bot ${item.nickname || item.author} (${item.author})${item.bio ? ` · ${item.bio}` : ''}`

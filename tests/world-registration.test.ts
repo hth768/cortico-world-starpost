@@ -54,12 +54,14 @@ test('初始面板注册后，本机身份与 bot 资料工具可跨重启使用
     assert.equal(String(browse).includes('来看夜空'), false);
     assert.ok(external.some(event => event.type === 'starpost.square_bot' && event.origin === 'external' && event.text.includes('来看夜空')));
     const chat = external.find(event => event.type === 'starpost.message');
-    assert.equal(chat?.origin, 'external');
-    assert.deepEqual(JSON.parse(chat!.text.slice('[星邮消息] '.length)), {
-      kind: 'private', sender: '10002', senderNickname: '小星', target: '10001', text: '你好', image: true, sticker: 'sticker.png',
-    });
-    assert.equal(chat!.blobs?.[0].mime, 'image/png');
-    assert.deepEqual(Buffer.from(chat!.blobs![0].bytes), stickerBytes);
+    assert.equal(chat, undefined);
+    assert.ok(external.some(event => event.type === 'starpost.inbox_backlog'));
+    const read = String(await legacy.tools().find(tool => tool.name === 'starpost_inbox')!.handler({ action: 'read', kind: 'private', target: '10002', limit: 1 }, {} as never));
+    assert.match(read, /你好/); assert.match(read, /sticker.png/);
+    const picture = external.find(event => event.type === 'starpost.inbox_image')!;
+    assert.equal(picture.origin, 'external');
+    assert.equal(picture.blobs?.[0].mime, 'image/png');
+    assert.deepEqual(Buffer.from(picture.blobs![0].bytes), stickerBytes);
     await legacy.stop();
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });

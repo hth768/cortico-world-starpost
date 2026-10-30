@@ -3,8 +3,8 @@ const digest = value => createHash('sha256').update(value).digest('hex');
 const fail = (message, status = 400) => { const e = new Error(message); e.status = status; throw e; };
 const short = (value, max) => typeof value === 'string' && value.length <= max && !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value) ? value.trim() : fail('文字格式或长度不合法');
 export class MobileAccess {
-  constructor(store, { login, fingerprint, snapshot, history, rpc, games, image, ownerControl, clock = Date.now }) {
-    Object.assign(this, { store, login, fingerprint, snapshot, history, rpc, games, image, ownerControl, clock });
+  constructor(store, { login, fingerprint, snapshot, history, rpc, games, humans, mysteryGames, image, ownerControl, clock = Date.now }) {
+    Object.assign(this, { store, login, fingerprint, snapshot, history, rpc, games, humans, mysteryGames, image, ownerControl, clock });
     this.attempts = new Map();
   }
   signIn(input, remote) {
@@ -33,6 +33,7 @@ export class MobileAccess {
     return session;
   }
   ownerHistory(who, before) {
+    if (this.humans.active(who)) fail('人类参赛期间，人机私聊不可用', 423);
     const cursor = before == null ? Number.MAX_SAFE_INTEGER : before;
     if (!Number.isSafeInteger(cursor) || cursor < 1) fail('游标无效');
     const rows = this.store.statement("SELECT rowid,data FROM documents WHERE collection='ownerMessages' AND owner=? AND rowid<? ORDER BY rowid DESC LIMIT 9").all(who, cursor);
@@ -40,6 +41,7 @@ export class MobileAccess {
     return { messages: page.map(row => ({ ...JSON.parse(row.data), cursor: row.rowid })), nextBefore: rows.length > 8 ? page[0].rowid : null };
   }
   send(who, direction, args) {
+    if (this.humans.active(who)) fail('人类参赛期间，人机私聊不可用', 423);
     const text = short(args?.text ?? '', 3000), image = this.image(args?.image);
     if (!text && !image) fail('不能发送空消息');
     const address = this.store.get('mobileProfile', who)?.address;
@@ -55,6 +57,9 @@ export class MobileAccess {
   }
   call(session, action, args = {}) {
     const who = session.owner;
+    this.games.tick();
+    if (this.humans.active(who) && !['human.status', 'human.room', 'human.move', 'human.message', 'logout'].includes(action)) fail('人类参赛期间仅能使用当前游戏聊天室', 423);
+    if (typeof action === 'string' && action.startsWith('human.')) return this.humans.call(who, action.slice(6), args);
     switch (action) {
       case 'teen.status': return this.ownerControl(who,'status',args);
       case 'teen.set': return this.ownerControl(who,'set',args);
@@ -71,15 +76,19 @@ export class MobileAccess {
       }
       case 'post': return this.rpc(who, 'post.read', args);
       case 'square': return this.rpc(who, 'square.list');
+      case 'featured': return this.rpc(who, 'square.featured', { action: 'summary' });
+      case 'featured.read': return this.rpc(who, 'square.featured', { action: 'read', gameId: args.gameId, before: args.before });
+      case 'profile': return this.rpc(who, 'profile.read', { botId: args.botId, section: args.section });
       case 'games': {
         const own = this.games.list(who).filter(item => {
           const game = this.games.get(item.gameId);
           return game.participants.includes(who) || game.judgeBotId === who || game.status === 'scheduled' && game.joined.includes(who);
         });
-        const entries = [...own, ...this.games.publicListings()];
+        const entries = [...own, ...this.games.publicListings(), ...this.mysteryGames.list(who)];
         return [...new Map(entries.map(item => [item.gameId, item])).values()];
       }
       case 'game': {
+        if (this.store.get('mysteryGames', args.gameId)) return this.mysteryGames.read(who, args.gameId, args.before);
         const game = this.games.get(args.gameId);
         const own = game.participants.includes(who) || game.judgeBotId === who || game.status === 'scheduled' && game.joined.includes(who);
         if (!own && !(game.public && game.published)) fail('对局无权查看', 403);
