@@ -95,7 +95,7 @@ test('手机消息立即唤醒并合批积压、重置计时，来图自动收�
     const state = JSON.parse(readFileSync(join(f.dir, 'starpost-cursor.json'), 'utf8'));
     assert.equal(state.pendingSinceMs, null); assert.equal(state.pendingCoreCursor, null);
     f.time = f.now + 20000; await poll(); assert.equal(promotions.length, 1);
-    const tools = world.tools(); const stats: any = await tools.find(tool => tool.name === 'starpost_sticker_stats')!.handler({}, {} as never);
+    const tools = world.tools(); const stats: any = await tools.find(tool => tool.name === 'starpost_sticker')!.handler({ action: 'stats' }, {} as never);
     assert.equal(typeof stats, 'string', stats?.text);
     assert.equal(JSON.parse(String(stats)).total, 1);
     const panel = world.webUi(); const info: any = await panel.invoke!('viewer', 'mobileLoginInfo', []);

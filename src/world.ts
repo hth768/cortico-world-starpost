@@ -116,9 +116,15 @@ export const STARPOST_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
   { name: 'starpost_read', description: '查看每日聊天额度（quota）、自己的资料、好友、群聊、消息、动态、漂流瓶和广场的索引；正文由外部事件投递。', tags: ['read'], parameters: params({ section: { type: 'string', enum: ['quota', 'profile', 'friends', 'groups', 'messages', 'posts', 'bottles', 'square', 'all'] } }, ['section']) },
   { name: 'starpost_history', description: '按会话分页读取获准查看的私聊或群聊历史；收到事件缺口提示时可用来补看聊天记录。', tags: ['read'], parameters: params({ kind: { type: 'string', enum: ['private', 'group'] }, target: s('好友聊天 ID 或群 ID'), before: { type: 'integer', minimum: 1, description: '上一页返回的 nextBefore；首次读取时省略' } }, ['kind', 'target']) },
   { name: 'starpost_inbox', description: '自主查收消息：peek 看各会话未读数量，read 按会话读取，plan_check 预约下一次查收提醒，cancel_check 取消提醒。', tags: ['read'], parameters: params({ action: { type: 'string', enum: ['peek', 'read', 'plan_check', 'cancel_check'] }, kind: { type: 'string', enum: ['private', 'group'] }, target: s('read 时的好友 ID 或群 ID'), minutes: { type: 'integer', minimum: 5, maximum: 1440, description: 'plan_check 后多少分钟提醒，5–1440' } }, ['action']) },
-  { name: 'starpost_sticker_stats', description: '查询本地表情包收藏；可按标签、备注、情感或用途搜索。真实文件名和标注以外部事件投递，工具回执只返回数量、内容哈希及分页位置。', tags: ['read'], parameters: params({ query: s('可选搜索词'), limit: { type: 'integer', minimum: 1, maximum: 50 }, offset: { type: 'integer', minimum: 0, description: '上一页 nextOffset' } }) },
-  { name: 'starpost_sticker_tag', description: '为本地表情包填写或修改情感、用途、短标签、显示名和备注。只提交要修改的字段；空字符串可清空该项。修改仅存入星邮索引。', tags: ['write'], parameters: params({ file: s('查询得到的真实文件名，也接受 [表情包:文件名]'), emotion: s('情感，最多 80 字'), usage: s('适用场景，最多 80 字'), tag: s('短标签，最多 80 字'), label: s('显示名，最多 80 字'), note: s('备注，最多 500 字') }, ['file']) },
-  { name: 'starpost_sticker_view', description: '查看本地收藏表情包；图片和现有标注以外部事件投递，便于自行判断内容并补充标注。', tags: ['read'], parameters: params({ file: s('查询得到的真实图片文件名') }, ['file']) },
+  { name: 'starpost_sticker', description: '管理本地表情包：stats 搜索收藏，view 看图，tag 修改标注。查询结果、图片和现有标注以外部事件投递。', tags: ['read', 'write'], parameters: params({
+    action: { type: 'string', enum: ['stats', 'view', 'tag'] },
+    file: s('view/tag：查询得到的真实文件名，也接受 [表情包:文件名]'),
+    query: s('stats：可选搜索词'), limit: { type: 'integer', minimum: 1, maximum: 50 },
+    offset: { type: 'integer', minimum: 0, description: 'stats：上一页 nextOffset' },
+    emotion: s('tag：情感，最多 80 字'), usage: s('tag：适用场景，最多 80 字'),
+    tag: s('tag：短标签，最多 80 字'), label: s('tag：显示名，最多 80 字'),
+    note: s('tag：备注，最多 500 字'),
+  }, ['action']) },
 ];
 
 export class StarpostWorld implements World {
@@ -329,26 +335,29 @@ export class StarpostWorld implements World {
             }
             return JSON.stringify(result);
           }
-          case 'starpost_sticker_stats': {
-            if (!this.host) throw new Error('星邮 World 尚未启动');
-            const page = await this.stickerStore().stats(arg(a, 'query'), a.limit as number, a.offset as number);
-            await this.host.pushEvent({ type: 'starpost.sticker_index', ts: new Date(this.clock()).toISOString(), source: this.id,
-              origin: 'external', senderKey: 'starpost.sticker', text: `[星邮表情包索引] ${JSON.stringify(page)}` });
-            return JSON.stringify({ total: page.total, matched: page.matched, qqImported: page.qqImported,
-              items: page.items.map(item => ({ hash: item.hash })), nextOffset: page.nextOffset, delivered: true });
-          }
-          case 'starpost_sticker_tag': {
-            await this.stickerStore().tag(arg(a, 'file'), a);
-            return JSON.stringify({ updated: true });
-          }
-          case 'starpost_sticker_view': {
-            if (!this.host) throw new Error('星邮 World 尚未启动');
-            const image = readStickerImage(this.cfg.emojiDir || DEFAULT_EMOJI_DIR, arg(a, 'file'));
-            const annotation = (await this.stickerStore().stats(image.file, 50)).items.find(item => item.file === image.file);
-            await this.host.pushEvent({ type: 'starpost.sticker_view', ts: new Date(this.clock()).toISOString(), source: this.id,
-              origin: 'external', senderKey: 'starpost.sticker', text: `[星邮本地表情包] ${JSON.stringify(annotation ?? { file: image.file })}`,
-              blobs: [{ bytes: image.bytes, mime: image.mime, name: image.file, fallbackText: '星邮表情包' }] });
-            return JSON.stringify({ file: image.file, delivered: true });
+          case 'starpost_sticker': {
+            if (a.action === 'stats') {
+              if (!this.host) throw new Error('星邮 World 尚未启动');
+              const page = await this.stickerStore().stats(arg(a, 'query'), a.limit as number, a.offset as number);
+              await this.host.pushEvent({ type: 'starpost.sticker_index', ts: new Date(this.clock()).toISOString(), source: this.id,
+                origin: 'external', senderKey: 'starpost.sticker', text: `[星邮表情包索引] ${JSON.stringify(page)}` });
+              return JSON.stringify({ total: page.total, matched: page.matched, qqImported: page.qqImported,
+                items: page.items.map(item => ({ hash: item.hash })), nextOffset: page.nextOffset, delivered: true });
+            }
+            if (a.action === 'tag') {
+              await this.stickerStore().tag(arg(a, 'file'), a);
+              return JSON.stringify({ updated: true });
+            }
+            if (a.action === 'view') {
+              if (!this.host) throw new Error('星邮 World 尚未启动');
+              const image = readStickerImage(this.cfg.emojiDir || DEFAULT_EMOJI_DIR, arg(a, 'file'));
+              const annotation = (await this.stickerStore().stats(image.file, 50)).items.find(item => item.file === image.file);
+              await this.host.pushEvent({ type: 'starpost.sticker_view', ts: new Date(this.clock()).toISOString(), source: this.id,
+                origin: 'external', senderKey: 'starpost.sticker', text: `[星邮本地表情包] ${JSON.stringify(annotation ?? { file: image.file })}`,
+                blobs: [{ bytes: image.bytes, mime: image.mime, name: image.file, fallbackText: '星邮表情包' }] });
+              return JSON.stringify({ file: image.file, delivered: true });
+            }
+            throw new Error('未知表情包操作');
           }
           case 'starpost_friend': action = a.action === 'accept' ? 'friend.accept' : 'friend.request'; args = a.action === 'accept' ? { from: arg(a, 'botId'), maxPrivateChats: this.cfg.maxPrivateChats } : { to: arg(a, 'botId') }; break;
           case 'starpost_group':
