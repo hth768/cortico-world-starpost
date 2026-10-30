@@ -13,7 +13,7 @@ for (const receiveMode of ['active', 'passive'] as const) test(`${receiveMode} æ
   const app = createStarpostServer({ file: join(dir, 'relay.json'), keys, port: 0 });
   await app.listen(); app.store.befriend('10001', '10002');
   const base = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
-  const config = { ...structuredClone(STARPOST_DEFAULTS), enabled: true, receiveMode, botId: '10001', serverUrl: base, pollIntervalMs: 300000, deliveryIntervalMs: 1000 };
+  const config = { ...structuredClone(STARPOST_DEFAULTS), enabled: true, receiveMode, botId: '10001', serverUrl: base, emojiDir: dir, pollIntervalMs: 300000, deliveryIntervalMs: 1000 };
   let now = Date.parse('2026-10-30T00:00:00Z'), cursor = 0;
   const pushed: string[] = [], images: Array<{ blobs?: Array<{ bytes: Uint8Array }> }> = [], promoted: number[] = [];
   const world = new StarpostWorld(config, dir, dir, dir, 'Asia/Shanghai', () => keys[10001], () => now);
