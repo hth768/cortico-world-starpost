@@ -308,6 +308,19 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       case 'snapshot': return snapshot(who, args.omitMessages === true);
       case 'inbox.peek': return inboxPeek(who, args);
       case 'chat.history': return chatHistory(who, args);
+      case 'chat.image': {
+        const kind = args.kind === 'private' ? 'private' : args.kind === 'group' ? 'group' : fail('消息类型不合法');
+        const target = str(args.target, 100), messageId = str(args.messageId, 100);
+        if (kind === 'private' && !friends(who).includes(id(target))) fail('只能查看好友私聊', 403);
+        if (kind === 'group') group(who, target);
+        const message = store.get('messages', messageId);
+        if (!message || message.kind !== kind || kind === 'group' && message.target !== target
+          || kind === 'private' && [message.sender, message.target].sort().join(':') !== [who, target].sort().join(':')) fail('消息不存在或无权查看', 404);
+        if (!message.image?.mediaId) fail('该消息没有图片', 404);
+        const bytes = readFileSync(store.mediaPath(message.image));
+        if (bytes.length > 1024 * 1024) fail('图片超过大小限制', 413);
+        return { mime: message.image.mime, base64: bytes.toString('base64') };
+      }
       case 'post.read': {
         const p = post(str(args.postId, 100));
         if (!canSeePost(who, p)) fail('无权查看动态', 403);
@@ -629,7 +642,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         if (previous?.private !== next.private || previous?.groups !== next.groups || previous?.maxMessagesPerDay !== next.maxMessagesPerDay
           || Object.keys(next.periods).some(key => previous?.periods?.[key] !== next.periods[key])) nextLimits = next;
       }
-      const readOnly = ['snapshot', 'events', 'release.latest', 'chat.history', 'post.read', 'square.list', 'directory.search', 'game.rules', 'game.list', 'game.read'].includes(action);
+      const readOnly = ['snapshot', 'events', 'release.latest', 'chat.history', 'chat.image', 'post.read', 'square.list', 'directory.search', 'game.rules', 'game.list', 'game.read'].includes(action);
       const run = () => {
         store.transaction(()=>conduct.recover(who));
         if (typeof action === 'string' && action.startsWith('game.')) tickGames();
