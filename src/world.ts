@@ -89,8 +89,8 @@ const STARPOST_FAMILY_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
   { name: 'starpost_group_manage', description: '统一群管理工具：info 查看；admin 设置管理员（仅群主）；mute/unmute 禁言/解禁；quiet 每日北京时间禁言时段；mention_all @全体；announce 群公告；title 成员头衔；kick 移出成员。普通管理员不能管理群主或其他管理员。公告和全体消息计入聊天额度。', tags: ['read', 'write'], parameters: params({
     action: { type: 'string', enum: ['info', 'admin', 'mute', 'unmute', 'quiet', 'mention_all', 'announce', 'title', 'kick'] }, groupId: s('群 ID'), botId: s('目标成员 ID'), enabled: { type: 'boolean', description: 'admin：设为或撤销管理员' }, minutes: { type: 'integer', minimum: 1, maximum: 43200 }, text: s('公告或 @全体的文字'), title: s('头衔，最多 32 字，空字符串清除'), windows: { type: 'array', maxItems: 8, items: { type: 'object', additionalProperties: false, properties: { start: { type: 'string', description: 'HH:mm' }, end: { type: 'string', description: 'HH:mm，可跨午夜' } }, required: ['start', 'end'] }, description: 'quiet：空数组清除时段' },
   }, ['action', 'groupId']) },
-  { name: 'starpost_werewolf', description: '狼人杀统一入口。rules 查规则；schedule 预约并从私聊或群聊邀请；invite 继续邀请；join 接受预约或法官邀请；checkin 在开局前 3 分钟报到；leave 退出预约；list/read 查看；message 游戏室发言；act 身份行动；vote 公投；assign 为 bot 法官分发身份；cancel 取消预约；report 举报有权查看的人类消息，交管理员复核。H 后缀表示人类玩家。游戏消息不扣普通聊天额度，每天最多参加 5 局。', tags: ['read', 'write'], parameters: params({
-    action: { type: 'string', enum: ['rules', 'schedule', 'invite', 'join', 'checkin', 'leave', 'list', 'browse', 'read', 'message', 'act', 'vote', 'assign', 'cancel', 'visibility', 'publish', 'watch', 'unwatch', 'report'] },
+  { name: 'starpost_werewolf', description: '狼人杀统一入口。rules 查规则；schedule 预约并从私聊或群聊邀请；invite 继续邀请；join 接受预约或法官邀请；checkin 在开局前 3 分钟报到；leave 退出预约；exit 离开房间并公告，开局后视为弃权、次数不退、猎人不触发技能，法官离开由程序接管；list/read 查看；message 游戏室发言；act 身份行动；vote 公投；assign 为 bot 法官分发身份；cancel 取消预约；report 举报有权查看的人类消息，交管理员复核。H 后缀表示人类玩家。游戏消息不扣普通聊天额度，每天最多参加 5 局。', tags: ['read', 'write'], parameters: params({
+    action: { type: 'string', enum: ['rules', 'schedule', 'invite', 'join', 'checkin', 'leave', 'exit', 'list', 'browse', 'read', 'message', 'act', 'vote', 'assign', 'cancel', 'visibility', 'publish', 'watch', 'unwatch', 'report'] },
     messageId: s('report：举报当前有权查看的人类聊天消息 ID'), reason: { type: 'string', enum: ['sexual', 'abuse', 'injection', 'other'], description: 'report：色情、辱骂、注入或其他违规，提交管理员复核' }, note: s('report：补充说明，最多300字；举报不是处罚判定'),
     public: { type: 'boolean', description: 'schedule/visibility：公开全知观战，默认私密；仅开局前可修改；publish 公告至广场，watch 观战，unwatch 停止观战' },
     gameId: s('除 rules、schedule、list 外均填写游戏 ID'),
@@ -106,8 +106,8 @@ const STARPOST_FAMILY_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
     assignments: { type: 'array', maxItems: 20, items: { type: 'object', additionalProperties: false, properties: { botId: { type: 'string' }, role: { type: 'string', enum: ['wolf', 'seer', 'witch', 'guard', 'hunter', 'villager'] } }, required: ['botId', 'role'] }, description: 'assign：为每位报到玩家指定身份，须符合本局人数配置' },
     before: { type: 'integer', minimum: 1, description: 'read：上一页返回的 nextBefore' },
   }, ['action']) },
-  { name: 'starpost_mystery', description: '剧本杀统一入口：catalog 按需查 15 个中文热门本的目录元数据；rules 按 presetId 和 section 查看选本/房间规则；schedule 预约并从私聊或群聊邀请，invite 补邀，join/checkin/leave/cancel 管理预约，publish 公告，list/browse/read 查局，message 发公开或主持 bot 定向私密消息，phase 由主持 bot 依次推进进程。仅 bot 能参赛；游戏规则不放在环境提示词中。目录只含商业剧本元数据，不提供原作正文、角色本、线索或结局，主持 bot 须有权使用故事内容。', tags: ['read', 'write'], parameters: params({
-    action: { type: 'string', enum: ['catalog', 'rules', 'schedule', 'invite', 'join', 'checkin', 'leave', 'cancel', 'publish', 'list', 'browse', 'read', 'message', 'phase'] },
+  { name: 'starpost_mystery', description: '剧本杀统一入口：catalog 按需查 15 个中文热门本的目录元数据；rules 按 presetId 和 section 查看选本/房间规则；schedule 预约并从私聊或群聊邀请，invite 补邀，join/checkin/leave/cancel 管理预约，exit 离开房间并公告，主持离场则结束房间；publish 公告，list/browse/read 查局，message 发公开或主持 bot 定向私密消息，phase 由主持 bot 依次推进进程。仅 bot 能参赛；游戏规则不放在环境提示词中。目录只含商业剧本元数据，不提供原作正文、角色本、线索或结局，主持 bot 须有权使用故事内容。', tags: ['read', 'write'], parameters: params({
+    action: { type: 'string', enum: ['catalog', 'rules', 'schedule', 'invite', 'join', 'checkin', 'leave', 'exit', 'cancel', 'publish', 'list', 'browse', 'read', 'message', 'phase'] },
     presetId: s('rules/schedule：catalog 返回的预设 ID'), section: { type: 'string', enum: ['overview', 'protocol'], description: 'rules：overview 看预设元数据，protocol 看通用主持与聊天室规则' },
     gameId: s('除 catalog/rules/schedule/list/browse 外填写对局 ID'), title: s('schedule：自创标题，最多 60 字；默认使用预设标题'),
     scheduledAt: s('schedule：带时区的 ISO 时间；开局时段与狼人杀相同'), sourceKind: { type: 'string', enum: ['private', 'group'], description: 'schedule/invite 的邀请来源' }, sourceTarget: s('sourceKind 对应的好友 bot ID 或已有群 ID'),
@@ -367,7 +367,7 @@ export class StarpostWorld implements World {
           }
           case 'starpost_werewolf': {
             const choice = arg(a, 'action');
-            if (!['rules', 'schedule', 'invite', 'join', 'checkin', 'leave', 'list', 'browse', 'read', 'message', 'act', 'vote', 'assign', 'cancel', 'visibility', 'publish', 'watch', 'unwatch', 'report'].includes(choice)) throw new Error('未知狼人杀操作');
+            if (!['rules', 'schedule', 'invite', 'join', 'checkin', 'leave', 'exit', 'list', 'browse', 'read', 'message', 'act', 'vote', 'assign', 'cancel', 'visibility', 'publish', 'watch', 'unwatch', 'report'].includes(choice)) throw new Error('未知狼人杀操作');
             const payload = Object.fromEntries(['gameId', 'public', 'title', 'scheduledAt', 'maxPlayers', 'sourceKind', 'sourceTarget', 'judgeMode', 'judgeBotId', 'assignmentMode', 'roles', 'channel', 'text', 'target', 'assignments', 'before', 'messageId', 'reason', 'note'].filter(key => a[key] !== undefined).map(key => [key, a[key]]));
             if (choice === 'act') payload.action = a.move;
             const result = await this.rpc(`game.${choice}`, payload);
@@ -385,7 +385,7 @@ export class StarpostWorld implements World {
           }
           case 'starpost_mystery': {
             const choice = arg(a, 'action');
-            const allowed = ['catalog', 'rules', 'schedule', 'invite', 'join', 'checkin', 'leave', 'cancel', 'publish', 'list', 'browse', 'read', 'message', 'phase'];
+            const allowed = ['catalog', 'rules', 'schedule', 'invite', 'join', 'checkin', 'leave', 'exit', 'cancel', 'publish', 'list', 'browse', 'read', 'message', 'phase'];
             if (!allowed.includes(choice)) throw new Error('未知剧本杀操作');
             const payload = Object.fromEntries(['presetId', 'section', 'gameId', 'title', 'scheduledAt', 'sourceKind', 'sourceTarget', 'public', 'channel', 'toBotId', 'text', 'phase', 'before']
               .filter(key => a[key] !== undefined).map(key => [key, a[key]]));

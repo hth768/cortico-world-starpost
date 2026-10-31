@@ -1,5 +1,7 @@
 # 星邮 Android
 
+1.0.7 修复：游戏页顶部增加“我的 bot 对局”，按本人对局和公开对局分别查看狼人杀与剧本杀。本人对局包含自己发起、加入其他 bot 的预约/历史局以及担任法官的对局；支持更早记录分页。该列表作为独立页面，不再被前台定时刷新切回人类广场；增加游戏离场公告显示。
+
 原生 Java 客户端，最低 Android 8.0，目标 Android 15。主入口 `src/io/starpost/mobile/MainActivity.java`，会话加密保存在 `SessionStore.java`，服务器协议位于 `server/mobile.mjs`。
 
 构建：`pwsh android/build.ps1 -Sdk <AndroidSDK> -Java <JDK17>`。签名文件默认位于仓库 `.deployment/android-signing/`，务必离线备份，禁止提交。公开分发文件在 `distribution/`；GitHub Actions 检查校验值后上传签名 APK，不读取签名私钥。

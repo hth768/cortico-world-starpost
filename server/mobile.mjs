@@ -55,6 +55,31 @@ export class MobileAccess {
     if (direction === 'human') this.store.emit([who], 'owner.message', saved, message.at);
     return { id: message.id };
   }
+  ownsGame(game, who) {
+    return Boolean(game.creator === who || game.judgeBotId === who || game.formerJudgeBotIds?.includes(who) || game.participants?.includes(who) || game.joined?.includes(who));
+  }
+  gamesPage(who, args) {
+    const scope = args.scope ?? 'all', before = args.before ?? Number.MAX_SAFE_INTEGER;
+    if (!['own', 'public', 'all'].includes(scope)) fail('对局范围须为 own、public 或 all');
+    if (!Number.isSafeInteger(before) || before < 1) fail('游标无效');
+    // Filter actual membership before pagination. Invitation-only access records
+    // must not displace a bot's joined games, including legacy records without an access row.
+    const own = `(g.owner=? OR json_extract(g.data,'$.judgeBotId')=?
+      OR EXISTS (SELECT 1 FROM json_each(g.data,'$.formerJudgeBotIds') WHERE value=?)
+      OR EXISTS (SELECT 1 FROM json_each(g.data,'$.participants') WHERE value=?)
+      OR EXISTS (SELECT 1 FROM json_each(g.data,'$.joined') WHERE value=?))`;
+    const published = `(json_extract(g.data,'$.public')=1 AND json_extract(g.data,'$.published')=1)`;
+    const visibility = scope === 'own' ? own : scope === 'public' ? published : `(${own} OR ${published})`;
+    const rows = this.store.statement(`SELECT g.rowid,g.collection,g.data FROM documents g
+      WHERE g.collection IN ('games','mysteryGames') AND g.rowid<? AND ${visibility}
+      ORDER BY g.rowid DESC LIMIT 51`).all(before, ...(scope === 'public' ? [] : [who, who, who, who, who]));
+    const page = rows.slice(0, 50);
+    return { items: page.map(row => {
+      const game = JSON.parse(row.data), mystery = row.collection === 'mysteryGames';
+      return { ...(mystery ? this.mysteryGames : this.games).summary(game, who),
+        gameType: mystery ? 'mystery' : 'werewolf', own: this.ownsGame(game, who) };
+    }), nextBefore: rows.length > 50 ? page.at(-1).rowid : null };
+  }
   call(session, action, args = {}) {
     const who = session.owner;
     this.games.tick();
@@ -79,18 +104,11 @@ export class MobileAccess {
       case 'featured': return this.rpc(who, 'square.featured', { action: 'summary' });
       case 'featured.read': return this.rpc(who, 'square.featured', { action: 'read', gameId: args.gameId, before: args.before });
       case 'profile': return this.rpc(who, 'profile.read', { botId: args.botId, section: args.section });
-      case 'games': {
-        const own = this.games.list(who).filter(item => {
-          const game = this.games.get(item.gameId);
-          return game.participants.includes(who) || game.judgeBotId === who || game.status === 'scheduled' && game.joined.includes(who);
-        });
-        const entries = [...own, ...this.games.publicListings(), ...this.mysteryGames.list(who)];
-        return [...new Map(entries.map(item => [item.gameId, item])).values()];
-      }
+      case 'games': return this.gamesPage(who, args);
       case 'game': {
         if (this.store.get('mysteryGames', args.gameId)) return this.mysteryGames.read(who, args.gameId, args.before);
         const game = this.games.get(args.gameId);
-        const own = game.participants.includes(who) || game.judgeBotId === who || game.status === 'scheduled' && game.joined.includes(who);
+        const own = this.ownsGame(game, who);
         if (!own && !(game.public && game.published)) fail('对局无权查看', 403);
         const before = args.before ?? Number.MAX_SAFE_INTEGER;
         if (!Number.isSafeInteger(before) || before < 1) fail('游标无效');

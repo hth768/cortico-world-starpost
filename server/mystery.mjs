@@ -34,11 +34,12 @@ export class MysteryGames {
     return game;
   }
   save(game) { game.kind = game.status; game.at = game.deadlineAt ?? game.scheduledAt; this.store.put('mysteryGames', game.id, game); }
+  members(game) { return game.joined.filter(who => !game.left?.includes(who)); }
   summary(game, who) {
     return { gameId: game.id, gameType: 'mystery', title: game.title, presetId: game.presetId, creator: game.creator,
       scheduledAt: game.scheduledAt, status: game.status, phase: game.phase, minPlayers: game.minPlayers,
-      maxPlayers: game.maxPlayers, joined: game.joined.length, checkedIn: game.checkedIn.length,
-      participant: who ? game.joined.includes(who) : undefined, host: who ? game.creator === who : undefined,
+      maxPlayers: game.maxPlayers, joined: this.members(game).length, checkedIn: game.checkedIn.filter(id => !game.left?.includes(id)).length,
+      participant: who ? this.members(game).includes(who) : undefined, host: who ? game.creator === who : undefined,
       public: Boolean(game.public), published: Boolean(game.published), startedAt: game.startedAt ?? null, closedAt: game.closedAt ?? null };
   }
   canView(game, who) {
@@ -47,6 +48,7 @@ export class MysteryGames {
     }
   }
   emit(game, data, recipients = game.joined, type = 'mystery.message') {
+    recipients = recipients.filter(who => !game.left?.includes(who));
     const at = iso(this.clock()), entry = { id: randomUUID(), gameId: game.id, gameType: 'mystery', sender: 'system', senderNickname: '星邮剧本主持', channel: 'public', kind: 'system', recipients: [...new Set(recipients)], at, ...data };
     this.store.put('mysteryMessages', entry.id, { ...entry, owner: 'system', scope: game.id });
     this.store.emit(entry.recipients, type, entry, at);
@@ -103,6 +105,7 @@ export class MysteryGames {
     if (!game.invited.includes(who) && !(game.public && game.published)) fail('未收到邀请，且此预约未公开', 403);
     if (game.joined.includes(who)) return { gameId, joined: true };
     if (game.joined.length >= game.maxPlayers) fail('本局人数已满');
+    game.left = (game.left ?? []).filter(id => id !== who);
     game.joined.push(who); game.invited = game.invited.filter(id => id !== who); this.save(game);
     this.store.put('mysteryAccess', `${who}:${game.id}`, { owner: who, gameId: game.id, at: iso(this.clock()) });
     this.store.emit([game.creator], 'mystery.joined', { gameId, botId: who, nickname: this.nickname(who), joined: game.joined.length }, iso(this.clock()));
@@ -118,10 +121,27 @@ export class MysteryGames {
     this.save(game); return { gameId, checkedIn: true, checkedInCount: game.checkedIn.length };
   }
   leave(who, gameId) {
-    const game = this.get(gameId); this.canView(game, who);
-    if (game.status !== 'scheduled') fail('开局后不能退出');
-    game.joined = game.joined.filter(id => id !== who); game.checkedIn = game.checkedIn.filter(id => id !== who); this.save(game);
-    this.store.remove('mysteryAccess', `${who}:${gameId}`); return { gameId, left: true };
+    const game = this.get(gameId);
+    if (game.status !== 'scheduled') fail('已开局；bot 可用 exit 离开房间');
+    return this.exit(who, gameId);
+  }
+  exit(who, gameId) {
+    const game = this.get(gameId);
+    if (game.left?.includes(who)) return { gameId, left: true, alreadyLeft: true };
+    if (!game.joined.includes(who)) fail('你不在这个游戏房间内', 403);
+    game.left = [...(game.left ?? []), who];
+    if (game.status === 'scheduled') {
+      game.joined = game.joined.filter(id => id !== who); game.checkedIn = game.checkedIn.filter(id => id !== who);
+    }
+    this.save(game);
+    if (this.store.get('gameBusy', who)?.gameId === game.id) {
+      this.store.remove('gameBusy', who); this.resumeChat(who);
+    }
+    this.emit(game, { kind: 'left', botId: who, nickname: this.nickname(who), text: `${this.nickname(who) || who} 已离开游戏房间。` });
+    if (game.creator === who && game.status === 'scheduled') this.cancel(who, gameId);
+    else if (game.status === 'active' && (game.creator === who || this.members(game).length < 2))
+      this.close(game, game.creator === who ? '主持 bot 已离场，本局结束。' : '房间剩余人数不足，本局结束。');
+    return { gameId, left: true, status: this.get(gameId).status };
   }
   cancel(who, gameId) {
     const game = this.get(gameId); if (game.creator !== who || game.status !== 'scheduled') fail('只有发起人可取消尚未开始的预约', 403);
@@ -150,14 +170,14 @@ export class MysteryGames {
     if (game.status !== 'active') return;
     game.status = 'closed'; game.phase = 'closed'; game.closedAt = iso(this.clock()); game.deadlineAt = null; this.save(game);
     this.announce(game, text, 'closed');
-    for (const who of game.joined) {
+    for (const who of this.members(game)) {
       if (this.store.get('gameBusy', who)?.gameId === game.id) this.store.remove('gameBusy', who);
       this.resumeChat(who);
     }
   }
   phase(who, args) {
     const game = this.get(args.gameId);
-    if (game.creator !== who || game.status !== 'active') fail('仅本局主持 bot 可推进阶段', 403);
+    if (game.creator !== who || game.status !== 'active' || game.left?.includes(who)) fail('仅本局主持 bot 可推进阶段', 403);
     const next = args.phase;
     if (!PHASES.includes(next) || next === 'opening' || next === game.phase) fail('阶段不合法或未推进');
     const oldIndex = PHASES.indexOf(game.phase), nextIndex = PHASES.indexOf(next);
@@ -169,15 +189,15 @@ export class MysteryGames {
   }
   message(who, args) {
     const game = this.get(args.gameId);
-    if (game.status !== 'active' || !game.joined.includes(who)) fail('只有本局参赛 bot 可在进行中的聊天室发言', 403);
+    if (game.status !== 'active' || !this.members(game).includes(who)) fail('只有本局参赛 bot 可在进行中的聊天室发言', 403);
     const text = clean(args.text, 1000), channel = args.channel === 'private' ? 'private' : args.channel === 'public' || args.channel == null ? 'public' : fail('频道须为 public 或 private');
     const recent = this.store.count('mysteryMessages', 'owner=? AND scope=? AND at>?', [who, game.id, iso(this.clock() - 60000)]);
     if (recent >= 6) fail('每个 bot 每分钟最多发送 6 条游戏消息', 429);
     let recipients;
-    if (channel === 'public') recipients = game.joined;
+    if (channel === 'public') recipients = this.members(game);
     else {
       const to = validId(args.toBotId ?? (who === game.creator ? '' : game.creator));
-      if (to === who || who !== game.creator && to !== game.creator || !game.joined.includes(to)) fail('私密消息只能由主持 bot 发给参赛者，或由参赛者发给主持 bot', 403);
+      if (to === who || who !== game.creator && to !== game.creator || !this.members(game).includes(to)) fail('私密消息只能由主持 bot 发给参赛者，或由参赛者发给主持 bot', 403);
       recipients = [...new Set([who, to])];
     }
     const entry = { id: randomUUID(), gameId: game.id, gameType: 'mystery', channel, kind: 'chat', sender: who,
@@ -215,6 +235,7 @@ export class MysteryGames {
       case 'join': return this.join(who, args.gameId);
       case 'checkin': return this.checkin(who, args.gameId);
       case 'leave': return this.leave(who, args.gameId);
+      case 'exit': return this.exit(who, args.gameId);
       case 'cancel': return this.cancel(who, args.gameId);
       case 'publish': return this.publish(who, args.gameId);
       case 'list': return this.list(who);

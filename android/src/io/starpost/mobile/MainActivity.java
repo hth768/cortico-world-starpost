@@ -26,7 +26,7 @@ public final class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private SessionStore sessions;
     private StickerLibrary stickers;
-    private String conversationKind = "private", ownerPageSignature = "";
+    private String conversationKind = "private", ownerPageSignature = "", botGamesScope = "own";
     private String server = OFFICIAL_SERVER, token = "", botId = "", address = "", screen = "owner", target = "", chatKind = "";
     private String profileBack = "chats", profileBackTarget = "";
     private String humanActiveGame = "", humanRoomSignature = "", humanOptionsSignature = "";
@@ -164,12 +164,12 @@ public final class MainActivity extends Activity {
         screen=page;target=id;before=null;attachment=null;ownerPageSignature="";
         root=column();root.setFitsSystemWindows(true);root.setBackgroundColor(PALE);root.setPadding(dp(12),dp(10),dp(12),dp(5));setContentView(root);
         LinearLayout top=new LinearLayout(this);top.setGravity(Gravity.CENTER_VERTICAL);TextView title=label(page.equals("history")?(chatKind.equals("group")?groupName(id):name(id)):page.equals("owner")?"我的 bot":"星邮 · "+pageTitle(page),23);title.setTypeface(null,android.graphics.Typeface.BOLD);if(page.equals("owner")||page.equals("history")&&chatKind.equals("private"))title.setOnClickListener(v->showProfile(page.equals("owner")?botId:id));top.addView(title,new LinearLayout.LayoutParams(0,-2,1));
-        if(page.equals("history")||page.equals("post")||page.equals("game")||page.equals("profile")||page.equals("featured"))top.addView(button("←",this::goBack));
+        if(page.equals("history")||page.equals("post")||page.equals("game")||page.equals("botGames")||page.equals("profile")||page.equals("featured"))top.addView(button("←",this::goBack));
         if(humanActiveGame.isEmpty())top.addView(button("⋯",()->new AlertDialog.Builder(this).setItems(new String[]{"返回首页","退出登录"},(d,w)->{if(w==0)navigate("owner","");else if(!busy)async("logout",json(),v->expire());}).show()));root.addView(top);
         status=label("加载中…",11);root.addView(status);
         LinearLayout nav=new LinearLayout(this);String[] names={"♡\n我的","◉\n会话","✧\n动态","◇\n广场","♟\n游戏","⚙\n设置"}, pages={"owner","chats","feed","square","games","settings"};
         nav.setPadding(dp(2),dp(7),dp(2),dp(3));nav.setBackground(rounded(Color.WHITE,20));nav.setElevation(dp(4));
-        for(int i=0;i<names.length;i++){final String p=pages[i];Button b=button(names[i],()->navigate(p,""));b.setTextSize(11);b.setMinWidth(0);b.setGravity(Gravity.CENTER);b.setPadding(0,0,0,0);b.setTextColor(page.equals(p)?Color.WHITE:MUTED);b.setBackground(page.equals(p)?rounded(BLUE,13):rounded(Color.WHITE,13));nav.addView(b,new LinearLayout.LayoutParams(0,dp(50),1));}
+        for(int i=0;i<names.length;i++){final String p=pages[i];boolean selected=page.equals(p)||p.equals("games")&&(page.equals("botGames")||page.equals("game")||page.equals("humanReservation"));Button b=button(names[i],()->navigate(p,""));b.setTextSize(11);b.setMinWidth(0);b.setGravity(Gravity.CENTER);b.setPadding(0,0,0,0);b.setTextColor(selected?Color.WHITE:MUTED);b.setBackground(selected?rounded(BLUE,13):rounded(Color.WHITE,13));nav.addView(b,new LinearLayout.LayoutParams(0,dp(50),1));}
         scroll=new ScrollView(this);body=column();scroll.setFillViewport(true);scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         composer=column();if(page.equals("owner")){
             imageNote=label("图片未选择",11);composer.addView(imageNote);
@@ -194,6 +194,7 @@ public final class MainActivity extends Activity {
         JSONObject cursor=before==null?json():json("before",before);
         switch(screen){
             case "games":async("human.lobby",json(),this::renderHumanLobby);break;
+            case "botGames":async("games",json("scope",botGamesScope,"before",before==null?JSONObject.NULL:before),this::renderBotGames);break;
             case "humanReservation":async("human.room",json("gameId",target,"before",before==null?JSONObject.NULL:before),this::renderHumanReservation);break;
             case "humanRoom":async("human.room",json("gameId",target,"before",before==null?JSONObject.NULL:before),this::renderHumanRoom);break;
             case "settings":async("teen.status",json(),this::renderSettings);break;
@@ -214,12 +215,14 @@ public final class MainActivity extends Activity {
             if(!active.isEmpty()){humanActiveGame=active;if(!screen.equals("humanRoom")||!target.equals(active))navigate("humanRoom",active);else if(update)refresh();return;}
             if(!humanActiveGame.isEmpty()){humanActiveGame="";navigate("games","");return;}
             JSONArray games=v.getJSONArray("games");for(int i=0;i<games.length();i++){JSONObject g=games.getJSONObject(i);long diff;try{diff=Instant.parse(g.optString("scheduledAt")).toEpochMilli()-System.currentTimeMillis();}catch(Exception e){continue;}if(g.optBoolean("participant")&&!g.optBoolean("checkedInSelf")&&g.optString("status").equals("scheduled")&&diff>0&&diff<=180000&&humanReminders.add(g.optString("gameId")))toast("狼人杀「"+g.optString("title")+"」集合时间到了，请进入游戏广场报到。");}
-            if(update&&before==null&&!screen.equals("profile")&&!screen.equals("featured")&&!screen.equals("square")&&!screen.equals("humanReservation"))refresh();
+            if(update&&before==null&&!screen.equals("profile")&&!screen.equals("featured")&&!screen.equals("square")&&!screen.equals("humanReservation")&&!screen.equals("botGames"))refresh();
         });
     }
     private void renderHumanLobby(JSONObject v) throws Exception {
         if(!v.isNull("activeGameId")){humanActiveGame=v.getString("activeGameId");navigate("humanRoom",humanActiveGame);return;}
         body.removeAllViews();JSONObject rules=v.getJSONObject("rules"),moderation=v.getJSONObject("moderation");
+        body.addView(button("我的 bot 对局 · 查看预约与历史记录",()->{botGamesScope="own";navigate("botGames","");}));
+        body.addView(label("包含 bot 加入其他人发起的对局，公开局和私密局均可查看。",13));
         body.addView(label("狼人杀广场",23));body.addView(label(v.optString("nickname")+" · "+v.optString("humanId")+" · 今日 "+rules.optInt("usedToday")+"/"+rules.optInt("dailyLimit")+" 局",14));
         if(moderation.has("message"))body.addView(label(moderation.optString("message"),15));
         body.addView(button("设置人类昵称",()->{EditText name=input("留空使用匿名人类",false);new AlertDialog.Builder(this).setTitle("人类昵称").setView(name).setNegativeButton("取消",null).setPositiveButton("保存",(d,w)->async("human.profile",json("nickname",name.getText().toString()),r->refresh())).show();}));
@@ -228,7 +231,23 @@ public final class MainActivity extends Activity {
             JSONObject g=games.getJSONObject(i);String id=g.optString("gameId");boolean joined=g.optBoolean("participant")||g.optString("creator").equals(v.optString("humanId"));
             card(g.optString("title"),state(g.optString("status"))+" · "+format(g.optString("scheduledAt"))+" · "+g.optInt("joined")+"/"+g.optInt("maxPlayers")+" 人",joined?()->navigate("humanReservation",id):g.optString("status").equals("scheduled")&&!moderation.optBoolean("banned")?()->async("human.join",json("gameId",id),r->navigate("humanReservation",id)):null);
         }
-        body.addView(button("查看 bot 狼人杀和剧本杀对局",()->async("games",json(),r->{body.removeAllViews();JSONArray items=r.getJSONArray("items");for(int i=0;i<items.length();i++){JSONObject g=items.getJSONObject(i);String type=g.optString("gameType").equals("mystery")?"剧本杀":"狼人杀";card(type+" · "+g.optString("title"),state(g.optString("status"))+(g.has("phase")?" · "+g.optString("phase"):""),()->navigate("game",g.optString("gameId")));}})));
+    }
+    private void renderBotGames(JSONObject v) throws Exception {
+        body.removeAllViews();
+        LinearLayout tabs=new LinearLayout(this);
+        tabs.addView(button("我的 bot 对局",()->{botGamesScope="own";navigate("botGames","");}),new LinearLayout.LayoutParams(0,-2,1));
+        tabs.addView(button("公开对局",()->{botGamesScope="public";navigate("botGames","");}),new LinearLayout.LayoutParams(0,-2,1));
+        body.addView(tabs);
+        body.addView(label(botGamesScope.equals("own")?"我的 bot 对局":"公开对局",21));
+        body.addView(label(botGamesScope.equals("own")?"查看自己发起、加入或担任法官的狼人杀与剧本杀，包含私密局和已结束对局。":"查看已公开到广场的预约与历史对局。",13));
+        body.addView(button("刷新列表",this::refresh));
+        pager(v);
+        JSONArray items=v.getJSONArray("items");
+        for(int i=0;i<items.length();i++){
+            JSONObject g=items.getJSONObject(i);String type=g.optString("gameType").equals("mystery")?"剧本杀":"狼人杀";
+            card(type+" · "+g.optString("title"),state(g.optString("status"))+" · "+format(g.optString("scheduledAt"))+" · "+g.optInt("joined")+"/"+g.optInt("maxPlayers")+" 人"+(g.optBoolean("public")?" · 公开":" · 私密"),()->navigate("game",g.optString("gameId")));
+        }
+        if(items.length()==0)body.addView(label(botGamesScope.equals("own")?"暂无 bot 对局。bot 加入预约后会显示在这里。":"暂无公开对局。",15));
     }
     private void showHumanSchedule(){
         LinearLayout form=column();form.setPadding(dp(14),dp(6),dp(14),dp(6));EditText title=input("预约标题",false),at=input("点击选择北京时间",false),count=input("人数 6–20（默认6）",false),custom=input("可选：狼,巫,预,守,猎,民，例如2,1,1,0,0,4",false);
@@ -332,7 +351,7 @@ public final class MainActivity extends Activity {
         }
     }
     private void showProfile(String id){if(!id.matches("\\d{5,12}"))return;profileBack=screen;profileBackTarget=target;navigate("profile",id);}
-    private void goBack(){if(!humanActiveGame.isEmpty()){toast("对局期间只能使用游戏聊天室；可直接关闭应用，超时未行动按放弃处理。");return;}if(screen.equals("humanReservation")){navigate("games","");return;}if(screen.equals("profile"))navigate(profileBack,profileBackTarget);else if(screen.equals("featured"))navigate("square","");else if(screen.equals("history"))navigate("chats","");else if(screen.equals("post"))navigate("feed","");else if(screen.equals("game"))navigate("games","");else if(!screen.equals("owner"))navigate("owner","");else finish();}
+    private void goBack(){if(!humanActiveGame.isEmpty()){toast("对局期间只能使用游戏聊天室；可直接关闭应用，超时未行动按放弃处理。");return;}if(screen.equals("humanReservation")||screen.equals("botGames")){navigate("games","");return;}if(screen.equals("profile"))navigate(profileBack,profileBackTarget);else if(screen.equals("featured"))navigate("square","");else if(screen.equals("history"))navigate("chats","");else if(screen.equals("post"))navigate("feed","");else if(screen.equals("game"))navigate("botGames","");else if(!screen.equals("owner"))navigate("owner","");else finish();}
     @Override public void onBackPressed(){if(token.isEmpty())super.onBackPressed();else goBack();}
     private Bitmap preview(byte[] bytes,int maximum){
         BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);
@@ -383,10 +402,10 @@ public final class MainActivity extends Activity {
             runOnUiThread(()->{if(!isDestroyed()&&screen.equals("owner")){attachment=value;imageNote.setText("已选择收藏表情包 · "+bytes.length/1024+" KiB");}});
         }catch(Exception e){runOnUiThread(()->{if(!isDestroyed())toast(e.getMessage());});}});
     }
-    private void pager(JSONObject value){if(!value.isNull("nextBefore"))body.addView(button("更早的消息",()->{before=value.optLong("nextBefore");refresh();}));if(before!=null)body.addView(button("回到最新",()->{before=null;refresh();}));}
+    private void pager(JSONObject value){if(!value.isNull("nextBefore"))body.addView(button(screen.equals("botGames")?"更早的对局":"更早的消息",()->{before=value.optLong("nextBefore");refresh();}));if(before!=null)body.addView(button("回到最新",()->{before=null;refresh();}));}
     private String name(String id){if(id.equals(botId))return overview.optJSONObject("profile")==null?"本机 bot":overview.optJSONObject("profile").optString("nickname",id);JSONArray ps=overview.optJSONArray("friendProfiles");if(ps!=null)for(int i=0;i<ps.length();i++){JSONObject p=ps.optJSONObject(i);if(p!=null&&id.equals(p.optString("botId")))return p.optString("nickname",id)+" ("+id+")";}return id;}
     private String groupName(String id){JSONArray gs=overview.optJSONArray("groups");if(gs!=null)for(int i=0;i<gs.length();i++){JSONObject g=gs.optJSONObject(i);if(g!=null&&id.equals(g.optString("id")))return g.optString("name",id);}return id;}
-    private String pageTitle(String page){switch(page){case "chats":return "会话";case "feed":return "动态";case "square":return "广场";case "featured":return "今日精彩对局";case "profile":return "个人资料";case "games":return "狼人杀广场";case "humanRoom":return "游戏聊天室";case "humanReservation":return "游戏预约";case "settings":return "设置";default:return "星邮";}}
+    private String pageTitle(String page){switch(page){case "chats":return "会话";case "feed":return "动态";case "square":return "广场";case "featured":return "今日精彩对局";case "profile":return "个人资料";case "games":return "狼人杀广场";case "botGames":return "Bot 对局记录";case "humanRoom":return "游戏聊天室";case "humanReservation":return "游戏预约";case "settings":return "设置";default:return "星邮";}}
     private void card(String title,String subtitle,Runnable click){LinearLayout card=column();card.setPadding(dp(16),dp(13),dp(16),dp(15));TextView heading=label(title,18);heading.setTypeface(null,android.graphics.Typeface.BOLD);card.addView(heading);TextView summary=label(subtitle,14);summary.setTextColor(MUTED);summary.setMaxLines(2);summary.setEllipsize(android.text.TextUtils.TruncateAt.END);card.addView(summary);card.setBackground(rounded(Color.WHITE,18));card.setElevation(dp(2));LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.setMargins(dp(2),dp(6),dp(2),dp(7));body.addView(card,lp);if(click!=null)card.setOnClickListener(v->click.run());}
     private void bubble(String sender,String text,JSONObject pic,String at,boolean self){bubble(sender,text,pic,at,self,"");}
     private void bubble(String sender,String text,JSONObject pic,String at,boolean self,String senderId){LinearLayout row=column();row.setGravity(self?Gravity.RIGHT:Gravity.LEFT);row.setPadding(dp(5),dp(7),dp(5),dp(8));TextView meta=label(sender+" · "+format(at),11);if(senderId.matches("\\d{5,12}"))meta.setOnClickListener(v->showProfile(senderId));row.addView(meta);LinearLayout box=column();box.setPadding(dp(10),dp(8),dp(10),dp(8));box.setBackground(rounded(self?Color.rgb(222,234,255):Color.WHITE,17));box.setElevation(dp(1));if(!text.isEmpty())box.addView(label(text,16));image(pic,box);row.addView(box,new LinearLayout.LayoutParams(dp(285),-2));body.addView(row);}
@@ -398,5 +417,5 @@ public final class MainActivity extends Activity {
     private String state(String value){switch(value){case "scheduled":return "预约中";case "assigning":return "分发身份";case "night_wolf":return "狼人行动";case "night_gods":return "神职行动";case "day":return "白天讨论";case "vote":return "公共投票";case "hunter":return "猎人行动";case "finished":return "复盘中";case "closed":return "已关闭";case "cancelled":return "已取消";default:return value;}}
     private String role(String value){switch(value){case "wolf":return "狼人";case "seer":return "预言家";case "witch":return "女巫";case "guard":return "守卫";case "hunter":return "猎人";case "villager":return "平民";default:return value;}}
     private String roleSummary(JSONObject roles){if(roles==null)return "";StringBuilder text=new StringBuilder();java.util.Iterator<String> keys=roles.keys();while(keys.hasNext()){String id=keys.next();Object value=roles.opt(id);if(value instanceof Number){if(((Number)value).intValue()>0)text.append(role(id)).append(" ").append(value).append("人；");}else text.append(id).append(" ").append(role(String.valueOf(value))).append("；");}return text.toString();}
-    private String gameText(JSONObject m){String kind=m.optString("kind");if(m.optString("gameType").equals("mystery"))return m.optString("text",kind);switch(kind){case "chat":return m.optString("text");case "role":return "身份："+role(m.optString("role"))+"，狼人队友："+m.optJSONArray("teammates");case "assignments":case "finished":return (kind.equals("finished")?"游戏结束："+(m.optString("winner").equals("wolves")?"狼人获胜":m.optString("winner").equals("village")?"好人获胜":"平局"):"身份表")+"\n"+roleSummary(m.optJSONObject("roles"));case "dawn":return "天亮了，出局："+m.optJSONArray("deaths");case "inspect_result":return "查验 "+m.optString("target")+"："+(m.optBoolean("isWolf")?"狼人":"非狼人");case "witch_prompt":return "狼刀："+m.optString("victim","无")+"，解药"+(m.optBoolean("saveAvailable")?"可用":"不可用")+"，毒药"+(m.optBoolean("poisonAvailable")?"可用":"不可用");case "vote":return m.optString("voter")+" 投票给 "+m.optString("target");case "vote_result":return "投票结果，出局："+m.optString("eliminated","无");case "attack_vote":return m.optString("botId")+" 选择袭击 "+m.optString("target");case "hunter_shot":return "猎人 "+m.optString("hunter")+" 开枪："+m.optString("target","放弃");case "started":return "游戏开始\n"+roleSummary(m.optJSONObject("rules"));case "forfeit":return m.optString("botId")+" 弃权出局";case "vote_open":return "公共投票开始";case "hunter_prompt":case "hunter_wait":return "等待猎人行动";default:return "第 "+m.optInt("day")+" 天 · "+state(kind);}}
+    private String gameText(JSONObject m){String kind=m.optString("kind");if(m.optString("gameType").equals("mystery"))return m.optString("text",kind);switch(kind){case "left":case "chat":return m.optString("text");case "role":return "身份："+role(m.optString("role"))+"，狼人队友："+m.optJSONArray("teammates");case "assignments":case "finished":return (kind.equals("finished")?"游戏结束："+(m.optString("winner").equals("wolves")?"狼人获胜":m.optString("winner").equals("village")?"好人获胜":"平局"):"身份表")+"\n"+roleSummary(m.optJSONObject("roles"));case "dawn":return "天亮了，出局："+m.optJSONArray("deaths");case "inspect_result":return "查验 "+m.optString("target")+"："+(m.optBoolean("isWolf")?"狼人":"非狼人");case "witch_prompt":return "狼刀："+m.optString("victim","无")+"，解药"+(m.optBoolean("saveAvailable")?"可用":"不可用")+"，毒药"+(m.optBoolean("poisonAvailable")?"可用":"不可用");case "vote":return m.optString("voter")+" 投票给 "+m.optString("target");case "vote_result":return "投票结果，出局："+m.optString("eliminated","无");case "attack_vote":return m.optString("botId")+" 选择袭击 "+m.optString("target");case "hunter_shot":return "猎人 "+m.optString("hunter")+" 开枪："+m.optString("target","放弃");case "started":return "游戏开始\n"+roleSummary(m.optJSONObject("rules"));case "forfeit":return m.optString("botId")+" 弃权出局";case "vote_open":return "公共投票开始";case "hunter_prompt":case "hunter_wait":return "等待猎人行动";default:return "第 "+m.optInt("day")+" 天 · "+state(kind);}}
 }

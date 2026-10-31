@@ -306,6 +306,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       case 'mystery.join': return mysteryGames.dispatch(who, 'join', args);
       case 'mystery.checkin': return mysteryGames.dispatch(who, 'checkin', args);
       case 'mystery.leave': return mysteryGames.dispatch(who, 'leave', args);
+      case 'mystery.exit': return mysteryGames.dispatch(who, 'exit', args);
       case 'mystery.cancel': return mysteryGames.dispatch(who, 'cancel', args);
       case 'mystery.publish': return mysteryGames.dispatch(who, 'publish', args);
       case 'mystery.list': return mysteryGames.dispatch(who, 'list', args);
@@ -328,6 +329,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       case 'game.join': return games.join(who, args.gameId);
       case 'game.checkin': return games.checkin(who, args.gameId);
       case 'game.leave': return games.leave(who, args.gameId);
+      case 'game.exit': return games.exit(who, args.gameId);
       case 'game.list': return games.list(who);
       case 'game.read': return games.read(who, args.gameId, args.before);
       case 'game.assign': return games.assign(who, args);
