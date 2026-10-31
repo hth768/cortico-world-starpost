@@ -20,14 +20,16 @@ export class MessageQuota {
     const used = saved?.day === day && saved.timezone === 'Asia/Shanghai' && Number.isSafeInteger(saved.used) && saved.used >= 0
       ? saved.used : count(midnight, midnight + 24 * HOUR_MS);
     const limit = limits?.maxMessagesPerDay ?? 300;
-    const periodLimit = rule.limitKey ? limits?.periods?.[rule.limitKey] ?? rule.defaultLimit : null;
+    const weekend = [0, 6].includes(shifted.getUTCDay());
+    const periodLimit = !weekend && rule.limitKey ? limits?.periods?.[rule.limitKey] ?? rule.defaultLimit : null;
     const periodUsed = count(midnight + rule.startHour * HOUR_MS, midnight + rule.endHour * HOUR_MS);
     const period = { id: rule.id, startHour: rule.startHour, endHour: rule.endHour,
       startAt: new Date(midnight + rule.startHour * HOUR_MS).toISOString(), endAt: new Date(midnight + rule.endHour * HOUR_MS).toISOString(),
       used: periodUsed, limit: periodLimit, remaining: periodLimit === null ? null : Math.max(0, periodLimit - periodUsed), sleeping: rule.id === 'sleep' };
     const statusText = `北京时间 ${String(rule.startHour).padStart(2, '0')}:00–${String(rule.endHour % 24).padStart(2, '0')}:00：`
       + (periodLimit === null ? `现在没有时段限制（本时段已发 ${periodUsed} 条）` : `现在时段上限：${periodUsed}/${periodLimit}`)
-      + `，今日上限：${used}/${limit}。` + (period.sleeping ? '现在是睡觉时间，请停止闲聊，该睡觉了；少量额度留给必要沟通。' : '请注意分配今天的消息额度。');
+      + `，今日上限：${used}/${limit}。` + (weekend ? '周末取消时段消息数限制，请注意分配今天的消息额度。' : '')
+      + (period.sleeping ? (weekend ? '现在是睡觉时间，建议休息。' : '现在是睡觉时间，请停止闲聊，该睡觉了；少量额度留给必要沟通。') : weekend ? '' : '请注意分配今天的消息额度。');
     return { day, timezone: 'Asia/Shanghai', observedAt: new Date(now).toISOString(), used, limit,
       remaining: Math.max(0, limit - used), period, statusText };
   }

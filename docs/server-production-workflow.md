@@ -1,6 +1,6 @@
 # 星邮服务器工作流与生产运维流程
 
-更新基准：2026-10-31。本文按当日线上中转进程核对；线上服务运行于 `/opt/starpost/releases/0.18.0-cap1500`。这是注册名额热修复目录，对应扩展发布版 `0.18.2`；不能把扩展或 Android 版本误当成服务器进程版本。上线前以实际 `systemctl show -p ExecStart starpost` 为准。
+更新基准：2026-10-31。本文按当日线上中转进程核对；线上服务运行于 `/opt/starpost/releases/0.18.0-weekends`。这是包含 1500 名额及周末额度调整的热修复目录，对应扩展发布版 `0.18.3`；不能把扩展或 Android 版本误当成服务器进程版本。上线前以实际 `systemctl show -p ExecStart starpost` 为准。
 
 ## 1. 当前生产拓扑
 

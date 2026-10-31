@@ -133,3 +133,43 @@ test('长轮询及时跨过北京时间时段边界，不必等待 25 秒才通�
     assert.ok(Date.now() - began < 3000); assert.equal(notices.length, 2); assert.match(notices[1].text, /06:00–09:00.*现在没有时段限制/);
   } finally { await world.stop(); await h.close(); }
 });
+
+test('北京时间周末全部时段免额外额度，周一恢复；自定义零额度也只在工作日生效', async () => {
+  let now = Date.parse('2026-10-30T23:59:59+08:00'); const h = await setup(() => now);
+  try {
+    const limits = { private: 10, groups: 5, maxMessagesPerDay: 300, periods: { morning: 0, afternoon: 0, sleep: 0 } };
+    for (const day of ['2026-10-31', '2026-11-01']) {
+      for (const at of ['00:00:00', '05:59:59', '06:00:00', '09:00:00', '12:00:00', '14:00:00', '18:00:00', '23:59:59']) {
+        now = Date.parse(`${day}T${at}+08:00`);
+        const q = (await h.rpc('snapshot', {}, limits)).result.messageQuota;
+        assert.equal(q.day, day); assert.equal(q.period.limit, null); assert.equal(q.period.remaining, null);
+        assert.ok(parseMessageQuota(q)); assert.match(quotaStatusText(parseMessageQuota(q)!), /周末取消时段消息数限制/);
+        assert.equal(parseMessageQuota({ ...q, period: { ...q.period, limit: 60, remaining: 60 } }), null);
+      }
+    }
+    for (const at of ['00:00:00', '09:00:00', '14:00:00']) {
+      now = Date.parse(`2026-11-02T${at}+08:00`);
+      const q = (await h.rpc('snapshot')).result.messageQuota;
+      assert.equal(q.period.limit, 0); assert.ok(parseMessageQuota(q)); assert.doesNotMatch(quotaStatusText(parseMessageQuota(q)!), /周末/);
+    }
+  } finally { await h.close(); }
+});
+
+test('周末凌晨可超过六条、上午可超过六十条，但每日三百条仍阻断且重启保持，午夜正常重置', async () => {
+  let now = Date.parse('2026-10-31T01:00:00+08:00'); const h = await setup(() => now);
+  const send = () => h.rpc('message.send', { kind: 'private', target: '10002', text: '周末消息', maxConsecutiveBotTurns: 100, maxPerWindow: 1000, idleToEndSec: 0 });
+  try {
+    for (let i = 0; i < 7; i++) assert.equal((await send()).ok, true);
+    now = Date.parse('2026-10-31T09:00:00+08:00');
+    h.app.store.transaction(() => {
+      for (let i = 0; i < 292; i++) h.app.store.put('messages', `weekend-${i}`, { id: `weekend-${i}`, sender: '10001', kind: 'private', target: '10003', text: '已有消息', at: new Date(now).toISOString() });
+      h.app.store.remove('messageQuota', '10001');
+    });
+    const last = await send(); assert.equal(last.ok, true); assert.equal(last.result.quota.used, 300);
+    assert.equal(last.result.quota.period.used, 293); assert.equal(last.result.quota.period.limit, null);
+    await h.restart();
+    const blocked = await send(); assert.equal(blocked.status, 429); assert.match(blocked.error, /今日聊天消息已达 300 条上限/);
+    now = Date.parse('2026-11-01T00:00:00+08:00');
+    const reset = await send(); assert.equal(reset.ok, true); assert.equal(reset.result.quota.used, 1); assert.equal(reset.result.quota.period.limit, null);
+  } finally { await h.close(); }
+});
