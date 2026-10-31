@@ -13,13 +13,21 @@ export function humanViolation(value) {
 }
 
 export class HumanGames {
-  constructor(store, games, clock) { Object.assign(this, { store, games, clock }); }
+  constructor(store, games, clock, accounts) { Object.assign(this, { store, games, clock, accounts }); }
   id(owner) { return `${owner}H`; }
-  state(owner) { return this.store.get('humanConduct', owner) ?? { strikes: 0, banned: false }; }
+  ownerKeys(owner) { return this.accounts ? this.accounts.aliases(this.id(owner)).map(id => id.slice(0, -1)) : [owner]; }
+  state(owner) {
+    const states = this.ownerKeys(owner).map(key => this.store.get('humanConduct', key)).filter(Boolean);
+    const strikes = states.reduce((n, s) => n + s.strikes, 0);
+    return { ...states.at(-1), strikes, banned: strikes >= 2 || states.some(s => s.banned) };
+  }
   active(owner) {
-    const lock = this.store.get('humanGameLock', owner) ?? this.store.get('gameBusy', this.id(owner));
-    const game = lock && this.store.get('games', lock.gameId);
-    return game && activeStates.includes(game.status) ? game.id : null;
+    for (const key of this.ownerKeys(owner)) {
+      const lock = this.store.get('humanGameLock', key) ?? this.store.get('gameBusy', this.id(key));
+      const game = lock && this.store.get('games', lock.gameId);
+      if (game && activeStates.includes(game.status)) return game.id;
+    }
+    return null;
   }
   assertEligible(owner) { if (this.state(owner).banned) fail('该账号下的人类玩家已被禁止参加狼人杀，bot 不受影响', 403); }
   assertRoom(owner, gameId) {
@@ -32,12 +40,17 @@ export class HumanGames {
   lobby(owner) {
     this.games.tick();
     const who = this.id(owner), profile = this.store.get('humanProfiles', owner);
+    const aliases = this.ownerKeys(owner).map(key => this.id(key));
     return { ownerBotId: owner, humanId: who, nickname: profile?.nickname || '匿名人类', moderation: this.state(owner), activeGameId: this.active(owner),
-      rules: this.games.rules(who), games: [...new Map([...this.games.list(who), ...this.games.publicListings()].map(g => [g.gameId, g])).values()]
-        .map(g => this.games.summary(this.games.get(g.gameId), who)) };
+      rules: this.games.rules(who), games: [...new Map([...aliases.flatMap(id => this.games.list(id)), ...this.games.publicListings()].map(g => [g.gameId, g])).values()]
+        .map(g => { const game = this.games.get(g.gameId); const identity = aliases.find(id => [...game.joined, ...game.participants, game.creator].includes(id)) ?? who; return this.games.summary(game, identity); }) };
   }
   call(owner, action, args) {
     this.games.tick();
+    if (args?.gameId && this.accounts) {
+      const game = this.games.get(args.gameId), aliases = this.ownerKeys(owner);
+      owner = aliases.find(key => [...game.joined, ...game.participants, game.creator].includes(this.id(key))) ?? owner;
+    }
     const who = this.id(owner);
     if (action === 'status' || action === 'lobby') return this.lobby(owner);
     if (action === 'room') return this.room(owner, args.gameId, args.before);
@@ -53,7 +66,9 @@ export class HumanGames {
       const title = field(args.title || '人类发起的狼人杀', 60);
       if (humanViolation(title)) fail('预约标题不合法');
       const game = this.games.schedule(who, { title, scheduledAt: args.scheduledAt, maxPlayers: args.maxPlayers,
-        roles: args.roles, public: args.public === true, judgeMode: 'program', sourceKind: 'private', sourceTarget: owner });
+        roles: args.roles, public: args.public === true, judgeMode: 'program',
+        sourceKind: args.sourceTarget || (this.accounts ? this.accounts.bots(who)[0]?.botId : owner) ? 'private' : 'square',
+        sourceTarget: args.sourceTarget || (this.accounts ? this.accounts.bots(who)[0]?.botId : owner) });
       if (args.public === true) this.games.publish(who, game.gameId);
       return game;
     }
@@ -122,7 +137,8 @@ export class HumanGames {
     const old = this.state(owner), state = { strikes: old.strikes + 1, banned: old.strikes + 1 >= 2,
       message: old.strikes ? '第二次违规，禁止该账号下的人类参加狼人杀；bot 不受影响。' : '第一次违规警告，已禁言并移出本局；再次违规将禁止人类参赛。' };
     this.store.put('humanViolations', key, { owner, gameId: game.id, reason, evidence, at: new Date(this.clock()).toISOString() });
-    this.store.put('humanConduct', owner, state);
+    const localStrikes = (this.store.get('humanConduct', owner)?.strikes ?? 0) + 1;
+    this.store.put('humanConduct', owner, { ...state, strikes: localStrikes });
     game.kicked = [...new Set([...(game.kicked ?? []), this.id(owner)])]; this.games.save(game);
     this.games.suspend(this.id(owner), !state.banned);
     return state;

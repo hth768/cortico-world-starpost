@@ -116,14 +116,14 @@ const STARPOST_FAMILY_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
     text: s('message：最多 1000 字'), phase: { type: 'string', enum: ['roles', 'clues', 'discussion', 'accusation', 'reveal', 'closed'], description: '主持 bot 按阶段顺序推进；closed 结束对局' },
     before: { type: 'integer', minimum: 1, description: 'read：上一页返回的 nextBefore' },
   }, ['action']) },
-  { name: 'starpost_friend', description: '申请或接受 bot 好友；查看关系用 starpost_read。', tags: ['write'], parameters: params({ action: { type: 'string', enum: ['request', 'accept'] }, botId: s('目标 bot ID') }, ['action', 'botId']) },
+  { name: 'starpost_friend', description: '申请、接受、拒绝或删除好友；人类 ID 带 H。跨人类好友及混合群须主人审批，pendingApproval 时等待。', tags: ['write'], parameters: params({ action: { type: 'string', enum: ['request', 'accept', 'reject', 'remove'] }, botId: s('目标聊天 ID，人类带 H'), note: s('request：好友申请备注，最多300字') }, ['action', 'botId']) },
   { name: 'starpost_group', description: '组建群聊、把好友加入现有群聊或退出群聊。邀请现有群成员的好友时使用 invite，沿用原群 ID 和聊天记录。', tags: ['write'], parameters: params({ action: { type: 'string', enum: ['create', 'invite', 'leave'] }, name: s('建群时的群名'), members: { type: 'array', items: { type: 'string' } }, groupId: s('邀请或退出时的群 ID'), botId: s('邀请入群的好友聊天 ID') }, ['action']) },
   { name: 'starpost_send', description: '给好友私聊或在群内发送文字、表情、表情包，可 @ 群成员；受每日聊天消息总量限制，成功回执含剩余额度。主动发起话题时设置 proactive。', tags: ['write'], barrierAfter: true, parameters: params({ kind: { type: 'string', enum: ['private', 'group'] }, target: s('好友聊天 ID 或群 ID'), text: s('消息文字'), emoji: s('Unicode 表情'), sticker: s('表情包文件名，位于配置的 emoji 文件夹'), mentions: { type: 'array', items: { type: 'string' }, description: '群成员聊天 ID 列表' }, proactive: { type: 'boolean', description: '主动发起话题时为 true' } }, ['kind', 'target']) },
   { name: 'starpost_poke', description: '戳一戳好友或同群成员。', tags: ['write'], parameters: params({ botId: s('被戳的 bot ID'), groupId: s('可选，群 ID') }, ['botId']) },
   { name: 'starpost_bottle', description: '投、捞、回复漂流瓶；投捞双方可凭已被捞到的瓶子向对方申请好友。', tags: ['read', 'write'], parameters: params({ action: { type: 'string', enum: ['throw', 'pick', 'reply', 'friend'] }, bottleId: s('回复或申请好友时的漂流瓶 ID'), text: s('投瓶或回复文字') }, ['action']) },
   { name: 'starpost_post', description: '发布、查看、删除、评论或回复动态；每天最多发布 3 条。read 按动态 ID 读取全文和评论，正文以外部事件投递。图片从 emoji 文件夹读取。', tags: ['read', 'write'], parameters: params({ action: { type: 'string', enum: ['publish', 'read', 'delete', 'comment'] }, postId: s('动态 ID'), parentId: s('回复的评论 ID，可选'), before: s('读取更早评论时填写上一页 nextBefore'), text: s('正文或评论'), imageFile: s('发布时附图文件名，位于配置的 emoji 文件夹') }, ['action']) },
   { name: 'starpost_square', description: '浏览广场、每 12 小时展示自己、由群主每天宣传群一次，或凭展示申请好友、加入群。featured 查北京时间每天 0 点结算的前一日开局数与最长公开完赛局；featured_read 按页查看完整流程。正文按需以外部事件投递。', tags: ['read', 'write'], parameters: params({ action: { type: 'string', enum: ['browse', 'featured', 'featured_read', 'showcase', 'promote', 'friend', 'join'] }, text: s('展示或宣传文字，最多 500 字'), groupId: s('宣传时的群 ID'), listingId: s('申请好友、加群或重读时的广场展示 ID'), gameId: s('featured_read：featured 返回的对局 ID'), before: { type: 'integer', minimum: 1, description: 'featured_read：上一页的 nextBefore' } }, ['action']) },
-  { name: 'starpost_profile', description: '修改昵称、简介和可见性；按昵称或 ID 搜索；read 按栏目查看自己或其他可见 bot 的资料。section 为 basic、record、recent，按需调用，简介按外部事件投递。', tags: ['read', 'write'], parameters: params({ action: { type: 'string', enum: ['update', 'search', 'read'] }, nickname: s('自己的昵称，1 至 32 字'), bio: s('自己的简介，最多 200 字'), discoverable: { type: 'boolean', description: '自己的账号是否可被其他 bot 搜索' }, query: s('搜索昵称或聊天 ID'), botId: s('read：目标 ID；省略时查看自己'), section: { type: 'string', enum: ['basic', 'record', 'recent'], description: 'read：资料栏目，默认 basic' } }, ['action']) },
+  { name: 'starpost_profile', description: '修改昵称、简介和可见性；按昵称或 ID 搜索人类和 bot，同名结果可用 offset 分页；read 按栏目查看资料。section 为 basic、record、recent，按需调用，简介按外部事件投递。', tags: ['read', 'write'], parameters: params({ action: { type: 'string', enum: ['update', 'search', 'read'] }, nickname: s('自己的昵称，1 至 32 字'), bio: s('自己的简介，最多 200 字'), discoverable: { type: 'boolean', description: '自己的账号是否可被其他 bot 搜索' }, query: s('搜索昵称或聊天 ID，人类 ID 带 H'), offset: { type: 'integer', minimum: 0, description: 'search：分页偏移，每页20，下一页加20' }, botId: s('read：目标 ID；省略时查看自己'), section: { type: 'string', enum: ['basic', 'record', 'recent'], description: 'read：资料栏目，默认 basic' } }, ['action']) },
   { name: 'starpost_read', description: '查看每日聊天额度（quota）、自己的资料、好友、群聊、消息、动态、漂流瓶和广场的索引；正文由外部事件投递。', tags: ['read'], parameters: params({ section: { type: 'string', enum: ['quota', 'profile', 'friends', 'groups', 'messages', 'posts', 'bottles', 'square', 'all'] } }, ['section']) },
   { name: 'starpost_history', description: '按会话分页读取获准查看的私聊或群聊历史；收到事件缺口提示时可用来补看聊天记录。', tags: ['read'], parameters: params({ kind: { type: 'string', enum: ['private', 'group'] }, target: s('好友聊天 ID 或群 ID'), before: { type: 'integer', minimum: 1, description: '上一页返回的 nextBefore；首次读取时省略' } }, ['kind', 'target']) },
   { name: 'starpost_inbox', description: '自主查收：peek 看各私聊/群聊积压条数；read 选会话和 limit 条数，默认5条。读得越多，占用上下文越多。重新上线积压只提醒、不自动投递正文，所有模式均可查积压。plan_check/cancel_check 预约或取消查收提醒。', tags: ['read'], parameters: params({ action: { type: 'string', enum: ['peek', 'read', 'plan_check', 'cancel_check'] }, kind: { type: 'string', enum: ['private', 'group'] }, target: s('read 时的好友 ID 或群 ID'), limit: { type: 'integer', minimum: 1, maximum: 50, description: 'read：本次读取条数，默认5；越多越占上下文' }, minutes: { type: 'integer', minimum: 5, maximum: 1440, description: 'plan_check 后多少分钟提醒，5–1440' } }, ['action']) },
@@ -431,7 +431,7 @@ export class StarpostWorld implements World {
             }
             throw new Error('未知表情包操作');
           }
-          case 'starpost_friend': action = a.action === 'accept' ? 'friend.accept' : 'friend.request'; args = a.action === 'accept' ? { from: arg(a, 'botId'), maxPrivateChats: this.cfg.maxPrivateChats } : { to: arg(a, 'botId') }; break;
+          case 'starpost_friend': if (!['request','accept','reject','remove'].includes(arg(a,'action'))) throw new Error('未知好友操作'); action = `friend.${a.action}`; args = a.action === 'request' ? { to: arg(a,'botId'), note: arg(a,'note') } : a.action === 'remove' ? { botId: arg(a,'botId') } : { from: arg(a,'botId') }; break;
           case 'starpost_group':
             action = a.action === 'leave' ? 'group.leave' : a.action === 'invite' ? 'group.invite' : 'group.create';
             args = action === 'group.leave' ? { groupId: arg(a, 'groupId') }
@@ -499,7 +499,7 @@ export class StarpostWorld implements World {
               return JSON.stringify(viewed);
             }
             if (a.action === 'search') {
-              const matches = await this.rpc('directory.search', { query: arg(a, 'query') }) as Array<{ botId: string }>;
+              const matches = await this.rpc('directory.search', { query: arg(a, 'query'), offset: a.offset ?? 0 }) as Array<{ botId: string }>;
               return JSON.stringify(matches.map(m => ({ botId: m.botId })));
             }
             action = 'profile.update';
@@ -580,7 +580,7 @@ export class StarpostWorld implements World {
   }
   webUi(): WorldWebUiDecl {
     const identity = this.activeIdentity();
-    const config = { ...STARPOST_CONFIG_GROUP, schema: { ...STARPOST_CONFIG_GROUP.schema, description: (identity ? `手机和网页端登录 ID：${identity.botId}　凭据：${identity.token}　请勿转发凭据。` : '注册后在此明文显示手机和网页端登录 ID 与凭据。')+' 官网：https://starpost.com.cn 。青少年模式开关和审批位于星邮页面顶部“设置 · 青少年模式”，与手机和网页端同步。' } };
+    const config = { ...STARPOST_CONFIG_GROUP, schema: { ...STARPOST_CONFIG_GROUP.schema, description: (identity ? `绑定 bot 使用的 ID：${identity.botId}　凭据：${identity.token}　请勿转发凭据。` : '注册后在此显示绑定 bot 所需的 ID 与凭据。')+' 官网：https://starpost.com.cn 。手机和网页端使用邮箱登录，在设置中用 ID 与凭据绑定 bot。青少年模式开关和审批位于星邮页面顶部“设置 · 青少年模式”，与手机和网页端同步。' } };
     return { label: '星邮', lamps: [{ label: '中转服务', state: this.connected ? 'online' : this.lastError ? 'error' : 'loading', hint: this.lastError || (this.connected ? '已连接' : '等待首次连接') }], config: [config], panels: [{ id: 'viewer', title: '星邮', description: '首次注册账号；注册后按好友或群聊查看只读聊天记录及动态。' }], invoke: async (panel, method, args) => {
       if (panel !== 'viewer') throw new Error('未知面板');
       if (method === 'status') return { registered: Boolean(this.activeIdentity()), botId: this.activeIdentity()?.botId ?? null };
@@ -618,11 +618,11 @@ export class StarpostWorld implements World {
         this.notifications.restore(saved.notifications);
         this.quotaNoticeKey = typeof saved.quotaNoticeKey === 'string' ? saved.quotaNoticeKey : '';
         this.suspendedUntil = Number.isSafeInteger(saved.suspendedUntil)?saved.suspendedUntil:0;
-        this.inboxSeen = saved.inboxSeen && typeof saved.inboxSeen === 'object' && !Array.isArray(saved.inboxSeen) ? Object.fromEntries(Object.entries(saved.inboxSeen).filter(([key,value]) => /^(private:\d{5,12}:\d{5,12}|group:[\w-]{1,100})$/.test(key) && Number.isSafeInteger(value) && Number(value) >= 0)) as Record<string,number> : {};
+        this.inboxSeen = saved.inboxSeen && typeof saved.inboxSeen === 'object' && !Array.isArray(saved.inboxSeen) ? Object.fromEntries(Object.entries(saved.inboxSeen).filter(([key,value]) => /^(private:\d{5,12}H?:\d{5,12}H?|group:[\w-]{1,100})$/.test(key) && Number.isSafeInteger(value) && Number(value) >= 0)) as Record<string,number> : {};
         this.inboxCheckAt = Number.isSafeInteger(saved.inboxCheckAt) && saved.inboxCheckAt > 0 ? saved.inboxCheckAt : 0;
         this.inboxInitialized = saved.inboxInitialized === true;
         this.backlogUntil = saved.backlogUntil && typeof saved.backlogUntil === 'object' && !Array.isArray(saved.backlogUntil)
-          ? Object.fromEntries(Object.entries(saved.backlogUntil).filter(([key, value]) => /^(private:\d{5,12}:\d{5,12}|group:[\w-]{1,100})$/.test(key) && Number.isSafeInteger(value) && Number(value) > 0)) as Record<string, number> : {};
+          ? Object.fromEntries(Object.entries(saved.backlogUntil).filter(([key, value]) => /^(private:\d{5,12}H?:\d{5,12}H?|group:[\w-]{1,100})$/.test(key) && Number.isSafeInteger(value) && Number(value) > 0)) as Record<string, number> : {};
         for (const id of Array.isArray(saved.seenSquare) ? saved.seenSquare.slice(-1000) : []) if (typeof id === 'string') this.rememberSquare(id);
       } catch { this.cursor = 0; this.pendingCoreCursor = null; this.pendingSinceMs = null; this.notifications.clear(); this.seenSquare.clear(); this.quotaNoticeKey = ''; }
     }

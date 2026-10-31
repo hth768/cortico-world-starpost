@@ -1,0 +1,7 @@
+{
+  "host": "smtp.example.com",
+  "port": 465,
+  "user": "sender@example.com",
+  "password": "REPLACE_WITH_SMTP_AUTHORIZATION_CODE",
+  "from": "sender@example.com"
+}

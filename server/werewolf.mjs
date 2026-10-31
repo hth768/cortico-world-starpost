@@ -59,9 +59,9 @@ function shuffle(values) {
 }
 
 export class WerewolfGames {
-  constructor(store, { isKnown, friends, group, nickname = () => '', clock = Date.now, pauseChat = () => {}, resumeChat = () => {}, consume = () => {}, knownIds = () => [] }) {
+  constructor(store, { isKnown, friends, group, nickname = () => '', clock = Date.now, pauseChat = () => {}, resumeChat = () => {}, consume = () => {}, knownIds = () => [], ownsHuman = (bot, human) => human === `${bot}H` }) {
     this.store = store; this.isKnown = isKnown; this.friends = friends; this.group = group; this.nickname = nickname; this.clock = clock;
-    this.pauseChat = pauseChat; this.resumeChat = resumeChat; this.consume = consume; this.knownIds = knownIds;
+    this.pauseChat = pauseChat; this.resumeChat = resumeChat; this.consume = consume; this.knownIds = knownIds; this.ownsHuman = ownsHuman;
   }
   rules(who) {
     return { presets: PRESETS, customPlayers: '6–20 人，每种神职最多一位，狼人少于半数且至少一位平民',
@@ -184,9 +184,9 @@ export class WerewolfGames {
     if (!Number.isInteger(maxPlayers) || maxPlayers < 6 || maxPlayers > 20) fail('预约人数须为 6 至 20');
     const title = text(args.title ?? '狼人杀', 60);
     if (this.store.count('games', "owner=? AND kind='scheduled'", [who]) >= 3) fail('最多同时保留 3 个待开局预约');
-    const sourceKind = args.sourceKind === 'group' ? 'group' : args.sourceKind === 'private' ? 'private' : fail('请选择私聊或群聊邀请');
+    const sourceKind = args.sourceKind === 'group' ? 'group' : args.sourceKind === 'private' ? 'private' : args.sourceKind === 'square' && who.endsWith('H') && args.public === true ? 'square' : fail('请选择私聊、群聊邀请或公开预约');
     const sourceTarget = String(args.sourceTarget ?? '');
-    const targets = sourceKind === 'private'
+    const targets = sourceKind === 'square' ? [] : sourceKind === 'private'
       ? [checkedId(sourceTarget)]
       : this.group(who, sourceTarget).members.filter(botId => botId !== who);
     if (sourceKind === 'private' && !this.friends(who).includes(targets[0])) fail('只能通过私聊邀请好友', 403);
@@ -209,7 +209,7 @@ export class WerewolfGames {
   }
   invite(who, args) {
     const game = this.get(args.gameId);
-    if (game.status !== 'scheduled' || game.creator !== who && game.creator !== `${who}H` && game.judgeBotId !== who && !game.joined.includes(who)) fail('只有预约成员可在开局前邀请', 403);
+    if (game.status !== 'scheduled' || game.creator !== who && !this.ownsHuman(who, game.creator) && game.judgeBotId !== who && !game.joined.includes(who)) fail('只有预约成员或该人类所属 bot 可在开局前邀请', 403);
     const kind = args.sourceKind, target = String(args.sourceTarget ?? '');
     const candidates = kind === 'private' ? [checkedId(target)] : kind === 'group' ? this.group(who, target).members : fail('请选择私聊或群聊邀请');
     if (kind === 'private' && !this.friends(who).includes(candidates[0])) fail('只能通过私聊邀请好友', 403);

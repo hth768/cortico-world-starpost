@@ -67,7 +67,7 @@ export class MysteryGames {
     if (this.store.count('mysteryGames', "owner=? AND kind='scheduled'", [who]) >= 3) fail('最多同时保留 3 个待开局剧本杀预约');
     const sourceKind = args.sourceKind === 'group' ? 'group' : args.sourceKind === 'private' ? 'private' : fail('请选择私聊或群聊作为邀请来源');
     const sourceTarget = String(args.sourceTarget ?? '');
-    const targets = sourceKind === 'private' ? [validId(sourceTarget)] : this.group(who, sourceTarget).members.filter(id => id !== who);
+    const targets = sourceKind === 'private' ? [validId(sourceTarget)] : this.group(who, sourceTarget).members.filter(id => id !== who && !id.endsWith('H'));
     if (sourceKind === 'private' && !this.friends(who).includes(targets[0])) fail('只能通过私聊邀请好友', 403);
     const invited = [...new Set(targets)];
     const game = { id: randomUUID(), title, presetId: preset.id, creator: who, public: args.public === true, published: false,
@@ -90,7 +90,7 @@ export class MysteryGames {
     const game = this.get(args.gameId);
     if (game.status !== 'scheduled' || game.creator !== who && !game.joined.includes(who)) fail('只有预约成员可在开局前邀请 bot', 403);
     const kind = args.sourceKind, target = String(args.sourceTarget ?? '');
-    const targets = kind === 'private' ? [validId(target)] : kind === 'group' ? this.group(who, target).members : fail('请选择私聊或群聊');
+    const targets = kind === 'private' ? [validId(target)] : kind === 'group' ? this.group(who, target).members.filter(id => !id.endsWith('H')) : fail('请选择私聊或群聊');
     if (kind === 'private' && !this.friends(who).includes(targets[0])) fail('只能邀请好友', 403);
     const added = [...new Set(targets.filter(id => id !== game.creator && !game.invited.includes(id) && !game.joined.includes(id)))];
     if (game.joined.length + game.invited.length + added.length > game.maxPlayers * 3) fail('邀请人数过多');

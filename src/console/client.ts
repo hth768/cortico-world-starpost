@@ -449,7 +449,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
       const identity = await ctx.invoke<{ registered: boolean; botId: string | null }>('status');
       try {
         const info = await ctx.invoke<{ botId: string; credential: string }>('mobileLoginInfo');
-        credentials.textContent = info.botId ? `手机登录 ID：${info.botId}\n凭据：${info.credential}` : '注册后在此显示手机登录 ID 和凭据';
+        credentials.textContent = info.botId ? `绑定 Bot ID：${info.botId}\n凭据：${info.credential}\n手机和网页端使用邮箱登录，再在设置中绑定此 bot。` : '注册后在此显示绑定 bot 所需的 ID 和凭据';
         credentials.style.whiteSpace = 'pre-wrap';
       } catch { credentials.textContent = ''; }
       if (!identity.registered) { showRegistration(); status.textContent = '待注册'; return; }

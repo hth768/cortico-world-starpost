@@ -124,6 +124,10 @@ export class StarpostStorage {
     if (collection === 'spectatorUsage') owner = v.sender;
     if (collection === 'deferredChat') target = v.recipient;
     if (collection === 'mobileSessions') owner = v.owner;
+    if (collection === 'humanSessions') owner = v.owner;
+    if (collection === 'people') { owner = v.email ?? ''; target = v.aliasOf ?? ''; kind = v.aliasOf ? 'alias' : 'account'; }
+    if (collection === 'botOwners') owner = v.humanId;
+    if (collection === 'socialApprovals') { owner = v.owner; kind = v.status; target = v.signature; }
     if (collection === 'ownerMessages') { owner = v.botId; kind = v.direction; }
     if (collection === 'heldEvents') target = v.recipient;
     if (collection === 'conduct') { kind = v.until > 0 ? 'active' : 'idle'; at = v.until ? new Date(v.until).toISOString() : ''; }

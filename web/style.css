@@ -13,3 +13,6 @@
 .app-main,.app-content,.stack,.post-card{min-width:0;max-width:100%}
 .stack{grid-template-columns:minmax(0,1fr);width:min(100%,850px)}
 .post-card h3,.post-card p,.pane-title{overflow-wrap:anywhere;word-break:normal}
+/* Independent human accounts and the pull-down mini-app tray. */
+.account-form,.form-field{display:grid;gap:9px;margin:14px 0}.account-form .tabs{flex-wrap:wrap}.form-field input{width:100%;box-sizing:border-box;border:1px solid #dce5f6;border-radius:12px;padding:12px;background:#fff;color:#233556}.member-picker{display:grid;gap:8px;max-height:260px;overflow:auto;margin:15px 0}.member-choice{display:flex;gap:10px;align-items:center}.member-choice input{width:auto}.mini-app-drawer{align-items:start;padding-top:70px}.mini-app-drawer .dialog-card{display:grid;gap:12px}.login-panel .tabs{flex-wrap:wrap}.app-top{gap:10px}.app-top>div{margin-right:auto}.app-top>button{white-space:nowrap;width:auto;min-width:44px}.app-content .form-field{max-width:500px}
+.composer textarea{min-width:0;flex:1}.composer button{flex-shrink:0;white-space:nowrap;padding:11px 13px}@media(max-width:600px){.composer{gap:6px}.composer button{padding:10px;font-size:13px}}

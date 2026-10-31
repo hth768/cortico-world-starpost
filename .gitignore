@@ -11,6 +11,7 @@ coverage/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+*.auth-key
 starpost-data.json
 starpost-credential.json
 starpost-identity.json
