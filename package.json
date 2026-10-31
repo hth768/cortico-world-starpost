@@ -47,6 +47,8 @@
     "describe.json"
   ],
   "scripts": {
+    "build:web": "node scripts/build-web.mjs",
+    "prepack": "npm run build:web",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.mjs tests/*.test.ts",
     "build:console": "node scripts/build-console.mjs"

@@ -81,6 +81,8 @@ node /opt/starpost/releases/<当前版本目录>/server/backup.mjs \
 
 ### C. 对外发布和更新提醒
 
+网页端发布先运行 `npm run build:web`，为 `app.js`、`style.css` 写入内容摘要查询参数；`npm pack` 的 `prepack` 会自动运行这一步。复制静态文件时使用 `install -m 0644`，不要沿用 npm 包固定的 1985 年文件时间。Nginx 的静态页面入口应设置 `if_modified_since off` 和 `Cache-Control: no-cache`，让浏览器按 ETag 重新验证，避免旧脚本长期被复用；登录和 API 的缓存策略仍由原接口控制。
+
 1. 只有在目标构件验证完成后，才推送源码与 tag、发布 npm 包；Android APK 按 `.github/workflows/android-release.yml` 的签名文件校验与 GitHub Release 流程发布。发布脚本和权限由当次操作者核对。
 2. 确认供用户下载的实际版本已可用，再在**运行中的服务器发布目录**执行一次更新广播，中文说明从该版本的 JSON 文件读取。重复执行同版本不会再次广播：
 
