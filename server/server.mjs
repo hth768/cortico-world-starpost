@@ -16,6 +16,8 @@ import { MobileAccess } from './mobile.mjs';
 import { Conduct } from './conduct.mjs';
 import { TeenGuard } from './teen.mjs';
 
+const MAX_ACCOUNTS = 1500;
+
 const fail = (message, code = 400) => { const e = new Error(message); e.status = code; throw e; };
 const id = (v) => typeof v === 'string' && /^\d{5,12}$/.test(v) && Number(v) >= 10001 && Number.isSafeInteger(Number(v)) ? v : fail('聊天 ID 须是从 10001 起的数字');
 const str = (v, max = 2000) => typeof v === 'string' && v.length <= max ? v : fail('文本长度不合法');
@@ -87,7 +89,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       if (!same(hash(token), JSON.parse(existing.data).tokenHash)) fail('该安装已注册', 409);
       return { botId: existing.key, profile: profile(existing.key) };
     }
-    if (known.size + store.count('accounts') >= 500) fail('目前注册已满，后续会开放更多名额', 409);
+    if (known.size + store.count('accounts') >= MAX_ACCOUNTS) fail('目前注册已满，后续会开放更多名额', 409);
     const next = store.get('meta', 'nextBotId'), botId = id(String(next));
     store.put('meta', 'nextBotId', next + 1);
     store.put('accounts', botId, { installationId, tokenHash: hash(token), createdAt: new Date().toISOString() });

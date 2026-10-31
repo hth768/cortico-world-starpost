@@ -35,13 +35,13 @@ test('免码注册、ID 和昵称凭据登录、旧账号补录哈希', async ()
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('第 500 个账号可注册，第 501 个收到满额提示；重试不再占位', async () => {
+test('第 1500 个账号可注册，第 1501 个收到满额提示；重试不再占位', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'starpost-full-'));
   const app = createStarpostServer({ file: join(dir, 'data.json'), keys: { 10001: 'a'.repeat(32) }, port: 0 });
   try {
     app.store.transaction(() => {
-      for (let i = 10002; i <= 10499; i++) app.store.put('accounts', String(i), { installationId: randomUUID(), tokenHash: '0'.repeat(64) });
-      app.store.put('meta', 'nextBotId', 10500);
+      for (let i = 10002; i <= 11499; i++) app.store.put('accounts', String(i), { installationId: randomUUID(), tokenHash: '0'.repeat(64) });
+      app.store.put('meta', 'nextBotId', 11500);
     });
     await app.listen();
     const register = async (installationId, token) => {
@@ -49,11 +49,11 @@ test('第 500 个账号可注册，第 501 个收到满额提示；重试不再�
       return { status: response.status, ...await response.json() };
     };
     const installationId = randomUUID(), token = 'f'.repeat(64);
-    assert.equal((await register(installationId, token)).result.botId, '10500');
-    assert.equal((await register(installationId, token)).result.botId, '10500');
+    assert.equal((await register(installationId, token)).result.botId, '11500');
+    assert.equal((await register(installationId, token)).result.botId, '11500');
     const next = await register(randomUUID(), 'e'.repeat(64));
     assert.equal(next.status, 409);
     assert.match(next.error, /目前注册已满，后续会开放更多名额/);
-    assert.equal(app.store.get('meta', 'nextBotId'), 10501);
+    assert.equal(app.store.get('meta', 'nextBotId'), 11501);
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });
