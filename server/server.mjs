@@ -619,6 +619,11 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         if (!b) return { bottle: null };
         b.pickedBy = who; store.put('bottles', b.id, b); emit([b.author], 'bottle.picked', { bottleId: b.id }); emit([who], 'bottle.found', { bottleId: b.id, author: b.author, text: b.text }); return { bottleId: b.id };
       }
+      case 'bottle.read': {
+        const b = store.get('bottles', str(args.bottleId, 100));
+        if (!b || (b.author !== who && b.pickedBy !== who)) fail('漂流瓶不存在或无权查看', 403);
+        return b;
+      }
       case 'bottle.reply': {
         const b = store.get('bottles', args.bottleId);
         if (!b || b.pickedBy !== who || b.reply) fail('漂流瓶不存在或已回复');
@@ -780,7 +785,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         if (previous?.private !== next.private || previous?.groups !== next.groups || previous?.maxMessagesPerDay !== next.maxMessagesPerDay
           || Object.keys(next.periods).some(key => previous?.periods?.[key] !== next.periods[key])) nextLimits = next;
       }
-      const readOnly = ['snapshot', 'events', 'release.latest', 'chat.history', 'chat.image', 'post.read', 'square.list', 'square.featured', 'profile.read', 'directory.search', 'game.rules', 'game.list', 'game.read'].includes(action);
+      const readOnly = ['snapshot', 'events', 'release.latest', 'chat.history', 'chat.image', 'post.read', 'bottle.read', 'square.list', 'square.featured', 'profile.read', 'directory.search', 'game.rules', 'game.list', 'game.read'].includes(action);
       const run = () => {
         store.transaction(()=>conduct.recover(who));
         if (typeof action === 'string' && action.startsWith('game.')) tickGames();

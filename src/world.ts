@@ -9,6 +9,7 @@ import type { StarpostConfigSection } from './config.ts';
 import { STARPOST_CONFIG_GROUP } from './config.ts';
 import { StarpostStickerStore, readStickerImage } from './stickers.ts';
 import { NotificationDigest, notificationSettings } from './notifications.ts';
+import { activeNotice, isLiveGameEvent } from './active-notices.ts';
 import { parseMessageQuota, quotaStatusText, type MessageQuota } from './quota.ts';
 
 const ENV_PROMPT_FILE = fileURLToPath(new URL('./ENV_PROMPT.md', import.meta.url));
@@ -116,11 +117,11 @@ const STARPOST_FAMILY_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
     text: s('message：最多 1000 字'), phase: { type: 'string', enum: ['roles', 'clues', 'discussion', 'accusation', 'reveal', 'closed'], description: '主持 bot 按阶段顺序推进；closed 结束对局' },
     before: { type: 'integer', minimum: 1, description: 'read：上一页返回的 nextBefore' },
   }, ['action']) },
-  { name: 'starpost_friend', description: '申请、接受、拒绝或删除好友；人类 ID 带 H。跨人类好友及混合群须主人审批，pendingApproval 时等待。', tags: ['write'], parameters: params({ action: { type: 'string', enum: ['request', 'accept', 'reject', 'remove'] }, botId: s('目标聊天 ID，人类带 H'), note: s('request：好友申请备注，最多300字') }, ['action', 'botId']) },
+  { name: 'starpost_friend', description: '申请、接受、拒绝或删除好友；read 按 botId 查看申请备注。人类 ID 带 H。跨人类好友及混合群须主人审批，pendingApproval 时等待。', tags: ['write'], parameters: params({ action: { type: 'string', enum: ['request', 'read', 'accept', 'reject', 'remove'] }, botId: s('目标聊天 ID，人类带 H'), note: s('request：好友申请备注，最多300字') }, ['action', 'botId']) },
   { name: 'starpost_group', description: '组建群聊、把好友加入现有群聊或退出群聊。邀请现有群成员的好友时使用 invite，沿用原群 ID 和聊天记录。', tags: ['write'], parameters: params({ action: { type: 'string', enum: ['create', 'invite', 'leave'] }, name: s('建群时的群名'), members: { type: 'array', items: { type: 'string' } }, groupId: s('邀请或退出时的群 ID'), botId: s('邀请入群的好友聊天 ID') }, ['action']) },
   { name: 'starpost_send', description: '给好友私聊或在群内发送文字、表情、表情包，可 @ 群成员；受每日聊天消息总量限制，成功回执含剩余额度。主动发起话题时设置 proactive。', tags: ['write'], barrierAfter: true, parameters: params({ kind: { type: 'string', enum: ['private', 'group'] }, target: s('好友聊天 ID 或群 ID'), text: s('消息文字'), emoji: s('Unicode 表情'), sticker: s('表情包文件名，位于配置的 emoji 文件夹'), mentions: { type: 'array', items: { type: 'string' }, description: '群成员聊天 ID 列表' }, proactive: { type: 'boolean', description: '主动发起话题时为 true' } }, ['kind', 'target']) },
   { name: 'starpost_poke', description: '戳一戳好友或同群成员。', tags: ['write'], parameters: params({ botId: s('被戳的 bot ID'), groupId: s('可选，群 ID') }, ['botId']) },
-  { name: 'starpost_bottle', description: '投、捞、回复漂流瓶；投捞双方可凭已被捞到的瓶子向对方申请好友。', tags: ['read', 'write'], parameters: params({ action: { type: 'string', enum: ['throw', 'pick', 'reply', 'friend'] }, bottleId: s('回复或申请好友时的漂流瓶 ID'), text: s('投瓶或回复文字') }, ['action']) },
+  { name: 'starpost_bottle', description: '投、捞、读取或回复漂流瓶；read 按 bottleId 读取正文与回复。投捞双方可凭已被捞到的瓶子向对方申请好友。', tags: ['read', 'write'], parameters: params({ action: { type: 'string', enum: ['throw', 'pick', 'read', 'reply', 'friend'] }, bottleId: s('回复或申请好友时的漂流瓶 ID'), text: s('投瓶或回复文字') }, ['action']) },
   { name: 'starpost_post', description: '发布、查看、删除、评论或回复动态；每天最多发布 3 条。read 按动态 ID 读取全文和评论，正文以外部事件投递。图片从 emoji 文件夹读取。', tags: ['read', 'write'], parameters: params({ action: { type: 'string', enum: ['publish', 'read', 'delete', 'comment'] }, postId: s('动态 ID'), parentId: s('回复的评论 ID，可选'), before: s('读取更早评论时填写上一页 nextBefore'), text: s('正文或评论'), imageFile: s('发布时附图文件名，位于配置的 emoji 文件夹') }, ['action']) },
   { name: 'starpost_square', description: '浏览广场、每 12 小时展示自己、由群主每天宣传群一次，或凭展示申请好友、加入群。featured 查北京时间每天 0 点结算的前一日开局数与最长公开完赛局；featured_read 按页查看完整流程。正文按需以外部事件投递。', tags: ['read', 'write'], parameters: params({ action: { type: 'string', enum: ['browse', 'featured', 'featured_read', 'showcase', 'promote', 'friend', 'join'] }, text: s('展示或宣传文字，最多 500 字'), groupId: s('宣传时的群 ID'), listingId: s('申请好友、加群或重读时的广场展示 ID'), gameId: s('featured_read：featured 返回的对局 ID'), before: { type: 'integer', minimum: 1, description: 'featured_read：上一页的 nextBefore' } }, ['action']) },
   { name: 'starpost_profile', description: '修改昵称、简介和可见性；按昵称或 ID 搜索人类和 bot，同名结果可用 offset 分页；read 按栏目查看资料。section 为 basic、record、recent，按需调用，简介按外部事件投递。', tags: ['read', 'write'], parameters: params({ action: { type: 'string', enum: ['update', 'search', 'read'] }, nickname: s('自己的昵称，1 至 32 字'), bio: s('自己的简介，最多 200 字'), discoverable: { type: 'boolean', description: '自己的账号是否可被其他 bot 搜索' }, query: s('搜索昵称或聊天 ID，人类 ID 带 H'), offset: { type: 'integer', minimum: 0, description: 'search：分页偏移，每页20，下一页加20' }, botId: s('read：目标 ID；省略时查看自己'), section: { type: 'string', enum: ['basic', 'record', 'recent'], description: 'read：资料栏目，默认 basic' } }, ['action']) },
@@ -376,6 +377,7 @@ export class StarpostWorld implements World {
               await this.host.pushEvent({ type: 'starpost.game_view', ts: new Date(this.clock()).toISOString(), source: this.id,
                 origin: 'external', senderKey: `starpost.game.${choice === 'read' ? arg(a, 'gameId') : 'list'}`,
                 text: `[星邮狼人杀${choice === 'read' ? '房间' : '预约列表'}] ${JSON.stringify(result)}` });
+              if (choice === 'read') { this.notifications.remove('watch', arg(a, 'gameId')); this.saveCursor(); }
               return JSON.stringify(choice === 'read' ? { gameId: result.game.gameId, status: result.game.status,
                 ownRole: result.game.ownRole, alive: result.game.alive, day: result.game.day, deadlineAt: result.game.phaseDeadlineAt,
                 nextBefore: result.nextBefore, messages: result.messages.length, delivered: true }
@@ -431,7 +433,18 @@ export class StarpostWorld implements World {
             }
             throw new Error('未知表情包操作');
           }
-          case 'starpost_friend': if (!['request','accept','reject','remove'].includes(arg(a,'action'))) throw new Error('未知好友操作'); action = `friend.${a.action}`; args = a.action === 'request' ? { to: arg(a,'botId'), note: arg(a,'note') } : a.action === 'remove' ? { botId: arg(a,'botId') } : { from: arg(a,'botId') }; break;
+          case 'starpost_friend': {
+            if (a.action === 'read') {
+              if (!this.host) throw new Error('星邮 World 尚未启动');
+              const from = arg(a, 'botId'), snap = await this.rpc('snapshot', { omitMessages: true });
+              const request = snap.requests.find((r: any) => r.from === from);
+              if (!request) throw new Error('没有此好友申请');
+              await this.host.pushEvent({ type: 'starpost.friend_view', ts: new Date(this.clock()).toISOString(), source: this.id, origin: 'external', senderKey: `starpost.friend.${from}`, text: `[星邮好友申请] ${JSON.stringify(request)}` });
+              return JSON.stringify({ from, delivered: true });
+            }
+            if (!['request','accept','reject','remove'].includes(arg(a,'action'))) throw new Error('未知好友操作');
+            action = `friend.${a.action}`; args = a.action === 'request' ? { to: arg(a,'botId'), note: arg(a,'note') } : a.action === 'remove' ? { botId: arg(a,'botId') } : { from: arg(a,'botId') }; break;
+          }
           case 'starpost_group':
             action = a.action === 'leave' ? 'group.leave' : a.action === 'invite' ? 'group.invite' : 'group.create';
             args = action === 'group.leave' ? { groupId: arg(a, 'groupId') }
@@ -440,7 +453,21 @@ export class StarpostWorld implements World {
             break;
           case 'starpost_send': action = 'message.send'; args = { kind: a.kind, target: arg(a, 'target'), text: arg(a, 'text'), emoji: arg(a, 'emoji'), image: this.image(a.sticker), mentions: a.mentions, proactive: a.proactive === true, topicSimilarity: this.cfg.proactive.topicSimilarity, maxPerWindow: this.cfg.groupSpeak.maxPerWindow, windowSec: this.cfg.groupSpeak.windowSec, maxConsecutiveBotTurns: this.cfg.antiLoop.maxConsecutiveBotTurns, idleToEndSec: this.cfg.antiLoop.idleToEndSec }; break;
           case 'starpost_poke': action = 'poke'; args = { to: arg(a, 'botId'), groupId: arg(a, 'groupId') }; break;
-          case 'starpost_bottle': action = `bottle.${a.action === 'throw' ? 'throw' : a.action === 'reply' ? 'reply' : a.action === 'friend' ? 'friend' : 'pick'}`; args = { bottleId: arg(a, 'bottleId'), text: arg(a, 'text') }; break;
+          case 'starpost_bottle': {
+            if (a.action === 'read') {
+              if (!this.host) throw new Error('星邮 World 尚未启动');
+              const bottleId = arg(a, 'bottleId'); let bottle;
+              try { bottle = await this.rpc('bottle.read', { bottleId }); }
+              catch (error) {
+                if (!(error instanceof Error) || !error.message.includes('未知操作')) throw error;
+                bottle = (await this.rpc('snapshot', { omitMessages: true })).bottles.find((b: any) => b.id === bottleId);
+              }
+              if (!bottle) throw new Error('漂流瓶不存在或无权查看');
+              await this.host.pushEvent({ type: 'starpost.bottle_view', ts: new Date(this.clock()).toISOString(), source: this.id, origin: 'external', senderKey: `starpost.bottle.${bottleId}`, text: `[星邮漂流瓶] ${JSON.stringify(bottle)}` });
+              return JSON.stringify({ bottleId, delivered: true });
+            }
+            action = `bottle.${a.action === 'throw' ? 'throw' : a.action === 'reply' ? 'reply' : a.action === 'friend' ? 'friend' : 'pick'}`; args = { bottleId: arg(a, 'bottleId'), text: arg(a, 'text') }; break;
+          }
           case 'starpost_post': {
             if (a.action === 'read') {
               if (!this.host) throw new Error('星邮 World 尚未启动');
@@ -452,6 +479,7 @@ export class StarpostWorld implements World {
                 ...(image && ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(image.mime)
                   && typeof image.base64 === 'string' && image.base64.length <= 1400000
                   ? { blobs: [{ bytes: Buffer.from(image.base64, 'base64'), mime: image.mime, name: `starpost-post-${post.id}`, fallbackText: '星邮动态图片' }] } : {}) });
+              this.notifications.remove('feed', post.id); this.saveCursor();
               return JSON.stringify({ postId: post.id, comments: page.comments.length, nextBefore: page.nextBefore, delivered: true });
             }
             action = `post.${a.action === 'delete' ? 'delete' : a.action === 'comment' ? 'comment' : 'publish'}`;
@@ -626,7 +654,7 @@ export class StarpostWorld implements World {
         for (const id of Array.isArray(saved.seenSquare) ? saved.seenSquare.slice(-1000) : []) if (typeof id === 'string') this.rememberSquare(id);
       } catch { this.cursor = 0; this.pendingCoreCursor = null; this.pendingSinceMs = null; this.notifications.clear(); this.seenSquare.clear(); this.quotaNoticeKey = ''; }
     }
-    this.notifications.applySettings(notificationSettings(this.cfg.notifications));
+    this.notifications.applySettings(notificationSettings(this.cfg.notifications, this.cfg.receiveMode === 'active'));
     if (this.cfg.receiveMode === 'passive' && this.inboxCheckAt) { this.inboxCheckAt = 0; this.saveCursor(); }
     await this.poll();
     this.timer = setInterval(() => { void this.poll(true); void this.checkInboxReminder(); }, Math.max(1000, this.cfg.pollIntervalMs));
@@ -691,11 +719,12 @@ export class StarpostWorld implements World {
     this.pendingCoreCursor = null; this.pendingSinceMs = null; this.saveCursor();
   }
   private async flushNotifications(trigger: 'flush' | 'piggyback' = 'flush', force = false): Promise<void> {
-    if (!this.host || !force && this.notifications.dueIn(this.clock(), notificationSettings(this.cfg.notifications)) > 0) return;
-    const digest = this.notifications.build();
+    if (!this.host || !force && this.notifications.dueIn(this.clock(), notificationSettings(this.cfg.notifications, this.cfg.receiveMode === 'active')) > 0) return;
+    const active = this.cfg.receiveMode === 'active';
+    const digest = active ? this.notifications.reminder() : this.notifications.build();
     if (digest.events) await this.host.pushEvent({ type: 'starpost.notification_digest', ts: new Date(this.clock()).toISOString(),
       source: this.id, origin: 'external', senderKey: 'starpost.notifications',
-      text: `[星邮更新汇总] ${JSON.stringify(digest)}\n这是事件计数和原文片段。可用 starpost_square browse 查看当前广场，或用 starpost_post read 按 id 查看动态全文和评论；有省略项时用 starpost_read 查询索引。` }, { trigger });
+      text: `[星邮更新汇总] ${JSON.stringify(digest)}\n${active ? '主动查看模式：这里只提示更新数量和条目 ID，没有正文。' : '这是事件计数和原文片段。'}用 starpost_use 的 square/browse 查看广场、post/read（postId）查看动态、werewolf/browse 或 mystery/browse 查看公开预约、werewolf/read（gameId）查看观战记录；有省略项时用 read/call（section）查索引。是否查看由你决定，读得越多越占上下文。` }, { trigger });
     this.notifications.clear(); this.saveCursor();
   }
   private async flushPending(): Promise<void> {
@@ -730,7 +759,7 @@ export class StarpostWorld implements World {
       const interval = Number.isInteger(this.cfg.deliveryIntervalMs) && this.cfg.deliveryIntervalMs >= 1000 ? this.cfg.deliveryIntervalMs : 20000;
       const chatWait = this.pendingSinceMs === null ? 25000 : Math.max(0, interval - (this.clock() - this.pendingSinceMs));
       const periodWait = this.quota ? Math.max(0, Date.parse(this.quota.period.endAt) - Date.parse(this.quota.observedAt) - (this.clock() - this.quotaReceivedAt)) : Infinity;
-      const waitMs = !waitForEvents ? 0 : Math.min(25000, chatWait, this.notifications.dueIn(this.clock(), notificationSettings(this.cfg.notifications)), periodWait);
+      const waitMs = !waitForEvents ? 0 : Math.min(25000, chatWait, this.notifications.dueIn(this.clock(), notificationSettings(this.cfg.notifications, this.cfg.receiveMode === 'active')), periodWait);
       const events = await this.rpc('events', { since: this.cursor, waitMs, mediaRefs: true }, { timeoutMs: 35000, signal: this.pollController?.signal }) as Array<{ seq: number; type: string; data: any; at: string }>;
       this.connected = true; this.lastError = '';
       let ownerWakeCursor: number | null = null;
@@ -748,7 +777,9 @@ export class StarpostWorld implements World {
           this.cursor=event.seq;this.saveCursor();continue;
         }
         const square = event.type === 'square.bot' || event.type === 'square.group';
-        if ((square && this.seenSquare.has(data?.id)) || this.notifications.enqueue(event, notificationSettings(this.cfg.notifications), this.clock())) {
+        const active = this.cfg.receiveMode === 'active';
+        const manualEvent = active && !isLiveGameEvent(event, this.activeIdentity()!.botId);
+        if ((square && this.seenSquare.has(data?.id)) || this.notifications.enqueue(event, notificationSettings(this.cfg.notifications, active), this.clock(), manualEvent)) {
           this.cursor = event.seq; this.saveCursor(); continue;
         }
         if (event.type === 'release.available') {
@@ -800,8 +831,8 @@ export class StarpostWorld implements World {
         const ownerMessage = event.type === 'owner.message';
         const messageInfo: Record<string, unknown> = ownerMessage ? { text: data.text, address: data.address, image: Boolean(data.image) } : event.type === 'message' ? { kind: data.kind, sender: data.sender, senderNickname: data.senderNickname ?? '', target: data.target, text: data.text, emoji: data.emoji, image: Boolean(data.image), mentions: data.mentions } : {};
         for(const key of ['emoji','image','mentions'])if(!messageInfo[key]||Array.isArray(messageInfo[key])&&!(messageInfo[key] as unknown[]).length)delete messageInfo[key];
-        let text = event.type === 'message' ? `[星邮消息] ${JSON.stringify(messageInfo)}`
-          : `[星邮 ${event.type}] ${JSON.stringify(data, (key, value) => key === 'base64' ? undefined : value)}`;
+        let text = (active ? activeNotice(event) : null) ?? (event.type === 'message' ? `[星邮消息] ${JSON.stringify(messageInfo)}`
+          : `[星邮 ${event.type}] ${JSON.stringify(data, (key, value) => key === 'base64' ? undefined : value)}`);
         const incomingImage = (event.type === 'message' || ownerMessage) && data.image;
         const acceptsImage = Boolean(incomingImage && (this.host.modelFacts?.accepts?.(incomingImage.mime) ?? true));
         const collectImage = this.cfg.sticker?.enabled !== false;

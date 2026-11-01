@@ -56,6 +56,15 @@ class ComposeUiTest {
         compose.onNodeWithText("跟随系统").assertExists();compose.onNodeWithText("壁纸动态配色").assertExists()
         shot("android-settings-light")
     }
+    @Test fun supportEntryOpensAfdian(){
+        var opened=""
+        val browser=object:androidx.compose.ui.platform.UriHandler{override fun openUri(uri:String){opened=uri}}
+        val vm=client();val state=ClientState(starting=false,signedIn=true,account=account,route=Route("settings"),theme="dark")
+        compose.setContent{androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalUriHandler provides browser){StarpostTheme("dark",false){StarpostApp(vm,state)}}}
+        compose.onNodeWithText("支持星邮开发").performScrollTo().performClick()
+        org.junit.Assert.assertEquals("https://afdian.com/a/starpost",opened)
+        shot("android-support-afdian")
+    }
     @Test fun activeGameShowsRoleActionsAndHidesSocialNavigation(){
         val vm=client();val state=ClientState(starting=false,signedIn=true,account=account,route=Route("humanRoom","demo-game"),activeGame="demo-game",theme="dark",data=obj(
             "game" to obj("title" to "星夜推理局","day" to 2,"ownRole" to "seer","status" to "night_gods","phaseDeadlineAt" to "2026-11-01T12:10:00Z"),

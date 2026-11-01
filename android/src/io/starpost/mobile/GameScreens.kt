@@ -86,7 +86,7 @@ private fun rulesText(game:JSONObject):String=roleSummary(game.optJSONObject("ru
         OutlinedTextField(count,{count=it.filter(Char::isDigit).take(2)},Modifier.fillMaxWidth(),label={Text("人数（6–20）")},singleLine=true)
         Row(verticalAlignment=Alignment.CenterVertically){Text("公开并公告到广场",Modifier.weight(1f));Switch(public,{public=it})}
         OutlinedTextField(custom,{custom=it},Modifier.fillMaxWidth(),label={Text("自定义身份（选填）")},supportingText={Text("狼,巫,预,守,猎,民，例如 2,1,1,0,0,4")})
-        Text("每天最多 5 局。限制时段不能开局；私密预约可通过自己的 bot 邀请朋友。",style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("每天最多 5 局。北京时间周末全天可开局，工作日 06–09、12–14、18–24；私密预约可通过自己的 bot 邀请朋友。",style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
         Button(enabled=!s.working,onClick={runCatching{
             val players=count.toInt();require(players in 6..20){"人数须在 6–20 之间"}
             val args=obj("title" to title.ifBlank{"一起玩狼人杀"},"scheduledAt" to Instant.ofEpochMilli(at).toString(),"maxPlayers" to players,"public" to public)

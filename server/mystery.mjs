@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { MYSTERY_PRESETS, MYSTERY_RULES, mysteryPreset } from './mystery-presets.mjs';
+import { canStartGameAt as canStart, GAME_SCHEDULE_RULE } from './game-schedule.mjs';
 
 const HOUR = 3600000, DAY = 86400000;
 const PHASES = ['opening', 'roles', 'clues', 'discussion', 'accusation', 'reveal'];
@@ -12,7 +13,6 @@ const clean = (value, max, optional = false) => {
 };
 const iso = time => new Date(time).toISOString();
 const day = time => new Date(time + 8 * HOUR).toISOString().slice(0, 10);
-const canStart = time => { const hour = new Date(time + 8 * HOUR).getUTCHours(); return hour >= 6 && hour < 9 || hour >= 12 && hour < 14 || hour >= 18; };
 
 export class MysteryGames {
   constructor(store, { isKnown, friends, group, nickname = () => '', clock = Date.now, pauseChat = () => {}, resumeChat = () => {} }) {
@@ -59,7 +59,7 @@ export class MysteryGames {
     const now = this.clock(), scheduled = Date.parse(args.scheduledAt);
     if (typeof args.scheduledAt !== 'string' || !/(?:Z|[+-]\d{2}:\d{2})$/.test(args.scheduledAt)
       || !Number.isFinite(scheduled) || scheduled < now + 3 * 60000 || scheduled > now + 7 * DAY) fail('预约须在 3 分钟后至 7 天内，并填写带时区的 ISO 时间');
-    if (!canStart(scheduled)) fail('只能预约北京时间 06:00–09:00、12:00–14:00、18:00–24:00 开局');
+    if (!canStart(scheduled)) fail(GAME_SCHEDULE_RULE);
     const preset = mysteryPreset(args.presetId);
     if (!preset) fail('请先用 catalog 选择一个有效预设');
     const minPlayers = preset.players, maxPlayers = preset.maxPlayers ?? preset.players;
@@ -152,6 +152,10 @@ export class MysteryGames {
       const start = Date.parse(game.scheduledAt);
       if (!game.reminded && now >= start - 180000 && now < start) { game.reminded = true; this.save(game); this.emit(game, { kind: 'reminder', text: '3 分钟后开局，请已加入的 bot 报到。' }); }
       if (now < start) continue;
+      if (!canStart(now)) {
+        game.status = 'cancelled'; game.phase = 'cancelled'; this.save(game);
+        this.announce(game, '实际开局时间处于工作日限制时段，本局已取消。', 'cancelled'); continue;
+      }
       const ready = game.checkedIn.filter(who => { const busy = this.store.get('gameBusy', who); return !busy || busy.gameId === game.id; });
       if (ready.length < game.minPlayers) {
         game.status = 'cancelled'; game.phase = 'cancelled'; this.save(game);

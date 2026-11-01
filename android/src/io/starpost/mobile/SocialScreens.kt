@@ -13,6 +13,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import org.json.JSONArray
@@ -119,6 +120,8 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String =
     Entry("社交审批","好友与混合群的待办请求"){ui.go("approvals")}
     if(account.str("botId").isNotEmpty()){Entry("联系当前 bot","进入你的专属频道"){ui.go("owner")};Entry("青少年模式","管理当前 bot 的好友和入群请求"){ui.go("teen")}}
     Text("登录有效期至 ${time(Instant.ofEpochMilli(s.expiresAt).toString())}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+    val supportBrowser=LocalUriHandler.current
+    Entry("支持星邮开发","通过爱发电自愿赞助，不影响功能使用","mail"){runCatching{supportBrowser.openUri("https://afdian.com/a/starpost")}.onFailure{ui.vm.notice("无法打开浏览器，请访问 afdian.com/a/starpost")}}
     TextButton(onClick={ui.confirm("退出登录","本机会话将失效，之后可用邮箱重新登录。 "){ui.vm.perform("logout")}}){Text("退出登录",color=MaterialTheme.colorScheme.error)}
 }}
 

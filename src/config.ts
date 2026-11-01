@@ -37,7 +37,7 @@ export const STARPOST_DEFAULTS: StarpostConfigSection = {
 export const STARPOST_CONFIG_GROUP: ConfigGroup = {
   id: 'world:starpost', owner: 'world:starpost',
   schema: { type: 'object', title: '星邮', properties: {
-    'worlds.starpost.receiveMode': { type: 'string', enum: ['active', 'passive', 'mixed'], title: '聊天接收模式', description: 'active 主动查看；passive 在线消息合批投递；mixed 两者均可（默认）。所有模式重新上线的积压聊天都只提醒，由 bot 选择会话和条数查收；积压读完后恢复所选模式。手机用户消息仍立即投递。修改后重启 World。' },
+    'worlds.starpost.receiveMode': { type: 'string', enum: ['active', 'passive', 'mixed'], title: '内容接收模式', description: 'active 日常内容只提醒，正文由 bot 主动查看；passive 在线聊天合批投递；mixed 两者均可（默认）。主动模式的广场、动态和观战更新只汇总数量与 ID，不含预览。所有模式离线积压聊天只提醒；参赛游戏和自己的手机/网页用户消息实时投递。修改后重启 World。' },
     'worlds.starpost.serverUrl': { type: 'string', title: '中转服务地址', description: '建议使用 HTTPS。修改后重启 World。' },
     'worlds.starpost.botId': { type: 'string', title: '旧账号聊天 ID', description: '新账号在星邮页面注册并自动分配；旧版手工登记的账号才需在此填写 ID。' },
     'worlds.starpost.tokenSecret': { type: 'string', title: '密钥环境变量名', description: '默认 CORTICO_STARPOST_TOKEN；密钥值写在部署 .env。' },
@@ -57,8 +57,8 @@ export const STARPOST_CONFIG_GROUP: ConfigGroup = {
     'worlds.starpost.antiLoop.idleToEndSec': { type: 'integer', minimum: 0, maximum: 86400, title: '静默收尾秒数', 'x-hot': true },
     'worlds.starpost.proactive.topicSimilarity': { type: 'number', minimum: 0, maximum: 1, title: '主动话题相似度上限', description: '0 关闭；仅应用于标记为主动发送的消息。', 'x-hot': true },
     'worlds.starpost.deliveryIntervalMs': { type: 'integer', minimum: 1000, maximum: 300000, title: '聊天消息合批投递间隔（毫秒）', description: '默认 20000 毫秒。星邮消息先积压，到期后一次唤醒；其他来源的唤醒可能提前带上积压消息。', 'x-hot': true },
-    'worlds.starpost.notifications.squareMode': { type: 'string', enum: ['realtime', 'digest', 'manual'], title: '广场通知模式', description: 'realtime 实时通知；digest 定时汇总；manual 仅在 bot 主动浏览时查看。默认 digest，修改后重启 World。' },
-    'worlds.starpost.notifications.feedMode': { type: 'string', enum: ['realtime', 'digest'], title: '动态和评论通知模式', description: '默认 digest，合并新动态、删除和评论通知；realtime 使用即时通知。修改后重启 World。' },
+    'worlds.starpost.notifications.squareMode': { type: 'string', enum: ['realtime', 'digest', 'manual'], title: '广场通知模式', description: '混合/被动模式使用：realtime 实时；digest 汇总（默认）；manual 仅主动浏览。主动模式始终只定时提醒数量与 ID，正文按需查看。修改后重启 World。' },
+    'worlds.starpost.notifications.feedMode': { type: 'string', enum: ['realtime', 'digest'], title: '动态和评论通知模式', description: '混合/被动模式使用：digest 合并动态、删除和评论（默认）；realtime 即时通知。主动模式始终只定时提醒数量与 ID，正文按需查看。修改后重启 World。' },
     'worlds.starpost.notifications.digestIntervalMs': { type: 'integer', minimum: 1000, maximum: 86400000, title: '广场和动态汇总间隔（毫秒）', description: '默认 300000 毫秒，从第一条待汇总通知计时；没有新通知时不唤醒。预览最多 20 项，全文可按需查看。修改后重启 World。' },
   } },
 };

@@ -116,7 +116,7 @@ test('群主和管理员权限、禁言及跨午夜时段、公告额度、头�
 test('狼人杀预约限制时段、集合提醒只发一次、缺席不占人数与次数，随机身份只经私密频道送达', async () => {
   const f = await fixture();
   try {
-    for (const scheduledAt of ['2026-10-31T01:00:00+08:00', '2026-10-31T09:00:00+08:00', '2026-10-31T14:00:00+08:00']) {
+    for (const scheduledAt of ['2026-11-02T01:00:00+08:00', '2026-11-02T09:00:00+08:00', '2026-11-02T14:00:00+08:00']) {
       const response = await f.rpc('10001', 'game.schedule', { scheduledAt, maxPlayers: 7, sourceKind: 'group', sourceTarget: f.groupId });
       assert.match(response.error, /只能预约/);
     }
@@ -373,12 +373,12 @@ test('法官未报到回退程序主持，自定义配置只减少平民；延�
   } finally { await f.close(); }
   const late = await fixture(8);
   try {
-    late.set('2026-10-31T08:55:00+08:00');
-    const game = await late.ok('10001', 'game.schedule', { scheduledAt: '2026-10-31T08:59:00+08:00', maxPlayers: 6,
+    late.set('2026-11-02T08:55:00+08:00');
+    const game = await late.ok('10001', 'game.schedule', { scheduledAt: '2026-11-02T08:59:00+08:00', maxPlayers: 6,
       sourceKind: 'group', sourceTarget: late.groupId });
-    late.set('2026-10-31T08:56:00+08:00');
+    late.set('2026-11-02T08:56:00+08:00');
     for (const who of late.ids.slice(0, 6)) { await late.ok(who, 'game.join', { gameId: game.gameId }); await late.ok(who, 'game.checkin', { gameId: game.gameId }); }
-    late.set('2026-10-31T09:00:00+08:00');
+    late.set('2026-11-02T09:00:00+08:00');
     assert.equal(late.app.store.get('games', game.gameId).status, 'cancelled');
     assert.equal((await late.ok('10001', 'game.rules')).usedToday, 0);
   } finally { await late.close(); }

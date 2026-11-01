@@ -1,4 +1,5 @@
 import { randomInt, randomUUID } from 'node:crypto';
+import { canStartGameAt as canStartAt, GAME_SCHEDULE_RULE, WEEKDAY_GAME_WINDOWS, WEEKEND_GAME_WINDOWS } from './game-schedule.mjs';
 
 const HOUR = 3600000;
 const DAY = 24 * HOUR;
@@ -21,9 +22,8 @@ const text = (value, max, multiline = false) => typeof value === 'string' && val
   ? value.trim() : fail('文本为空、过长或含控制字符');
 const iso = ms => new Date(ms).toISOString();
 const day = ms => new Date(ms + 8 * HOUR).toISOString().slice(0, 10);
-const hour = ms => new Date(ms + 8 * HOUR).getUTCHours();
-const canStartAt = ms => { const h = hour(ms); return h >= 6 && h < 9 || h >= 12 && h < 14 || h >= 18; };
 const RULEBOOK = {
+  schedule: GAME_SCHEDULE_RULE,
   spectators: '默认私密。公开对局允许未参与者全知观战所有房间消息；局外频道仅观众可见并计普通聊天额度，参赛者与法官的游戏发言仍免额度。参赛期间普通聊天暂存，结算后补投。',
   roles: { wolf: '狼人：夜晚共同选择一位非狼人袭击', seer: '预言家：每夜查验一位其他玩家是否为狼人',
     witch: '女巫：全局各一瓶解药和毒药，每夜至多用一瓶；首夜不能自救，之后的夜晚可以自救', guard: '守卫：每夜守护一人，不能连续两夜守同一人',
@@ -66,7 +66,7 @@ export class WerewolfGames {
   rules(who) {
     return { presets: PRESETS, customPlayers: '6–20 人，每种神职最多一位，狼人少于半数且至少一位平民',
       rulebook: RULEBOOK, dailyLimit: DAILY_GAMES, usedToday: this.participation(who, this.clock()).length,
-      timezone: 'Asia/Shanghai', startWindows: ['06:00–09:00', '12:00–14:00', '18:00–24:00'] };
+      timezone: 'Asia/Shanghai', startWindows: WEEKDAY_GAME_WINDOWS, weekendStartWindows: WEEKEND_GAME_WINDOWS };
   }
   get(gameId) {
     if (typeof gameId !== 'string' || !/^[0-9a-f-]{36}$/.test(gameId)) fail('游戏 ID 不合法');
@@ -171,7 +171,7 @@ export class WerewolfGames {
     const now = this.clock(), scheduled = Date.parse(args.scheduledAt);
     if (typeof args.scheduledAt !== 'string' || !/(?:Z|[+-]\d{2}:\d{2})$/.test(args.scheduledAt)
       || !Number.isFinite(scheduled) || scheduled < now + 3 * 60000 || scheduled > now + 7 * DAY) fail('请预约 3 分钟后至 7 天内的时间，使用带时区的 ISO 日期');
-    if (!canStartAt(scheduled)) fail('只能预约北京时间 06:00–09:00、12:00–14:00、18:00–24:00 开局');
+    if (!canStartAt(scheduled)) fail(GAME_SCHEDULE_RULE);
     const judgeMode = args.judgeMode === 'bot' ? 'bot' : args.judgeMode === 'program' || args.judgeMode == null ? 'program' : fail('法官模式不合法');
     const judgeBotId = judgeMode === 'bot' ? checkedId(args.judgeBotId ?? who) : null;
     if (judgeBotId?.endsWith('H')) fail('人类玩家不能担任 bot 法官，请使用程序或 bot 法官');

@@ -67,6 +67,7 @@ async function socialChatHistory(){const c=state.socialChat,log=$('#social-log')
 async function accountSettings(){
   const root=clear($('#app-content'));state.account=await rpc('account.info');const p=state.account;state.address=p.address||'';state.botId=p.botId||'';
   root.append(appearanceControls());
+  const support=el('div','setting-row'),supportLink=el('a','text-button','支持星邮开发');supportLink.href='https://afdian.com/a/starpost';supportLink.target='_blank';supportLink.rel='noopener noreferrer';add(support,el('span','','通过爱发电自愿支持开发与服务器运行，不影响功能使用'),supportLink);root.append(support);
   add(root,el('h2','pane-title',`${p.nickname} · ${p.humanId}`),el('p','muted',p.email),setting('个人资料','修改昵称',async()=>{const nickname=prompt('新昵称',p.nickname);if(nickname){await rpc('social.profile.update',{nickname});await accountSettings()}}),el('h2','pane-title','我的 bot'));
   for(const b of p.bots)root.append(setting(`${b.nickname||'未设置昵称'} · ${b.botId}${p.botId===b.botId?' · 当前':''}`,'切换',async()=>{await rpc('account.select',{botId:b.botId});state.botId=b.botId;state.overview=null;await accountSettings()}));
   const id=field('绑定 Bot ID'),credential=field('本机凭据','password');credential.input.autocomplete='off';add(root,id.wrap,credential.wrap,button('绑定 bot',async()=>{try{await rpc('account.bind',{botId:id.input.value.trim(),credential:credential.input.value.trim()});credential.input.value='';await accountSettings();notify('绑定成功')}catch(e){notify(e.message)}},'primary'));
@@ -127,7 +128,7 @@ async function games(){
   for(const [value,label] of [['public','公开并公告至广场'],['private','私密，仅通知自己的 bot 邀请']]){const o=el('option','',label);o.value=value;visibility.append(o)}
   custom.placeholder='可选自定义：狼人,女巫,预言家,守卫,猎人,平民，例如 2,1,1,0,0,4';
   const submit=el('button','primary','发起预约');submit.type='submit';
-  add(form,el('h3','','发起人类预约'),title,el('label','','预约时间（设备本地时间）'),at,count,visibility,custom,el('p','muted','提前 3 分钟至 7 天预约；北京时间正常时段开局。未报到不计次数。公开局允许全知观战；游戏时只能使用专用聊天室。'),submit);root.append(form);
+  add(form,el('h3','','发起人类预约'),title,el('label','','预约时间（设备本地时间）'),at,count,visibility,custom,el('p','muted','提前 3 分钟至 7 天预约；北京时间周末全天可开局，工作日 06–09、12–14、18–24。未报到不计次数。公开局允许全知观战；游戏时只能使用专用聊天室。'),submit);root.append(form);
   form.onsubmit=async e=>{e.preventDefault();try{const values=custom.value.trim()?custom.value.split(',').map(Number):null;if(values&&(values.length!==6||values.some(n=>!Number.isInteger(n))))throw Error('自定义配置须填写六个整数');const roles=values?Object.fromEntries(['wolf','witch','seer','guard','hunter','villager'].map((r,i)=>[r,values[i]])):undefined;await humanAction('schedule',{title:title.value||undefined,scheduledAt:new Date(at.value).toISOString(),maxPlayers:Number(count.value),public:visibility.value==='public',roles});await games()}catch(err){notify(err.message)}};
   if(v.moderation.banned)submit.disabled=true;
   for(const g of v.games){const n=item(`${g.title} · ${phaseNames[g.status]||g.status}`,`${date(g.scheduledAt)} · 已加入 ${g.joined}/${g.maxPlayers}`);if(g.status==='scheduled'&&!g.participant&&!v.moderation.banned)n.append(button('报名加入',async()=>{try{await humanAction('join',{gameId:g.gameId});await humanReservation(g.gameId)}catch(err){notify(err.message)}}));else if(g.participant||g.creator===v.humanId)n.append(button(g.status==='scheduled'?'查看预约 / 报到':'查看个人视角',()=>humanReservation(g.gameId)));root.append(n)}

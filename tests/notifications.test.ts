@@ -59,6 +59,77 @@ async function setup(clock: () => number) {
   return { dir, app, rpc, cfg, events, host, world, close: async () => { await app.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
+test('主动模式覆盖实时设置，只提示日常更新，正文可按需读取，保留邀请、冷却和主人/参赛消息', async () => {
+  let now = Date.parse('2026-11-01T18:00:00+08:00');
+  const h = await setup(() => now); h.cfg.receiveMode = 'active';
+  h.cfg.notifications.squareMode = 'realtime'; h.cfg.notifications.feedMode = 'realtime';
+  const receiver = h.world();
+  const call = (family: string, args: Record<string, unknown>) => familyTool(receiver, family).handler(args, {} as never);
+  try {
+    await receiver.start(h.host);
+    const postId = (await h.rpc('10002', 'post.publish', { text: '禁止自动注入的动态正文' })).result.id;
+    await h.rpc('10002', 'square.showcase', { text: '禁止自动注入的展示正文' });
+    await h.rpc('10003', 'friend.request', { to: '10001', note: '禁止自动注入的申请备注' });
+    const bottleId = (await h.rpc('10001', 'bottle.throw', { text: '投出的瓶子' })).result.id;
+    await h.rpc('10002', 'bottle.pick');
+    await h.rpc('10002', 'bottle.reply', { bottleId, text: '禁止自动注入的漂流瓶回复' });
+    const groupId = (await h.rpc('10001', 'group.create', { name: '测试群', members: ['10002'] })).result.id;
+    await h.rpc('10001', 'group.manage', { groupId, operation: 'announce', text: '禁止自动注入的群公告' });
+    for (const [type, data] of [
+      ['square.game', { id: 'game-public', title: '禁止自动注入的游戏公告' }],
+      ['mystery.published', { gameId: 'mystery-public', title: '禁止自动注入的剧本公告' }],
+      ['game.invited', { gameId: 'invited', creator: '10002', scheduledAt: new Date(now + 300000).toISOString(), title: '禁止自动注入的邀请标题' }],
+      ['mystery.invited', { gameId: 'script-invited', creator: '10002', scheduledAt: new Date(now + 300000).toISOString(), preset: { text: '禁止自动注入的预设' } }],
+      ['square.ready', { kind: 'bot', message: '冷却结束，可再次展示，是否发布由你决定' }],
+      ['game.reminder', { gameId: 'invited', message: '3分钟后集合报到' }],
+      ['game.public', { gameId: 'watching', recipients: ['10002'], kind: 'chat', text: '禁止自动注入的观战内容' }],
+      ['game.outside', { gameId: 'watching', recipients: ['10001'], kind: 'chat', text: '禁止自动注入的局外讨论' }],
+      ['game.private', { gameId: 'playing', recipients: ['10001'], kind: 'role', role: 'seer' }],
+      ['game.public', { gameId: 'playing', recipients: ['10001', '10002'], kind: 'chat', text: '参赛发言仍然实时' }],
+    ] as const) h.app.store.emit(['10001'], type, data);
+    await poll(receiver);
+    assert.doesNotMatch(JSON.stringify(h.events), /禁止自动注入/);
+    for (const type of ['friend_request', 'bottle_reply', 'group_managed', 'game_invited', 'mystery_invited', 'square_ready', 'game_reminder', 'game_private']) {
+      assert.ok(h.events.some(e => e.type === `starpost.${type}`), type);
+    }
+    assert.ok(h.events.some(e => e.text.includes('参赛发言仍然实时')));
+    assert.equal(h.events.some(e => e.type === 'starpost.notification_digest'), false);
+    now += h.cfg.notifications.digestIntervalMs; await poll(receiver);
+    const digest = digestBody(h.events.find(e => e.type === 'starpost.notification_digest')!);
+    assert.equal(digest.events, 6); assert.ok(digest.items.some((i: any) => i.category === 'watch'));
+    assert.doesNotMatch(JSON.stringify(h.events), /禁止自动注入|"preview"/);
+    await call('post', { action: 'read', postId });
+    await call('friend', { action: 'read', botId: '10003' });
+    await call('bottle', { action: 'read', bottleId });
+    await call('group_manage', { action: 'info', groupId });
+    for (const text of ['动态正文', '申请备注', '漂流瓶回复', '群公告']) {
+      assert.ok(h.events.some(e => e.origin === 'external' && e.text.includes('禁止自动注入的' + text)), text);
+    }
+    assert.equal((await h.rpc('10003', 'bottle.read', { bottleId })).ok, false);
+    await h.rpc('10001', 'post.publish', { text: '自己的动态' });
+    h.app.store.emit(['10001'], 'owner.message', { text: '主人消息仍立即送达', prefix: '以下消息为主人通过星邮向你发送的消息' });
+    await poll(receiver); assert.ok(h.events.some(e => e.type === 'starpost.owner_message' && e.text.includes('主人消息仍立即送达')));
+  } finally { await receiver.stop(); await h.close(); }
+});
+
+test('切入主动模式后已持久化的旧汇总不泄露预览，主动阅读消除相应待提醒项', async () => {
+  let now = Date.parse('2026-11-01T18:00:00+08:00'); const h = await setup(() => now); let receiver = h.world();
+  try {
+    const postId = (await h.rpc('10002', 'post.publish', { text: '切换之前缓存的正文' })).result.id;
+    await h.rpc('10002', 'square.showcase', { text: '切换之前缓存的广场内容' });
+    await receiver.start(h.host); await receiver.stop(); h.cfg.receiveMode = 'active'; h.cfg.notifications.squareMode = 'manual';
+    now += h.cfg.notifications.digestIntervalMs; receiver = h.world(); await receiver.start(h.host);
+    const notice = h.events.find(e => e.type === 'starpost.notification_digest')!;
+    assert.equal(digestBody(notice).events, 2); assert.doesNotMatch(notice.text, /切换之前|"preview"/);
+    await h.rpc('10002', 'post.comment', { postId, text: '评论自己的动态，不通知自己' });
+    h.app.store.emit(['10001'], 'post.comment', { postId, comment: { id: 'comment', text: '待查收' } });
+    await poll(receiver);
+    await familyTool(receiver, 'post').handler({ action: 'read', postId }, {} as never);
+    now += h.cfg.notifications.digestIntervalMs; await poll(receiver);
+    assert.equal(h.events.filter(e => e.type === 'starpost.notification_digest').length, 1);
+  } finally { await receiver.stop(); await h.close(); }
+});
+
 test('默认五分钟内的广场和动态仅产生一次汇总，戳一戳及时投递，确认游标与待汇总状态跨重启保留', async () => {
   let now = Date.now(); const h = await setup(() => now); let receiver = h.world();
   try {
