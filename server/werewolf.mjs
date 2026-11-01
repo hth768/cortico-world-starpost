@@ -24,6 +24,7 @@ const iso = ms => new Date(ms).toISOString();
 const day = ms => new Date(ms + 8 * HOUR).toISOString().slice(0, 10);
 const RULEBOOK = {
   schedule: GAME_SCHEDULE_RULE,
+  invitations: '公开和私密预约均允许已加入、未退出的成员在开局前邀请自己的好友或所在群成员；仅受邀但尚未加入者不能转邀。受邀者自主加入和报到，不会自动入场。人类成员可从手机或网页预约详情发出邀请。',
   spectators: '默认私密。公开对局允许未参与者全知观战所有房间消息；局外频道仅观众可见并计普通聊天额度，参赛者与法官的游戏发言仍免额度。参赛期间普通聊天暂存，结算后补投。',
   roles: { wolf: '狼人：夜晚共同选择一位非狼人袭击', seer: '预言家：每夜查验一位其他玩家是否为狼人',
     witch: '女巫：全局各一瓶解药和毒药，每夜至多用一瓶；首夜不能自救，之后的夜晚可以自救', guard: '守卫：每夜守护一人，不能连续两夜守同一人',
@@ -105,7 +106,7 @@ export class WerewolfGames {
       judgeBotId: game.judgeBotId, assignmentMode: game.assignmentMode, scheduledAt: game.scheduledAt,
       status: game.status, maxPlayers: game.maxPlayers, joined: game.joined.length, checkedIn: game.checkedIn.length,
       checkedInSelf: who ? game.checkedIn.includes(who) : undefined,
-      rules: game.rules, participant: who ? game.joined.includes(who) : undefined,
+      rules: game.rules, participant: who ? game.joined.includes(who) : undefined, canInvite: who ? this.canInvite(game, who) : false,
       judge: who ? game.judgeBotId === who : undefined, phaseDeadlineAt: game.deadlineAt,
       winner: game.winner ?? null, public: Boolean(game.public), spectators: (game.spectators ?? []).length };
   }
@@ -207,15 +208,20 @@ export class WerewolfGames {
     }
     return this.summary(game, who);
   }
-  invite(who, args) {
+  // HumanGames may retain a legacy player ID while contacts belong to the merged account.
+  invite(who, args, contactId = who) {
     const game = this.get(args.gameId);
-    if (game.status !== 'scheduled' || game.creator !== who && !this.ownsHuman(who, game.creator) && game.judgeBotId !== who && !game.joined.includes(who)) fail('只有预约成员或该人类所属 bot 可在开局前邀请', 403);
+    if (!this.canInvite(game, who)) fail('仅开局前的预约成员、法官或发起人所属 bot 可邀请；请先加入，退出或被移出后不能邀请', 403);
     const kind = args.sourceKind, target = String(args.sourceTarget ?? '');
-    const candidates = kind === 'private' ? [checkedId(target)] : kind === 'group' ? this.group(who, target).members : fail('请选择私聊或群聊邀请');
-    if (kind === 'private' && !this.friends(who).includes(candidates[0])) fail('只能通过私聊邀请好友', 403);
-    const added = candidates.filter(id => id !== who && id !== game.judgeBotId && !game.invited.includes(id));
+    const candidates = kind === 'private' ? [checkedId(target)] : kind === 'group' ? this.group(contactId, target).members : fail('请选择私聊或群聊邀请');
+    if (kind === 'private' && !this.friends(contactId).includes(candidates[0])) fail('只能通过私聊邀请好友', 403);
+    const added = [...new Set(candidates.filter(id => id !== who && id !== contactId && id !== game.judgeBotId && !game.joined.includes(id) && !game.invited.includes(id) && !game.kicked?.includes(id)))];
     game.invited.push(...added); this.save(game); this.invited(game, added, { sourceKind: kind, sourceTarget: target, invitedBy: who });
     return { gameId: game.id, invited: added.length };
+  }
+  canInvite(game, who) {
+    return game.status === 'scheduled' && !game.left?.includes(who) && !game.kicked?.includes(who)
+      && (game.creator === who || this.ownsHuman(who, game.creator) || game.judgeBotId === who || game.joined.includes(who));
   }
   join(who, gameId) {
     const game = this.get(gameId);

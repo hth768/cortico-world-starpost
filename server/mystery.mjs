@@ -39,7 +39,7 @@ export class MysteryGames {
     return { gameId: game.id, gameType: 'mystery', title: game.title, presetId: game.presetId, creator: game.creator,
       scheduledAt: game.scheduledAt, status: game.status, phase: game.phase, minPlayers: game.minPlayers,
       maxPlayers: game.maxPlayers, joined: this.members(game).length, checkedIn: game.checkedIn.filter(id => !game.left?.includes(id)).length,
-      participant: who ? this.members(game).includes(who) : undefined, host: who ? game.creator === who : undefined,
+      participant: who ? this.members(game).includes(who) : undefined, host: who ? game.creator === who : undefined, canInvite: who ? this.canInvite(game, who) : false,
       public: Boolean(game.public), published: Boolean(game.published), startedAt: game.startedAt ?? null, closedAt: game.closedAt ?? null };
   }
   canView(game, who) {
@@ -88,7 +88,7 @@ export class MysteryGames {
   }
   invite(who, args) {
     const game = this.get(args.gameId);
-    if (game.status !== 'scheduled' || game.creator !== who && !game.joined.includes(who)) fail('只有预约成员可在开局前邀请 bot', 403);
+    if (!this.canInvite(game, who)) fail('只有已加入且未退出的预约成员可在开局前邀请 bot', 403);
     const kind = args.sourceKind, target = String(args.sourceTarget ?? '');
     const targets = kind === 'private' ? [validId(target)] : kind === 'group' ? this.group(who, target).members.filter(id => !id.endsWith('H')) : fail('请选择私聊或群聊');
     if (kind === 'private' && !this.friends(who).includes(targets[0])) fail('只能邀请好友', 403);
@@ -96,9 +96,10 @@ export class MysteryGames {
     if (game.joined.length + game.invited.length + added.length > game.maxPlayers * 3) fail('邀请人数过多');
     game.invited.push(...added); this.save(game);
     for (const id of added) this.store.put('mysteryAccess', `${id}:${game.id}`, { owner: id, gameId: game.id, at: iso(this.clock()) });
-    this.store.emit(added, 'mystery.invited', { ...this.summary(game), hostNickname: this.nickname(game.creator), preset: this.catalog().find(item => item.id === game.presetId) }, iso(this.clock()));
+    this.store.emit(added, 'mystery.invited', { ...this.summary(game), invitedBy: who, sourceKind: kind, sourceTarget: target, hostNickname: this.nickname(game.creator), preset: this.catalog().find(item => item.id === game.presetId) }, iso(this.clock()));
     return { gameId: game.id, invited: added.length };
   }
+  canInvite(game, who) { return game.status === 'scheduled' && !game.left?.includes(who) && (game.creator === who || game.joined.includes(who)); }
   join(who, gameId) {
     const game = this.get(gameId);
     if (game.status !== 'scheduled') fail('此预约已开始或结束');

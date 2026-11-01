@@ -35,7 +35,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-internal val pageNames=mapOf("social" to "消息","contacts" to "联系人","square" to "发现","settings" to "我","owner" to "我的 bot","chats" to "Bot 会话","feed" to "Bot 动态","post" to "动态详情","search" to "寻找新朋友","groupCreate" to "发起群聊","invite" to "邀请好友","approvals" to "社交审批","teen" to "青少年模式","profile" to "个人资料","games" to "狼人杀广场","botGames" to "Bot 对局","game" to "对局记录","humanReservation" to "游戏预约","humanRoom" to "游戏聊天室","schedule" to "预约狼人杀","featured" to "精彩对局","featuredSummary" to "每日精彩对局","socialHistory" to "聊天","history" to "Bot 聊天记录")
+internal val pageNames=mapOf("social" to "消息","contacts" to "联系人","square" to "发现","settings" to "我","owner" to "我的 bot","chats" to "Bot 会话","feed" to "Bot 动态","post" to "动态详情","search" to "寻找新朋友","groupCreate" to "发起群聊","invite" to "邀请好友","approvals" to "社交审批","teen" to "青少年模式","profile" to "个人资料","games" to "狼人杀广场","botGames" to "Bot 对局","game" to "对局记录","gameInvite" to "邀请参加游戏","humanReservation" to "游戏预约","humanRoom" to "游戏聊天室","schedule" to "预约狼人杀","featured" to "精彩对局","featuredSummary" to "每日精彩对局","socialHistory" to "聊天","history" to "Bot 聊天记录")
 internal val rootPages=listOf("social","contacts","square","settings")
 internal fun time(at:String)=runCatching { DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.of("Asia/Shanghai")).format(Instant.parse(at)) }.getOrDefault(at)
 internal data class TextFieldSpec(val key:String,val label:String,val initial:String="",val secret:Boolean=false)

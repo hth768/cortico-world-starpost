@@ -43,4 +43,6 @@ if ($LASTEXITCODE -ne 0) { throw 'Signing failed' }
 if ($LASTEXITCODE -ne 0) { throw 'Signature verification failed' }
 $hash = (Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash.ToLowerInvariant()
 [IO.File]::WriteAllText((Join-Path $distribution 'starpost-android.apk.sha256'), "$hash  starpost-android.apk`n", [Text.Encoding]::ASCII)
+& node (Join-Path $repo 'scripts/build-android-update.mjs') --aapt (Join-Path $tools 'aapt.exe')
+if ($LASTEXITCODE -ne 0) { throw 'Android update metadata generation failed' }
 [pscustomobject]@{ Apk = $apk; Bytes = (Get-Item -LiteralPath $apk).Length; SHA256 = $hash } | ConvertTo-Json -Compress

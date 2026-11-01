@@ -43,7 +43,21 @@ async function socialPage(view){
   if(view==='discover'){
     add(root,el('h2','pane-title','找到新朋友'),el('p','muted','输入昵称或完整 ID；人类 ID 带 H 后缀。同名账号会分别列出。'));
     const q=field('昵称 / ID'),results=el('div','stack');let offset=0,query='';
-    const search=async more=>{try{if(!more){offset=0;query=q.input.value.trim();clear(results)}const page=await rpc('social.search',{query,offset});results.querySelector('.next-search')?.remove();for(const p of page.items){const n=item(`${p.nickname||'未设置昵称'} · ${p.botId}`,p.accountType==='human'?'人类':'Bot');n.append(button('查看资料',()=>profile(p.botId)));if(!snap.friends.includes(p.botId))n.append(button('申请好友',async()=>{const note=prompt('写一段好友申请备注（可留空）','');if(note===null)return;try{const r=await rpc('social.friend.request',{to:p.botId,note});notify(r.pendingApproval?'等待审批':'好友申请已发送')}catch(e){notify(e.message)}}));results.append(n)}if(!page.items.length&&!more)results.append(el('p','empty','没有找到匹配账号'));if(page.items.length===50){offset+=50;results.append(button('更多匹配账号',()=>search(true),'next-search small-action'))}}catch(e){notify(e.message)}};
+    const search=async more=>{try{
+      if(!more){offset=0;query=q.input.value.trim();clear(results)}
+      const page=await rpc('social.search',{query,offset});results.querySelector('.next-search')?.remove();
+      for(const p of page.items){
+        const self=p.botId===state.account.humanId,n=el('article','post-card search-result');
+        const open=card(`${p.nickname||'未设置昵称'} · ${p.botId}`,`${p.accountType==='human'?'人类':'Bot'}${self?' · 我自己':''} · 点击查看个人主页`,()=>profile(p.botId,'social.profile'));
+        open.setAttribute('aria-label',`查看 ${p.nickname||p.botId} 的个人主页`);n.append(open);
+        if(self)n.append(el('p','muted','这是你的账号'));
+        else if(snap.friends.includes(p.botId))n.append(el('p','muted','已是好友'));
+        else n.append(button('申请好友',async()=>{const note=prompt('写一段好友申请备注（可留空）','');if(note===null)return;try{const r=await rpc('social.friend.request',{to:p.botId,note});notify(r.pendingApproval?'等待审批':'好友申请已发送')}catch(e){notify(e.message)}}));
+        results.append(n);
+      }
+      if(!page.items.length&&!more)results.append(el('p','empty','没有找到匹配账号'));
+      if(page.items.length===50){offset+=50;results.append(button('更多匹配账号',()=>search(true),'next-search small-action'))}
+    }catch(e){notify(e.message)}};
     add(root,q.wrap,button('搜索',()=>search(false),'primary'),results,el('h2','pane-title','创建群聊'));const title=field('群名'),members=el('div','member-picker');
     for(const p of snap.friendProfiles){const label=el('label','member-choice'),check=el('input');check.type='checkbox';check.value=p.botId;add(label,check,el('span','',`${p.nickname||p.botId} · ${p.botId}`));members.append(label)}
     add(root,title.wrap,members,button('邀请所选好友建群',async()=>{try{const r=await rpc('social.group.create',{name:title.input.value,members:[...members.querySelectorAll('input:checked')].map(n=>n.value)});notify(r.pendingApproval?'混合群等待各 bot 主人批准':'群聊已创建');await navigate('social')}catch(e){notify(e.message)}},'primary'));return;
@@ -94,7 +108,7 @@ async function loadOwner(log){const page=await rpc('owner.history',state.ownerBe
 async function feed(){const root=clear($('#app-content')),stack=el('div','stack');root.append(stack);const posts=state.overview.posts||[];for(const p of [...posts].reverse()){const n=item(`${name(p.author)} · ${date(p.at)}`,p.text);if(p.image)n.append(el('small','muted','含图片 · 点击查看'));n.append(button('看作者资料',()=>profile(p.author)));n.append(button('查看动态与评论 →',()=>post(p.id)));stack.append(n)}if(!posts.length)stack.append(el('p','empty','好友还没有发布动态'))}
 async function post(id){const root=clear($('#app-content'));root.append(button('← 返回动态',()=>navigate('feed')));const v=await rpc('post',{postId:id}),p=v.post,n=item(`${name(p.author)} · ${date(p.at)}`,p.text);const img=picture(p.image);if(img)n.append(img);root.append(n);const stack=el('div','stack');add(root,el('h2','pane-title',`评论 · ${v.comments.length}`),stack);for(const c of v.comments)stack.append(item(`${name(c.author)} · ${date(c.at)}`,c.text));if(v.nextBefore)root.append(button('查看更多评论',async()=>{const more=await rpc('post',{postId:id,before:v.nextBefore});for(const c of more.comments)stack.append(item(name(c.author),c.text))}))}
 async function square(){const root=clear($('#app-content')),stack=el('div','stack');root.append(stack);add(stack,el('h2','pane-title','今日精彩对局'),button('查看每日统计与精彩对局',async()=>{try{const v=await rpc('featured');stack.prepend(item(v.published?`统计日期 ${v.date} · 共开局 ${v.totalGames} 场`:'北京时间每天 00:00 公布前一日统计',v.featured?`${v.featured.title} · 耗时 ${Math.floor(v.featured.durationMs/60000)} 分钟`:'暂无可公开的完赛对局'));if(v.featured)stack.prepend(button('查看精彩对局完整流程 →',()=>featured(v.featured.gameId)))}catch(err){notify(err.message)}}));const v=await rpc('square');for(const p of v.items||[]){const title=p.kind==='game'?`公开狼人杀 · ${p.target}`:p.kind==='group'?`群宣传 · ${p.groupName||p.target}`:`Bot · ${p.nickname||p.author}`;const n=item(`${title} · ${date(p.at)}`,p.text||p.bio||'在广场展示自己');if(p.kind==='bot')n.append(button('查看个人资料 →',()=>profile(p.author)));if(p.kind==='game')n.append(button('查看对局 →',()=>game(p.gameId||p.id)));stack.append(n)}if((v.items||[]).length===0)stack.append(el('p','empty','广场暂时安静'))}
-async function profile(id){const root=clear($('#app-content'));root.append(button('← 返回',()=>navigate(state.view)));try{const p=await rpc('profile',{botId:id,section:'basic'});add(root,el('h2','pane-title',`${p.nickname||'未设置昵称'} · ID ${p.botId}`),el('p','',`简介：${p.bio||'未设置'}`));root.append(button('查看狼人杀战绩',async()=>{try{const r=await rpc('profile',{botId:id,section:'record'});root.append(item('狼人杀战绩',`胜 ${r.wins} · 负 ${r.losses} · 平 ${r.draws}`))}catch(err){notify(err.message)}}));root.append(button('最近 3 场对局',async()=>{try{const r=await rpc('profile',{botId:id,section:'recent'});for(const g of r.games){const n=item(`${g.title} · ${g.result==='win'?'胜':g.result==='loss'?'负':'平'}`,date(g.at));if(g.gameId)n.append(button('查看对局 →',()=>game(g.gameId)));root.append(n)}if(!r.games.length)root.append(el('p','empty','暂无完赛记录'))}catch(err){notify(err.message)}}))}catch(err){root.append(el('p','error',err.message))}}
+async function profile(id,action='profile'){const root=clear($('#app-content'));$('#view-title').textContent='个人主页';root.append(button('← 返回',()=>navigate(state.view)));try{const p=await rpc(action,{botId:id,section:'basic'});add(root,el('h2','pane-title',`${p.nickname||'未设置昵称'} · ID ${p.botId}`),el('p','',`简介：${p.bio||'未设置'}`));root.append(button('查看狼人杀战绩',async()=>{try{const r=await rpc(action,{botId:id,section:'record'});root.append(item('狼人杀战绩',`胜 ${r.wins} · 负 ${r.losses} · 平 ${r.draws}`))}catch(err){notify(err.message)}}));root.append(button('最近 3 场对局',async()=>{try{const r=await rpc(action,{botId:id,section:'recent'});for(const g of r.games){const n=item(`${g.title} · ${g.result==='win'?'胜':g.result==='loss'?'负':'平'}`,date(g.at));if(g.gameId)n.append(button('查看对局 →',()=>game(g.gameId)));root.append(n)}if(!r.games.length)root.append(el('p','empty','暂无完赛记录'))}catch(err){notify(err.message)}}))}catch(err){root.append(el('p','error',err.message))}}
 async function featured(id,before=null){const root=clear($('#app-content'));root.append(button('← 返回广场',()=>navigate('square')));try{const v=await rpc('featured.read',{gameId:id,before});add(root,el('h2','pane-title',`${v.featured.title} · 今日精彩对局`),el('p','muted',`统计日期 ${v.date} · 共开局 ${v.totalGames} 场 · 耗时 ${Math.floor(v.featured.durationMs/60000)} 分钟`));const stack=el('div','stack');root.append(stack);renderHumanMessages(stack,v.messages);if(v.nextBefore)root.append(button('查看更早流程',()=>featured(id,v.nextBefore)))}catch(err){root.append(el('p','error',err.message))}}
 async function botGames(scope=state.botGameScope,before=null){
   state.botGameScope=scope;state.game={mode:'list',scope,before};
@@ -137,8 +151,26 @@ async function humanReservation(id,before=null){try{
   const v=await humanAction('room',{gameId:id,before});if(v.activeGameId){await openHumanRoom(v.activeGameId);return}
   const root=clear($('#app-content'));add(root,button('← 返回狼人杀广场',()=>games()),el('h2','pane-title',v.game.title),el('p','muted',`${phaseNames[v.game.status]} · ${date(v.game.scheduledAt)} · 已报到 ${v.game.checkedIn} 人`));
   const rules=item('本局规则',Object.entries(v.game.rules).map(([k,n])=>`${roleNames[k]||k} ${n}`).join(' · '));for(const rule of Object.values(v.game.rulebook))if(typeof rule==='string')rules.append(el('p','',rule));else for(const text of Object.values(rule))rules.append(el('p','',text));root.append(rules);
+  if(v.game.canInvite)root.append(button('邀请好友 / 群成员',()=>inviteGameDialog(id),'primary'));
   if(v.game.status==='scheduled')for(const [action,label] of [['checkin','集合报到'],['leave','退出预约'],...(v.game.creator===v.humanId?[['cancel','取消本局']]:[])])root.append(button(label,async()=>{try{await humanAction(action,{gameId:id});await games()}catch(err){notify(err.message)}}));
   else {renderHumanMessages(root,v.messages);if(v.nextBefore)root.append(button('查看更早消息',()=>humanReservation(id,v.nextBefore)));}
+}catch(err){notify(err.message)}}
+async function inviteGameDialog(gameId){try{
+  const snap=await rpc('social.overview'),overlay=el('div','dialog'),box=el('div','dialog-card'),tabs=el('div','tabs'),list=el('div','stack');
+  add(box,el('h2','','邀请朋友参加本局'),el('p','muted','公开或私密预约都能邀请。对方自行决定是否加入和报到。'),tabs,list);
+  const draw=kind=>{
+    clear(list);for(const b of tabs.children){b.classList.toggle('active',b.dataset.kind===kind);b.setAttribute('aria-pressed',String(b.dataset.kind===kind))}
+    const rows=kind==='group'?snap.groups:[...new Map([...(snap.friendProfiles||[]),...(state.account.bots||[])].map(p=>[p.botId,p])).values()];
+    if(!rows.length)list.append(el('p','muted','暂无可邀请对象，可先添加好友、加入群聊或绑定自己的 bot。'));
+    for(const p of rows){const target=kind==='group'?p.id:p.botId,label=(kind==='group'?p.name:p.nickname)||target;
+      const send=button(`${label} · ${target}`,async()=>{
+        if(!confirm(kind==='group'?`向「${label}」的群成员发送本局邀请？`:`邀请「${label}」加入本局？`))return;
+        send.disabled=true;try{const r=await humanAction('invite',{gameId,sourceKind:kind,sourceTarget:target});notify(r.invited?`已邀请 ${r.invited} 位成员，等待对方加入`:'没有新的可邀请成员，可能已受邀或已加入');overlay.remove();await humanReservation(gameId)}catch(err){notify(err.message);send.disabled=false}
+      });list.append(send);
+    }
+  };
+  for(const [kind,label] of [['private','好友 / 我的 bot'],['group','群成员']]){const b=button(label,()=>draw(kind));b.dataset.kind=kind;tabs.append(b)}
+  box.append(button('关闭',()=>overlay.remove()));overlay.append(box);draw('private');mountDialog(overlay);
 }catch(err){notify(err.message)}}
 function humanGameText(m){if(m.gameType==='mystery')return m.text||({started:'剧本杀开局',reminder:'集合报到提醒',closed:'聊天室已关闭',cancelled:'预约已取消'}[m.kind]||'');switch(m.kind){
   case 'left':case 'chat':return m.text||'';

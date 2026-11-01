@@ -83,6 +83,7 @@ export class HumanGames {
     }
     const game = this.assertRoom(owner, args.gameId);
     if (game.kicked?.includes(who)) fail('你已被禁言并移出本局', 403);
+    if (action === 'invite') return this.games.invite(who, { gameId: game.id, sourceKind: args.sourceKind, sourceTarget: args.sourceTarget }, this.accounts?.canonical(who) ?? who);
     if (action === 'checkin') return this.games.checkin(who, game.id);
     if (action === 'leave') return this.games.leave(who, game.id);
     if (action === 'cancel') return this.games.cancel(who, game.id);
@@ -127,7 +128,7 @@ export class HumanGames {
     const page = this.games.read(who, game.id, before);
     const channels = !kicked && (game.alive.includes(who) || game.status === 'finished')
       ? ['day', 'vote', 'finished'].includes(game.status) ? ['public'] : game.roles[who] === 'wolf' && game.status === 'night_wolf' ? ['wolf'] : [] : [];
-    return { ...page, humanId: who, nickname: this.games.nickname(who), kicked, moderation: this.state(owner), channels,
+    return { ...page, game: { ...page.game, canInvite: page.game.canInvite && !this.state(owner).banned }, humanId: who, nickname: this.games.nickname(who), kicked, moderation: this.state(owner), channels,
       options: kicked ? [] : this.options(game, who), names: Object.fromEntries(game.participants.map(id => [id, this.games.nickname(id) || id])),
       messages: kicked ? [] : page.messages, activeGameId: this.active(owner) };
   }

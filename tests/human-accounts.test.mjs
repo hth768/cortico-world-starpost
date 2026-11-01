@@ -55,7 +55,11 @@ test('独立 H 号顺延，支持重名及分页搜索，注册不使用 bot 名
     assert.equal(f.app.store.get('meta', 'nextBotId'), 10004);
     const registeredBot = await f.post('/register', { installationId: randomUUID(), token: 'd'.repeat(64) });assert.equal(registeredBot.result.botId, '10004');
     const people = (await f.rpc(a.accessToken, 'social.search', { query: '相同昵称' })).result.items;
-    assert.deepEqual(people.map(p => p.botId), ['10005H']);
+    assert.deepEqual(people.map(p => p.botId), ['10004H', '10005H']);
+    assert.deepEqual((await f.rpc(a.accessToken, 'social.search', { query: '10004h' })).result.items.map(p => p.botId), [a.humanId]);
+    const ownProfile = await f.rpc(a.accessToken, 'social.profile', { botId: a.humanId });
+    assert.equal(ownProfile.result.botId, a.humanId);assert.equal(ownProfile.result.nickname, '相同昵称');
+    assert.equal((await f.rpc(a.accessToken, 'social.friend.request', { to: a.humanId })).ok, false);
     assert.equal((await f.rpc(a.accessToken, 'social.search', { query: '10005h' })).result.items[0].botId, '10005H');
     assert.equal((await f.rpc(a.accessToken, 'owner.send', { text: 'no bot' })).status, 403);
     assert.equal((await f.rpc(a.accessToken, 'human.status')).result.humanId, '10004H');

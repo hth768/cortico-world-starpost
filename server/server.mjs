@@ -499,7 +499,8 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         const offset = args.offset ?? 0, limit = args.limit ?? 20;
         if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 100) fail('搜索分页不合法');
         const people = store.entries('people').filter(([, p]) => p.email && !p.aliasOf).map(([key]) => key);
-        return [...knownIds(), ...people].filter(botId => botId !== who && profile(botId).discoverable)
+        // 本人可以搜到自己的账号；隐藏账号对其他用户仍不可搜索。
+        return [...knownIds(), ...people].filter(botId => botId === who || profile(botId).discoverable)
           .map(botId => profile(botId))
           .filter(p => p.botId.toLowerCase() === query || p.nickname.toLocaleLowerCase().includes(query))
           .sort((a, b) => a.botId.localeCompare(b.botId, 'en', { numeric: true })).slice(offset, offset + limit)

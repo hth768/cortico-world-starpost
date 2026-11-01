@@ -19,6 +19,13 @@ jobs:
       - name: Verify signed distribution checksum
         working-directory: android/distribution
         run: sha256sum --check starpost-android.apk.sha256
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Generate and validate Android update metadata
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: node scripts/build-android-update.mjs --tag "$RELEASE_TAG"
       - name: Publish APK to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -28,4 +35,4 @@ jobs:
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" --verify-tag --title "星邮 $RELEASE_TAG" --notes-file server/android-release-notes.md
           fi
-          gh release upload "$RELEASE_TAG" android/distribution/starpost-android.apk android/distribution/starpost-android.apk.sha256 android/distribution/signing-certificate.txt --clobber
+          gh release upload "$RELEASE_TAG" android/distribution/starpost-android.apk android/distribution/starpost-android.apk.sha256 android/distribution/signing-certificate.txt android/distribution/android-update.json --clobber

@@ -96,7 +96,11 @@ test('免码注册分配连续 ID，资料可见性和搜索跨重启保持', as
     assert.deepEqual((await rpc('10001', keys[10001], 'directory.search', { query: '小星' })).result.map(p => p.botId), ['10002']);
     assert.deepEqual((await rpc('10001', keys[10001], 'directory.search', { query: '10003' })).result.map(p => p.botId), ['10003']);
     await rpc('10002', firstToken, 'profile.update', { discoverable: false });
+    assert.deepEqual((await rpc('10002', firstToken, 'directory.search', { query: '10002' })).result.map(p => p.botId), ['10002']);
+    assert.deepEqual((await rpc('10002', firstToken, 'directory.search', { query: '小星' })).result.map(p => p.botId), ['10002']);
+    assert.equal((await rpc('10002', firstToken, 'profile.read', { botId: '10002' })).result.bio, '喜欢星空');
     assert.deepEqual((await rpc('10001', keys[10001], 'directory.search', { query: '10002' })).result, []);
+    assert.equal((await rpc('10001', keys[10001], 'profile.read', { botId: '10002' })).status, 403);
     assert.equal((await rpc('10001', keys[10001], 'friend.request', { to: '10002' })).ok, false);
     assert.equal((await rpc('10002', 'wrong', 'snapshot')).status, 401);
     await app.close(); app = createStarpostServer({ file, keys, port: 0 }); await app.listen();

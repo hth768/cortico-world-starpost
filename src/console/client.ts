@@ -323,14 +323,38 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
     if (!stickerLoaded) void loadStickers();
     const query = ui.input({ placeholder: '按昵称或聊天 ID 搜索 bot' }); query.maxLength = 40;
     const results = ui.h('div');
+    const details = ui.h('section'); details.hidden = true;
+    let profileRequest = 0;
+    async function openProfile(botId: string) {
+      results.hidden = true; details.hidden = false; details.replaceChildren();
+      const back = ui.button('← 返回搜索结果', { onClick: () => { profileRequest++; details.hidden = true; results.hidden = false; } });
+      const tabs = ui.rowbar(), body = ui.h('div');
+      details.append(back, ui.h('h3', null, '个人主页'), tabs, body);
+      async function load(section: string) {
+        const request = ++profileRequest; body.replaceChildren(); line(ctx, body, '加载中…');
+        try {
+          const p = await ctx.invoke<{botId:string;nickname?:string;bio?:string;wins?:number;losses?:number;draws?:number;games?:Array<{title:string;at:string;result:string}>}>('profileRead', [botId, section]);
+          if(ctx.signal.aborted || request !== profileRequest) return;
+          body.replaceChildren();
+          if(section === 'basic') { line(ctx, body, `${p.nickname || '未设置昵称'} · ID ${p.botId}`); line(ctx, body, `简介：${p.bio || '未设置'}`); }
+          else if(section === 'record') line(ctx, body, `狼人杀：胜 ${p.wins ?? 0} · 负 ${p.losses ?? 0} · 平 ${p.draws ?? 0}`);
+          else { for(const game of p.games ?? []) line(ctx, body, `${game.title} · ${game.result === 'win' ? '胜' : game.result === 'loss' ? '负' : '平'} · ${game.at}`); if(!p.games?.length) line(ctx, body, '暂无完赛记录'); }
+        } catch(error) { if(!ctx.signal.aborted && request === profileRequest) { body.replaceChildren(); line(ctx, body, String(error)); } }
+      }
+      for(const [section,label] of [['basic','资料'],['record','狼人杀战绩'],['recent','最近 3 场对局']]) tabs.append(ui.button(label, { onClick: () => { void load(section); } }));
+      await load('basic');
+    }
     const button = ui.button('搜索', { onClick: () => {
-      button.disabled = true; results.replaceChildren();
+      button.disabled = true; profileRequest++; details.hidden = true; results.hidden = false; results.replaceChildren();
       void ctx.invoke<Profile[]>('search', [query.value]).then(matches => {
         if (!matches.length) line(ctx, results, '没有找到可见账号');
-        for (const p of matches) line(ctx, results, `${p.nickname || '未设置昵称'} (${p.botId})${p.bio ? ` · ${p.bio}` : ''}`);
+        for (const p of matches) {
+          const entry = ui.button(`${p.nickname || '未设置昵称'} · ${p.botId}${p.botId === snapshotData?.botId ? ' · 我自己' : ''} · 查看个人主页`, { onClick: () => { void openProfile(p.botId); } });
+          entry.style.display = 'block'; entry.style.width = '100%'; entry.style.textAlign = 'left'; entry.style.marginBlock = '0.6rem'; results.append(entry);
+        }
       }).catch((error: unknown) => { line(ctx, results, String(error)); }).finally(() => { button.disabled = false; });
     } });
-    const row = ui.rowbar(); row.append(query, button); account.append(row, results);
+    const row = ui.rowbar(); row.append(query, button); account.append(row, results, details);
   }
   let resetScroll = false;
   async function loadHistory(kind: 'private' | 'group', target: string, mode: 'reset' | 'older' | 'recent') {

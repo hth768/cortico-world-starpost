@@ -40,6 +40,7 @@ private fun rulesText(game:JSONObject):String=roleSummary(game.optJSONObject("ru
 @Composable internal fun GameScreen(ui:UiActions,s:ClientState){when(s.route.page){
     "humanRoom"->HumanRoom(ui,s)
     "schedule"->ScheduleGame(ui,s)
+    "gameInvite"->GameInvites(ui,s)
     else->ContentList(ui){when(s.route.page){
         "games"->{
             Entry("我的 bot 对局","包含加入其他 bot 的预约、私密局与历史局"){ui.go("botGames",kind="own")}
@@ -54,11 +55,27 @@ private fun rulesText(game:JSONObject):String=roleSummary(game.optJSONObject("ru
             s.data.rows("items").forEach{g->Entry("${if(g.str("gameType")=="mystery")"剧本杀" else "狼人杀"} · ${g.str("title")}","${gameStates[g.str("status")]?:g.str("status")} · ${time(g.str("scheduledAt"))} · ${if(g.optBoolean("public"))"公开" else "私密"}"){ui.go("game",g.str("gameId"))}}
         }
         "featuredSummary"->{SectionTitle("每日精彩对局","北京时间每天 00:00 结算前一日。");Text(if(s.data.optBoolean("published"))"${s.data.str("date")} · 共开局 ${s.data.optInt("totalGames")} 场" else "当天统计尚未发布");val f=s.data.optJSONObject("featured");if(f!=null)Entry(f.str("title"),"最长公开完赛局 · ${f.optLong("durationMs")/60000} 分钟"){ui.go("featured",f.str("gameId"))}else EmptyState("暂无精彩对局","完赛的公开对局参与每日选取。")}
-        "humanReservation"->{val g=s.data.optJSONObject("game")?:JSONObject();SectionTitle(g.str("title"),"${gameStates[g.str("status")]?:g.str("status")} · ${time(g.str("scheduledAt"))} · 已报到 ${g.optInt("checkedIn")} 人");Panel{Text(rulesText(g))};if(g.str("status")=="scheduled"){Button(enabled=!s.working,onClick={ui.vm.perform("human.checkin",obj("gameId" to s.route.id))}){Text("集合报到")};OutlinedButton(onClick={ui.confirm("退出预约",g.str("title")){ui.vm.perform("human.leave",obj("gameId" to s.route.id),Route("games"))}}){Text("退出预约")};if(g.str("creator")==s.data.str("humanId"))TextButton(onClick={ui.confirm("取消本局","所有预约参与者都会看到取消结果。 "){ui.vm.perform("human.cancel",obj("gameId" to s.route.id),Route("games"))}}){Text("取消本局",color=MaterialTheme.colorScheme.error)}}else{Pager(ui,s);GameMessages(ui,s.data.rows("messages"))}}
+        "humanReservation"->{val g=s.data.optJSONObject("game")?:JSONObject();SectionTitle(g.str("title"),"${gameStates[g.str("status")]?:g.str("status")} · ${time(g.str("scheduledAt"))} · 已报到 ${g.optInt("checkedIn")} 人");Panel{Text(rulesText(g))};if(g.optBoolean("canInvite"))Button(enabled=!s.working,onClick={ui.go("gameInvite",s.route.id)}){Text("邀请好友 / 群成员")};if(g.str("status")=="scheduled"){Button(enabled=!s.working,onClick={ui.vm.perform("human.checkin",obj("gameId" to s.route.id))}){Text("集合报到")};OutlinedButton(onClick={ui.confirm("退出预约",g.str("title")){ui.vm.perform("human.leave",obj("gameId" to s.route.id),Route("games"))}}){Text("退出预约")};if(g.str("creator")==s.data.str("humanId"))TextButton(onClick={ui.confirm("取消本局","所有预约参与者都会看到取消结果。 "){ui.vm.perform("human.cancel",obj("gameId" to s.route.id),Route("games"))}}){Text("取消本局",color=MaterialTheme.colorScheme.error)}}else{Pager(ui,s);GameMessages(ui,s.data.rows("messages"))}}
         else->{val g=s.data.optJSONObject(if(s.route.page=="featured")"featured" else "game")?:JSONObject();SectionTitle(g.str("title"),if(s.route.page=="featured")"${s.data.str("date")} · 当日 ${s.data.optInt("totalGames")} 场 · ${g.optLong("durationMs")/60000} 分钟"else "${if(g.str("gameType")=="mystery")"剧本杀" else "狼人杀"} · ${gameStates[g.str("status")]?:g.str("status")}");Text("对局过程 · 只读查看",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant);Pager(ui,s);GameMessages(ui,s.data.rows("messages"))}
     }}
 }}
 @Composable private fun GameMessages(ui:UiActions,messages:List<JSONObject>){messages.forEach{m->val channel=mapOf("public" to "公共","private" to "私密","wolf" to "狼人","judge" to "法官","outside" to "局外")[m.str("channel")]?:m.str("channel");Bubble(ui,m,false,text=gameText(m),label="${m.str("senderNickname",m.str("sender"))} · $channel")}}
+@Composable private fun GameInvites(ui:UiActions,s:ClientState){
+    var kind by rememberSaveable(s.route.id){mutableStateOf("private")}
+    ContentList(ui){
+        SectionTitle("邀请朋友一起玩","公开或私密预约都能邀请；对方自行决定是否加入和报到。")
+        ChoiceTabs(listOf("private" to "好友 / 我的 bot","group" to "群成员"),kind){kind=it}
+        val rows=if(kind=="group")s.data.rows("groups")else(s.data.rows("friendProfiles")+s.account.rows("bots")).distinctBy{it.str("botId")}
+        if(rows.isEmpty())EmptyState("暂无可邀请对象",if(kind=="group")"加入群聊后可邀请群成员。" else "添加好友或绑定自己的 bot 后可发出邀请。")
+        rows.forEach{p->val id=p.str(if(kind=="group")"id" else "botId");val label=p.str(if(kind=="group")"name" else "nickname",id)
+            Entry(label,if(kind=="group")"邀请这个群的成员 · $id" else "邀请参加本局 · $id"){
+                if(!s.working)ui.confirm("发出游戏邀请",if(kind=="group")"向「$label」的群成员发送本局邀请？" else "邀请「$label」加入本局？"){
+                    ui.vm.perform("human.invite",obj("gameId" to s.route.id,"sourceKind" to kind,"sourceTarget" to id),Route("humanReservation",s.route.id)){r->ui.vm.notice(if(r.optInt("invited")>0)"已邀请 ${r.optInt("invited")} 位成员，等待对方加入" else "没有新的可邀请成员，可能已受邀或已加入")}
+                }
+            }
+        }
+    }
+}
 @Composable private fun HumanRoom(ui:UiActions,s:ClientState){
     val g=s.data.optJSONObject("game")?:JSONObject();var draft by rememberSaveable(s.route.id){mutableStateOf("")};val channels=s.data.strings("channels");var channel by rememberSaveable(s.route.id){mutableStateOf("public")};LaunchedEffect(channels){if(channel !in channels)channel=channels.firstOrNull()?:"public"}
     val messages=s.data.rows("messages");val list=rememberLazyListState()

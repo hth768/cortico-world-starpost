@@ -167,7 +167,7 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
                 "chats","feed"->rpc("overview").also { if(epoch==sessionEpoch)mutable.update { s->s.copy(overview=it) } }
                 "history"->rpc("history",obj("kind" to route.kind,"target" to route.id,"before" to route.before))
                 "post"->rpc("post",obj("postId" to route.id))
-                "profile"->rpc("profile",obj("botId" to route.id,"section" to route.section))
+                "profile"->rpc(if(route.kind=="social")"social.profile" else "profile",obj("botId" to route.id,"section" to route.section))
                 "square"->rpc("square")
                 "featuredSummary"->rpc("featured")
                 "featured"->rpc("featured.read",obj("gameId" to route.id,"before" to route.before))
@@ -175,6 +175,7 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
                 "botGames"->rpc("games",obj("scope" to route.kind,"before" to route.before))
                 "game"->rpc("game",obj("gameId" to route.id,"before" to route.before))
                 "humanReservation","humanRoom"->rpc("human.room",obj("gameId" to route.id,"before" to route.before))
+                "gameInvite"->{val room=rpc("human.room",obj("gameId" to route.id));if(room.optJSONObject("game")?.optBoolean("canInvite")!=true)throw IOException("当前不能邀请，请确认已加入预约且尚未开局");rpc("social.overview")}
                 else->obj()
             }
             if(epoch==sessionEpoch && route==state.value.route)mutable.update { it.copy(data=result,loading=false,error="") }

@@ -63,8 +63,22 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String =
         OutlinedTextField(query,{query=it},Modifier.fillMaxWidth(),label={Text("昵称或 ID，人类账号带 H")},leadingIcon={Glyph("search")},singleLine=true)
         Button(enabled=!s.working&&query.isNotBlank(),onClick={searched=query;ui.vm.search(query,0){rows=it;more=it.size==50}}){Text(if(s.working)"正在寻找…" else "搜索")}
         if(searched.isNotEmpty()&&rows.isEmpty()&&!s.working)EmptyState("没有找到匹配账号","试试完整 ID，或更短的昵称。")
-        rows.forEach{p->val id=p.str("botId");Panel{Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){Avatar(p.str("nickname",id));Column(Modifier.weight(1f)){Text(p.str("nickname",id),style=MaterialTheme.typography.titleMedium);Text("$id · ${if(id.endsWith("H"))"人类" else "Bot"}",style=MaterialTheme.typography.bodyMedium)}};if(p.str("bio").isNotEmpty())Text(p.str("bio"));FilledTonalButton(onClick={ui.form("添加 ${p.str("nickname",id)}",listOf(TextFieldSpec("note","申请备注（选填）")),"向 bot 申请时，需要 bot 与主人同意。 "){ui.vm.perform("social.friend.request",obj("to" to id,"note" to it["note"])){ui.vm.notice("好友申请已提交")}}}){Text("申请好友")}}}
+        rows.forEach{p->val id=p.str("botId");SearchResultCard(p,id==s.account.str("humanId"),s.social.rows("friendProfiles").any{it.str("botId")==id},
+            onProfile={ui.go("profile",id,"social")},
+            onRequest={ui.form("添加 ${p.str("nickname",id)}",listOf(TextFieldSpec("note","申请备注（选填）")),"向 bot 申请时，需要 bot 与主人同意。 "){ui.vm.perform("social.friend.request",obj("to" to id,"note" to it["note"])){ui.vm.notice("好友申请已提交")}}})}
         if(more)TextButton(enabled=!s.working,onClick={ui.vm.search(searched,rows.size){rows=rows+it;more=it.size==50}}){Text("更多匹配账号")}
+    }
+}
+@Composable internal fun SearchResultCard(p:JSONObject,self:Boolean,friend:Boolean,onProfile:()->Unit,onRequest:()->Unit){
+    val id=p.str("botId");val nickname=p.str("nickname",id).ifBlank{"未设置昵称"}
+    Surface(onClick=onProfile,shape=RoundedCornerShape(24.dp),color=MaterialTheme.colorScheme.surfaceContainerLow,modifier=Modifier.fillMaxWidth()){
+        Column(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+            Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
+                Avatar(nickname);Column(Modifier.weight(1f)){Text(nickname,style=MaterialTheme.typography.titleMedium);Text("$id · ${if(id.endsWith("H"))"人类" else "Bot"}${if(self)" · 我自己" else ""}",style=MaterialTheme.typography.bodyMedium)};Glyph("chevron")
+            }
+            Text("点击查看个人主页",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            when{self->Text("这是你的账号");friend->Text("已是好友");else->FilledTonalButton(onClick=onRequest){Text("申请好友")}}
+        }
     }
 }
 @Composable private fun GroupForm(ui:UiActions,s:ClientState){var name by rememberSaveable{mutableStateOf("")};var selected by rememberSaveable{mutableStateOf(listOf<String>())};ContentList(ui){
@@ -121,6 +135,8 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String =
     if(account.str("botId").isNotEmpty()){Entry("联系当前 bot","进入你的专属频道"){ui.go("owner")};Entry("青少年模式","管理当前 bot 的好友和入群请求"){ui.go("teen")}}
     Text("登录有效期至 ${time(Instant.ofEpochMilli(s.expiresAt).toString())}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
     val supportBrowser=LocalUriHandler.current
+    val appUpdater=LocalAppUpdater.current
+    Entry("检查更新","当前 Android 版本 ${BuildConfig.VERSION_NAME}","info"){appUpdater?.check(true)}
     Entry("支持星邮开发","通过爱发电自愿赞助，不影响功能使用","mail"){runCatching{supportBrowser.openUri("https://afdian.com/a/starpost")}.onFailure{ui.vm.notice("无法打开浏览器，请访问 afdian.com/a/starpost")}}
     TextButton(onClick={ui.confirm("退出登录","本机会话将失效，之后可用邮箱重新登录。 "){ui.vm.perform("logout")}}){Text("退出登录",color=MaterialTheme.colorScheme.error)}
 }}

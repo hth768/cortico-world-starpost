@@ -20,4 +20,5 @@ android/build/
 android/.gradle/
 android/.kotlin/
 android/local.properties
+android/distribution/android-update.json
 

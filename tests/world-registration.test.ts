@@ -34,6 +34,9 @@ test('初始面板注册后，本机身份与 bot 资料工具可跨重启使用
     const profileTool = familyTool(second, 'profile');
     const update = await profileTool.handler({ action: 'update', nickname: '小星', bio: '看星星', discoverable: true }, {} as never);
     assert.match(String(update), /小星/);
+    const ownSearch = await second.webUi().invoke!('viewer', 'search', ['小星']) as Array<{botId:string}>;
+    assert.deepEqual(ownSearch.map(p => p.botId), ['10002']);
+    assert.deepEqual(await second.webUi().invoke!('viewer', 'profileRead', ['10002', 'basic']), { botId: '10002', nickname: '小星', bio: '看星星' });
     app.store.befriend('10001', '10002');
     const stickerBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lX8AAAAASUVORK5CYII=', 'base64');
     writeFileSync(join(dir, 'sticker.png'), stickerBytes);
