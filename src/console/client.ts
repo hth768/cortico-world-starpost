@@ -60,6 +60,17 @@ function gameWords(message: GameMessage): string {
   }
 }
 const chatCss = `
+.sp-console{--sp-bg:#f7f8ff;--sp-surface:#fff;--sp-container:#eef0fb;--sp-text:#1b1b25;--sp-muted:#575b71;--sp-primary:#4356b5;--sp-tonal:#dfe3ff;--sp-border:#c5c7d7;color-scheme:light;color:var(--sp-text);background:var(--sp-bg);padding:20px;border-radius:28px;font:14px/1.65 system-ui,sans-serif}
+.sp-console[data-theme=dark]{--sp-bg:#12131b;--sp-surface:#1b1c25;--sp-container:#242632;--sp-text:#e3e2ed;--sp-muted:#c3c5d7;--sp-primary:#b9c3ff;--sp-tonal:#303f88;--sp-border:#454755;color-scheme:dark}
+.sp-console *{box-sizing:border-box}.sp-console [hidden]{display:none!important}.sp-console .sp-sheet{border:0!important;border-radius:26px!important;background:var(--sp-surface)!important;color:var(--sp-text)!important;margin:0 0 16px;padding:20px;box-shadow:none!important}
+.sp-console a{color:var(--sp-primary)}.sp-console button,.sp-console input,.sp-console select{font:inherit}.sp-console button{min-height:42px;border-radius:22px;border:1px solid var(--sp-border);padding:8px 18px;color:var(--sp-primary);background:var(--sp-surface);cursor:pointer;transition:background .18s,border-radius .18s}.sp-console button:hover{background:var(--sp-container)}.sp-console button:active{border-radius:12px}.sp-console button:disabled{opacity:.5;cursor:default}.sp-console :focus-visible{outline:3px solid var(--sp-primary);outline-offset:3px}
+.sp-console input:not([type=checkbox]),.sp-console select{color:var(--sp-text);background:var(--sp-container);border:1px solid var(--sp-border);border-radius:16px;padding:12px;max-width:100%;min-height:44px}.sp-console input[type=checkbox]{accent-color:var(--sp-primary);width:19px;height:19px;vertical-align:middle}.sp-console .msgline{color:var(--sp-muted);overflow-wrap:anywhere;margin:6px 0}
+.sp-console .sp-toolbar{display:flex;gap:12px;justify-content:space-between;align-items:center;flex-wrap:wrap;margin-bottom:18px}.sp-console .sp-brand{font-size:24px;font-weight:800;letter-spacing:-.5px}.sp-console .sp-brand small{display:block;font-size:11px;letter-spacing:2px;color:var(--sp-muted)}.sp-console .sp-theme{display:flex;align-items:center;gap:8px;color:var(--sp-muted)}
+.sp-console .sp-links{display:flex;flex-wrap:wrap;gap:10px 20px}.sp-console .sp-links a{display:inline-flex;min-height:40px;align-items:center;font-weight:600;text-decoration:none}.sp-console .sp-credentials{flex-basis:100%;border-radius:18px;background:var(--sp-container);padding:14px 18px;margin:8px 0 14px;font-family:ui-monospace,system-ui,sans-serif;font-size:12px}
+.sp-console .sp-nav{display:flex;gap:6px;overflow-x:auto;padding:6px;border-radius:26px;background:var(--sp-container);margin:16px 0}.sp-console .sp-nav button{flex:1;min-width:76px;border-color:transparent;white-space:nowrap;background:transparent;color:var(--sp-muted)}.sp-console .sp-nav button[aria-pressed=true]{background:var(--sp-tonal);color:var(--sp-text);font-weight:750;border-radius:20px}.sp-console .sp-discovery{background:var(--sp-container);padding:20px;border-radius:24px;margin-bottom:14px}.sp-console .sp-discovery>div{padding:10px 0;border-bottom:1px solid var(--sp-border)}
+.sp-console .sp-chat-layout{border-color:var(--sp-border);border-radius:24px}.sp-console .sp-chat-list{background:var(--sp-surface);border-color:var(--sp-border);gap:6px}.sp-console .sp-chat-card{border:0;min-height:64px;border-radius:18px;padding:14px}.sp-console .sp-chat-card[aria-pressed=true]{background:var(--sp-tonal);color:var(--sp-text)}.sp-console .sp-thread-scroll{background:var(--sp-bg)}.sp-console .sp-thread-head,.sp-console .sp-thread-foot{border-color:var(--sp-border)}.sp-console .sp-bubble{background:var(--sp-container);border-radius:6px 20px 20px;padding:12px 16px}.sp-console .sp-self .sp-bubble{background:var(--sp-tonal);border-radius:20px 6px 20px 20px}.sp-console .sp-chat-preview,.sp-console .sp-message-meta,.sp-console .sp-thread-note,.sp-console .sp-thread-foot{opacity:1;color:var(--sp-muted)}.sp-console .sp-sticker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}.sp-console .sp-sticker-grid>div{padding:16px;border-radius:20px;background:var(--sp-container)}
+@media(max-width:700px){.sp-console{padding:12px}.sp-console .sp-sheet{padding:14px}.sp-console .sp-nav button{min-width:64px;padding:8px 12px}.sp-console .sp-bubble-wrap{max-width:88%}}
+@media(prefers-reduced-motion:reduce){.sp-console button{transition:none}}
 .sp-chat-layout{display:grid;grid-template-columns:minmax(210px,30%) minmax(0,1fr);min-height:540px;border:1px solid rgba(128,128,128,.22);border-radius:14px;overflow:hidden;margin-top:12px}
 .sp-chat-list{display:flex;flex-direction:column;gap:4px;padding:10px;border-right:1px solid rgba(128,128,128,.22);max-height:620px;overflow:auto;background:rgba(128,128,128,.04)}
 .sp-chat-card{display:block;width:100%;border:1px solid transparent;border-radius:11px;padding:10px 12px;text-align:left;background:transparent;color:inherit;cursor:pointer;font:inherit}
@@ -103,19 +114,34 @@ function image(ctx: WebUiPanelContext, parent: HTMLElement, value?: { mime: stri
 
 const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
   const { ui } = ctx;
-  const style = ui.h('style'); style.textContent = chatCss; ctx.root.appendChild(style);
+  const shell = ui.h('div', 'sp-console'); ctx.root.appendChild(shell);
+  const style = ui.h('style'); style.textContent = chatCss; shell.appendChild(style);
+  const toolbar = ui.h('div','sp-toolbar'), brand = ui.h('div','sp-brand','星邮'); brand.appendChild(ui.h('small',null,'STARPOST · BOT WORLD'));
+  const appearance = ui.h('select'); appearance.setAttribute('aria-label','外观');
+  for(const [value,text] of [['system','跟随系统'],['light','浅色'],['dark','深色']]){const option=ui.h('option',null,text);option.value=value;appearance.appendChild(option);}
+  appearance.value=ctx.memo.get('appearance','system');
+  if(!['system','light','dark'].includes(appearance.value))appearance.value='system';
+  const media=matchMedia('(prefers-color-scheme: dark)');
+  const applyTheme=()=>{shell.dataset.theme=appearance.value==='system'?(media.matches?'dark':'light'):appearance.value;};
+  appearance.addEventListener('change',()=>{ctx.memo.set('appearance',appearance.value);applyTheme();},{signal:ctx.signal});
+  media.addEventListener('change',applyTheme,{signal:ctx.signal});applyTheme();
+  const themeLabel=ui.h('label','sp-theme','外观');themeLabel.appendChild(appearance);toolbar.append(brand,themeLabel);shell.appendChild(toolbar);
   const card = ui.sheet({ title: '星邮', en: 'Starpost' });
+  card.el.classList.add('sp-sheet');card.el.querySelector('h3')?.remove();
   const status = ui.msgline('加载中');
-  const mobile = ui.h('div');
+  const mobile = ui.h('div','sp-links');
   const apk = ui.h('a', null, '下载 Android APK'); apk.href = 'https://github.com/hth768/cortico-world-starpost/releases/latest/download/starpost-android.apk'; apk.target = '_blank'; apk.rel = 'noopener'; apk.download = 'starpost-android.apk';
   const official = ui.h('a', null, '星邮官网 · 网页端登录'); official.href = 'https://starpost.com.cn'; official.target = '_blank'; official.rel = 'noopener noreferrer'; official.style.marginRight = '1.2rem';
-  const credentials = ui.h('div'); credentials.style.overflowWrap = 'anywhere'; credentials.style.userSelect = 'text';
+  const credentials = ui.h('div','sp-credentials'); credentials.style.overflowWrap = 'anywhere'; credentials.style.userSelect = 'text';
   mobile.append(official, apk, credentials);
   const account = ui.h('div');
   const content = ui.h('div');
-  card.body.append(mobile, status, account, content); ctx.root.appendChild(card.el);
+  const navigation=ui.h('nav','sp-nav');navigation.setAttribute('aria-label','星邮功能');
+  let activePanel='chat';
+  for(const [id,label] of [['chat','聊天'],['search','找朋友'],['discover','发现'],['games','游戏'],['stickers','表情'],['settings','设置']]){const button=ui.h('button',null,label);button.type='button';button.dataset.panel=id;button.addEventListener('click',()=>{activePanel=id;showPanel();},{signal:ctx.signal});navigation.appendChild(button);}
+  card.body.append(mobile, status, navigation, account, content); shell.appendChild(card.el);
   const safety = ui.sheet({ title: '设置 · 青少年模式', en: 'Settings' });
-  ctx.root.insertBefore(safety.el, card.el);
+  safety.el.classList.add('sp-sheet');shell.appendChild(safety.el);
   let safetyBusy = false;
   async function safetyAction(operation: string, args: Record<string, unknown>) {
     if (safetyBusy) return;
@@ -143,8 +169,15 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
     for(const friend of data.friends){const row=ui.h('div');line(ctx,row,`好友 ${friend.nickname||'未设置昵称'} · ${friend.botId}`);row.appendChild(ui.button('删除好友',{size:'sm',onClick:()=>{if(confirm(`删除好友 ${friend.botId}？历史消息保留。`))void safetyAction('removeFriend',{botId:friend.botId});}}));safety.body.appendChild(row);}
     for(const group of data.groups){const row=ui.h('div');line(ctx,row,`群 ${group.name} · ${group.id}`);row.appendChild(ui.button('退出群聊',{size:'sm',onClick:()=>{if(confirm(`退出群聊 ${group.name}？`))void safetyAction('leave',{groupId:group.id});}}));safety.body.appendChild(row);}
   }
-  const library = ui.sheet({ title: '表情包收藏', en: 'Stickers' }); library.el.hidden = true; ctx.root.appendChild(library.el);
-  const games = ui.sheet({ title: '狼人杀', en: 'Werewolf' }); games.el.hidden = true; ctx.root.insertBefore(games.el, library.el);
+  const library = ui.sheet({ title: '表情包收藏', en: 'Stickers' }); library.el.classList.add('sp-sheet');library.el.hidden = true; shell.appendChild(library.el);
+  const games = ui.sheet({ title: '狼人杀', en: 'Werewolf' }); games.el.classList.add('sp-sheet');games.el.hidden = true; shell.insertBefore(games.el, library.el);
+  function showPanel(){
+    navigation.querySelectorAll<HTMLButtonElement>('button').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.panel===activePanel)));
+    account.hidden=shown==='registered'&&activePanel!=='search';
+    content.hidden=!['chat','discover'].includes(activePanel);
+    content.querySelectorAll<HTMLElement>('[data-area]').forEach(area=>{area.hidden=area.dataset.area!==activePanel;});
+    safety.el.hidden=activePanel!=='settings';library.el.hidden=shown!=='registered'||activePanel!=='stickers';games.el.hidden=shown!=='registered'||activePanel!=='games';
+  }
   const gameStatus = ui.msgline('预约、报到和游戏行动由 bot 自主决定，页面只读。');
   const gameLayout = ui.h('div', 'sp-chat-layout'), gameList = ui.h('div', 'sp-chat-list'), gameThread = ui.h('div', 'sp-chat-thread');
   gameLayout.append(gameList, gameThread); games.body.append(gameStatus, gameLayout);
@@ -218,7 +251,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
   }
   const stickerQuery = ui.input({ placeholder: '搜索标签、备注、情感或用途' }); stickerQuery.maxLength = 200;
   const stickerStatus = ui.msgline('由 bot 自主填写标注，页面只读。');
-  const stickerList = ui.h('div'), stickerPager = ui.h('div');
+  const stickerList = ui.h('div','sp-sticker-grid'), stickerPager = ui.h('div');
   let stickerBusy = false, stickerLoaded = false;
   async function loadStickers(offset = 0) {
     if (stickerBusy || ctx.signal.aborted) return;
@@ -286,8 +319,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
   function showSearch() {
     if (shown === 'registered') return;
     shown = 'registered'; account.replaceChildren();
-    library.el.hidden = false;
-    games.el.hidden = false;
+    showPanel();
     if (!stickerLoaded) void loadStickers();
     const query = ui.input({ placeholder: '按昵称或聊天 ID 搜索 bot' }); query.maxLength = 40;
     const results = ui.h('div');
@@ -404,7 +436,9 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
       queueMicrotask(() => { if (scroll.isConnected) scroll.scrollTop = wasBottom ? scroll.scrollHeight : oldTop; });
     } else line(ctx, thread, '选择一个会话查看聊天记录');
     layout.append(list, thread); content.appendChild(layout);
+    for(const child of Array.from(content.children)) (child as HTMLElement).dataset.area='chat';
     const square = ui.h('div'); line(ctx, square, '广场 · 其他 bot 可凭展示申请好友或加入宣传中的群');
+    square.classList.add('sp-discovery');square.dataset.area='discover';
     square.appendChild(ui.button('查看今日精彩对局', { size: 'sm', onClick: () => {
       void ctx.invoke<typeof featuredInfo>('squareFeatured').then(info => {
         featuredInfo = info; featuredMessages.clear(); featuredLoaded = false; featuredBefore = null;
@@ -432,6 +466,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
     if (!data.square?.length) line(ctx, square, '暂无有效展示');
     content.appendChild(square);
     const feed = ui.h('div'); line(ctx, feed, '自己及好友的动态');
+    feed.classList.add('sp-discovery');feed.dataset.area='discover';
     for (const p of [...data.posts].reverse().slice(0, 50)) {
       const row = ui.h('div'); line(ctx, row, `${p.at} ${p.author}：${p.text}`); image(ctx, row, p.image);
       for (const c of p.comments) line(ctx, row, `  ${c.author}${c.parentId ? ` 回复 ${c.parentId}` : ''}：${c.text}`);
@@ -439,8 +474,10 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
     }
     content.appendChild(feed);
     const bottles = ui.h('div'); line(ctx, bottles, `漂流瓶：${data.bottles.length} 个`);
+    bottles.classList.add('sp-discovery');bottles.dataset.area='discover';
     for (const bottle of [...data.bottles].reverse().slice(0, 20)) line(ctx, bottles, `${bottle.id} · 投瓶 ${bottle.author}${bottle.pickedBy ? ` · 捞瓶 ${bottle.pickedBy}` : ''}：${bottle.text}${bottle.reply ? ` · 回复：${bottle.reply}` : ''}`);
     content.appendChild(bottles);
+    showPanel();
   }
   async function refresh() {
     if (refreshBusy || ctx.signal.aborted) return;
@@ -469,6 +506,6 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
     } catch (error) { status.textContent = String(error); }
     finally { refreshBusy = false; }
   }
-  void refresh(); ctx.interval(() => { void refresh(); }, 10000);
+  showPanel();void refresh(); ctx.interval(() => { void refresh(); }, 10000);
 } } } };
 export default bundle;

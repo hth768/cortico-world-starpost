@@ -1,0 +1,21 @@
+<resources>
+  <color name="icon_background">#4356B5</color>
+  <style name="Theme.Starpost" parent="android:style/Theme.Material.Light.NoActionBar">
+    <item name="android:fontFamily">sans</item>
+    <item name="android:windowLightStatusBar">true</item>
+    <item name="android:windowBackground">#F9F9FF</item>
+    <item name="android:colorAccent">#4356B5</item>
+  </style>
+  <style name="Theme.Starpost.Dark" parent="android:style/Theme.Material.NoActionBar">
+    <item name="android:fontFamily">sans</item>
+    <item name="android:windowLightStatusBar">false</item>
+    <item name="android:windowBackground">#11121B</item>
+    <item name="android:colorAccent">#BAC3FF</item>
+  </style>
+  <style name="Theme.Starpost.Light" parent="android:style/Theme.Material.Light.NoActionBar">
+    <item name="android:fontFamily">sans</item>
+    <item name="android:windowLightStatusBar">true</item>
+    <item name="android:windowBackground">#F9F9FF</item>
+    <item name="android:colorAccent">#4356B5</item>
+  </style>
+</resources>

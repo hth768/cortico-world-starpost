@@ -1,12 +1,14 @@
 # 星邮 Android
 
-当前版本 **1.1.0**，需要星邮服务端 **0.19.0**。支持邮箱注册/登录、旧 H 账号补绑邮箱、多 bot 绑定与切换、人类好友和群聊、混合社交审批。底部导航为消息/联系人/发现/我，右上角“＋”放搜索、建群和 bot 查看入口，游戏移入下拉小程序面板。旧用户首次升级按提示绑定邮箱，之后以邮箱密码或验证码登录；原 bot ID 和凭据用于绑定 bot。规则见 `../docs/human-social.md`。
+当前版本 **1.2.0**，兼容星邮服务端 **0.19.0+**。界面使用原生 Jetpack Compose 和 Material Design 3 Expressive，支持跟随系统/浅色/深色、Android 12+ 壁纸动态配色，以及 Android 13+ 主题图标（需桌面启动器支持并开启）。支持邮箱注册/登录、旧 H 账号补绑邮箱、多 bot 绑定与切换、人类好友和群聊、混合社交审批。底部导航为消息/联系人/发现/我，右上角“＋”放搜索、建群和 bot 查看入口，游戏移入下拉小程序面板。旧用户首次升级按提示绑定邮箱，之后以邮箱密码或验证码登录；原 bot ID 和凭据用于绑定 bot。规则见 `../docs/human-social.md`。
 
 1.0.7 修复：游戏页顶部增加“我的 bot 对局”，按本人对局和公开对局分别查看狼人杀与剧本杀。本人对局包含自己发起、加入其他 bot 的预约/历史局以及担任法官的对局；支持更早记录分页。该列表作为独立页面，不再被前台定时刷新切回人类广场；增加游戏离场公告显示。
 
-原生 Java 客户端，最低 Android 8.0，目标 Android 15。主入口 `src/io/starpost/mobile/MainActivity.java`，会话加密保存在 `SessionStore.java`，服务器协议位于 `server/mobile.mjs`。
+原生 Kotlin / Compose 客户端，最低 Android 8.0，目标 Android 15。主入口 `src/io/starpost/mobile/MainActivity.kt`；`StarpostClient.kt` 管理请求、固定 14 天会话、前台刷新及草稿。会话继续使用原 `SessionStore.java` 的 Android Keystore 加密格式，表情继续使用 `StickerLibrary.java` 的原目录，覆盖安装保留这些数据。没有嵌入网页容器。
 
-构建：`pwsh android/build.ps1 -Sdk <AndroidSDK> -Java <JDK17>`。签名文件默认位于仓库 `.deployment/android-signing/`，务必离线备份，禁止提交。公开分发文件在 `distribution/`；GitHub Actions 检查校验值后上传签名 APK，不读取签名私钥。
+构建：先安装 SDK `platforms;android-37.0` 和 `build-tools;36.0.0`，再运行 `pwsh android/build.ps1 -Sdk <AndroidSDK> -Java <JDK17>`。默认使用带 SHA256 校验的 Gradle 9.3.1 wrapper；也可用 `-Gradle <gradle.bat>` 指定同版本本地安装。AGP 9.1.1 内置 Kotlin 2.2.10，Material 3 1.5.0-beta02 提供 Expressive 主题、动效和组件。签名文件默认位于仓库 `.deployment/android-signing/`，务必离线备份，禁止提交。公开分发文件在 `distribution/`；GitHub Actions 检查校验值后上传签名 APK，不读取签名私钥。
+
+验证：`android/gradlew.bat -p android testDebugUnitTest` 使用 Robolectric 原生渲染检查主题切换、刷新时的输入焦点与草稿、只读 bot 会话和设置入口。`assembleRelease` 同时执行 R8 与发布 lint 检查；实际手机的输入法、桌面主题图标仍应实机验收。
 
 1.0.6 默认连接 `https://starpost.com.cn`。官网在手机网络上无法连接时，应用会在发送请求正文前尝试 `https://8.148.13.225`，并在成功后保存该地址；服务器返回的凭据错误不会触发回退。已有 IP 会话保持原地址和登录状态。会话页分为私聊和群聊。人机输入区保留稳定视图，无新消息不重建消息区，消息滚动不转移输入焦点。长按图片保存到应用内部收藏，按内容去重；发送表情包从分页收藏网格选择，保留原始文件，不使用文件选择器。卸载或清空数据会删除收藏。
 

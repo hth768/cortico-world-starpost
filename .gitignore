@@ -17,4 +17,7 @@ starpost-credential.json
 starpost-identity.json
 media/
 android/build/
+android/.gradle/
+android/.kotlin/
+android/local.properties
 

@@ -2,21 +2,22 @@ param(
   [string]$Sdk = 'E:\AndroidSDK',
   [string]$Java = 'E:\jdk17\jdk-17.0.20.1+1',
   [string]$SigningDir = '',
-  [string]$BuildTools = '35.0.1'
+  [string]$BuildTools = '36.0.0',
+  [string]$Gradle = ''
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 if (-not $SigningDir) { $SigningDir = Join-Path $repo '.deployment\android-signing' }
 $tools = Join-Path $Sdk "build-tools\$BuildTools"
-$platform = Join-Path $Sdk 'platforms\android-35\android.jar'
+$platform = Join-Path $Sdk 'platforms\android-37.0\android.jar'
 $env:JAVA_HOME = $Java
 $env:PATH = (Join-Path $Java 'bin') + [IO.Path]::PathSeparator + $env:PATH
-foreach ($path in @($platform,(Join-Path $tools 'aapt.exe'),(Join-Path $Java 'bin\javac.exe'))) { if (-not (Test-Path -LiteralPath $path)) { throw "Missing build tool: $path" } }
+foreach ($path in @($platform,(Join-Path $tools 'zipalign.exe'),(Join-Path $Java 'bin\javac.exe'))) { if (-not (Test-Path -LiteralPath $path)) { throw "Missing build tool: $path" } }
+$env:ANDROID_HOME = $Sdk
+if (-not $Gradle) { $Gradle = Join-Path $PSScriptRoot 'gradlew.bat' }
 $build = Join-Path $PSScriptRoot 'build'
-$classes = Join-Path $build 'classes'
-$dex = Join-Path $build 'dex'
 $distribution = Join-Path $PSScriptRoot 'distribution'
-New-Item -ItemType Directory -Force -Path $build,$classes,$dex,$distribution,$SigningDir | Out-Null
+New-Item -ItemType Directory -Force -Path $build,$distribution,$SigningDir | Out-Null
 $password = Join-Path $SigningDir 'password.txt'
 $keystore = Join-Path $SigningDir 'release.jks'
 if (-not (Test-Path -LiteralPath $keystore)) {
@@ -28,17 +29,10 @@ if (-not (Test-Path -LiteralPath $keystore)) {
   $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
   & icacls.exe $SigningDir /inheritance:r /grant:r "${identity}:(OI)(CI)F" 'SYSTEM:(OI)(CI)F' | Out-Null
 }
-$sources = @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'src') -Recurse -Filter '*.java' | ForEach-Object FullName)
-& (Join-Path $Java 'bin\javac.exe') -encoding UTF-8 -source 8 -target 8 -bootclasspath "$platform$([IO.Path]::PathSeparator)$(Join-Path $tools 'core-lambda-stubs.jar')" -d $classes @sources
-if ($LASTEXITCODE -ne 0) { throw 'Java compilation failed' }
-$classFiles = @(Get-ChildItem -LiteralPath $classes -Recurse -Filter '*.class' | ForEach-Object FullName)
-& (Join-Path $tools 'd8.bat') --min-api 26 --lib $platform --output $dex @classFiles
-if ($LASTEXITCODE -ne 0) { throw 'DEX compilation failed' }
-$unsigned = Join-Path $build 'unsigned.apk'
-& (Join-Path $tools 'aapt.exe') package -f -M (Join-Path $PSScriptRoot 'AndroidManifest.xml') -S (Join-Path $PSScriptRoot 'res') -I $platform -F $unsigned
-if ($LASTEXITCODE -ne 0) { throw 'APK packaging failed' }
-Push-Location $dex
-try { & (Join-Path $tools 'aapt.exe') add $unsigned classes.dex; if ($LASTEXITCODE -ne 0) { throw 'DEX packaging failed' } } finally { Pop-Location }
+& $Gradle -p $PSScriptRoot assembleRelease --console=plain
+if ($LASTEXITCODE -ne 0) { throw 'Compose release build failed' }
+$unsigned = Join-Path $build 'outputs\apk\release\Starpost-release-unsigned.apk'
+if (-not (Test-Path -LiteralPath $unsigned)) { throw "Missing release APK: $unsigned" }
 $aligned = Join-Path $build 'aligned.apk'
 & (Join-Path $tools 'zipalign.exe') -f -p 4 $unsigned $aligned
 if ($LASTEXITCODE -ne 0) { throw 'Alignment failed' }
