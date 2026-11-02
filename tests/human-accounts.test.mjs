@@ -204,3 +204,157 @@ test('同名搜索可分页取完，不因 20 条旧上限漏人；人类账号�
     const still=await f.register('human-after-bot-full@example.com');assert.equal(still.humanId,'10005H');
   }finally{await f.close();}
 });
+
+
+test('人类和 bot 独立设置头像，资料只传版本，权限、回滚、限频与移除生效', async () => {
+  const f=await fixture();try {
+    const person=await f.register('avatar@example.com');
+    const avatar={mime:'image/png',base64:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aB1sAAAAASUVORK5CYII='};
+    // Generate a valid CRC regardless of the fixture encoder used.
+    const {crc32}=await import('node:zlib');const bytes=Buffer.from(avatar.base64,'base64');
+    for(let i=8;i<bytes.length;){const size=bytes.readUInt32BE(i);bytes.writeUInt32BE(crc32(bytes.subarray(i+4,i+8+size)),i+8+size);i+=size+12;}avatar.base64=bytes.toString('base64');
+    const human=await f.rpc(person.accessToken,'social.profile.update',{avatar,botId:'10001'});
+    assert.equal(human.ok,true,human.error);assert.equal(human.result.botId,person.humanId);
+    assert.match(human.result.avatarVersion,/^[a-f0-9]{64}$/);assert.equal(JSON.stringify(human.result).includes('base64'),false);
+    assert.equal(f.app.store.get('avatars','10001'),undefined);
+    const bot=await f.bot('10001','profile.update',{avatar});assert.equal(bot.ok,true,bot.error);
+    const read=await f.rpc(person.accessToken,'social.profile',{botId:'10001',section:'avatar'});
+    assert.equal(read.result.image.base64,avatar.base64);
+    const basic=await f.bot('10002','profile.read',{botId:person.humanId});assert.equal(basic.result.avatarVersion,human.result.avatarVersion);assert.equal(basic.result.image,undefined);
+    const invalid=await f.bot('10001','profile.update',{avatar:null,nickname:'<script>'});assert.equal(invalid.status,400);
+    assert.equal((await f.bot('10001','profile.read',{section:'avatar'})).result.avatarVersion,bot.result.avatarVersion);
+    await f.bot('10001','profile.update',{discoverable:false});
+    assert.equal((await f.rpc(person.accessToken,'social.profile',{botId:'10001',section:'avatar'})).status,403);
+    assert.equal((await f.bot('10002','profile.read',{botId:'10001',section:'avatar'})).status,403);
+    assert.equal((await f.bot('10001','profile.read',{section:'avatar'})).ok,true);
+    for(let i=0;i<4;i++)assert.equal((await f.bot('10001','profile.update',{avatar})).ok,true);
+    assert.equal((await f.bot('10001','profile.update',{avatar:null})).status,429);
+    f.advance(60001);assert.equal((await f.bot('10001','profile.update',{avatar:null})).result.avatarVersion,'');
+    assert.equal((await f.bot('10001','profile.read',{section:'avatar'})).result.image,null);
+    assert.equal((await f.rpc(person.accessToken,'account.info')).result.avatarVersion,human.result.avatarVersion);
+    assert.equal((await f.rpc(person.accessToken,'social.profile.update',{avatar:null})).result.avatarVersion,'');
+    assert.equal(f.app.store.count('avatars'),0);
+  }finally{await f.close();}
+});
+
+
+test('主人可修改多个已绑定 bot 的头像，不能越权或代改其他资料，与 bot 共用限频',async()=>{
+  const f=await fixture();try{
+    const owner=await f.claim('10001','avatar-owner@example.com');
+    const stranger=await f.claim('10003','avatar-stranger@example.com');
+    assert.equal((await f.rpc(owner.accessToken,'account.bind',{botId:'10002',credential:f.keys['10002']})).ok,true);
+    await f.rpc(owner.accessToken,'account.select',{botId:'10001'});
+    const {crc32}=await import('node:zlib');
+    const bytes=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aB1sAAAAASUVORK5CYII=','base64');
+    for(let i=8;i<bytes.length;){const size=bytes.readUInt32BE(i);bytes.writeUInt32BE(crc32(bytes.subarray(i+4,i+8+size)),i+8+size);i+=size+12;}
+    const avatar={mime:'image/png',base64:bytes.toString('base64')};
+    await f.bot('10002','profile.update',{nickname:'原昵称',bio:'原简介',discoverable:false});
+    for(const botId of ['10001','10002']){
+      const result=await f.rpc(owner.accessToken,'account.botAvatar',{botId,avatar,nickname:'篡改昵称',bio:'篡改简介',discoverable:true});
+      assert.equal(result.ok,true,result.error);assert.match(result.result.avatarVersion,/^[a-f0-9]{64}$/);
+    }
+    const hidden=f.app.store.get('profiles','10002');assert.equal(hidden.nickname,'原昵称');assert.equal(hidden.bio,'原简介');assert.equal(hidden.discoverable,false);
+    assert.equal((await f.rpc(owner.accessToken,'social.profile',{botId:'10002',section:'avatar'})).result.image.base64,avatar.base64);
+    assert.equal((await f.rpc(stranger.accessToken,'social.profile',{botId:'10002',section:'avatar'})).status,403);
+    assert.equal((await f.rpc(owner.accessToken,'account.info')).result.botId,'10001','editing another bound bot must not change selection');
+    assert.equal((await f.rpc(owner.accessToken,'account.info')).result.avatarVersion,'','human avatar remains separate');
+    assert.equal((await f.rpc(stranger.accessToken,'account.botAvatar',{botId:'10002',avatar:null})).status,403);
+    assert.equal((await f.rpc(owner.accessToken,'account.botAvatar',{botId:'10003',avatar})).status,403);
+    assert.equal((await f.rpc(owner.accessToken,'account.botAvatar',{botId:'99999',avatar})).status,403);
+    assert.equal((await f.rpc(owner.accessToken,'account.botAvatar',{botId:owner.humanId,avatar})).status,400);
+    assert.equal((await f.rpc(owner.accessToken,'account.botAvatar',{botId:'10002'})).status,400);
+    assert.equal((await f.rpc(owner.accessToken,'account.botAvatar',{botId:'10002',avatar:{mime:'image/svg+xml',base64:'AAAA'}})).status,400);
+    assert.equal((await f.rpc(owner.accessToken,'account.botAvatar',{botId:'10002',avatar:null})).result.avatarVersion,'');
+    assert.equal((await f.bot('10002','profile.read',{section:'avatar'})).result.image,null);
+    for(let i=0;i<3;i++)assert.equal((await f.bot('10002','profile.update',{avatar})).ok,true);
+    assert.equal((await f.rpc(owner.accessToken,'account.botAvatar',{botId:'10002',avatar:null})).status,429);
+    f.advance(60001);
+    // A previously loaded UI cannot retain write permission after ownership changes.
+    f.app.store.put('botOwners','10002',{humanId:stranger.humanId});
+    assert.equal((await f.rpc(owner.accessToken,'account.botAvatar',{botId:'10002',avatar:null})).status,403);
+    assert.equal((await f.rpc(stranger.accessToken,'account.botAvatar',{botId:'10002',avatar:null})).ok,true);
+  }finally{await f.close();}
+});
+
+
+test('人类戳一戳采用被戳文案、保留聊天记录并防刷，群禁言及跨账号权限生效',async()=>{
+  const f=await fixture();try{
+    const a=await f.register('poke-a@example.com'),b=await f.register('poke-b@example.com'),c=await f.register('poke-c@example.com');
+    f.app.store.befriend(a.humanId,b.humanId);
+    await f.rpc(a.accessToken,'social.profile.update',{nickname:'甲'});
+    assert.equal((await f.rpc(b.accessToken,'social.profile.update',{nickname:'乙',pokeText:'的小脑袋'})).ok,true);
+    const poke=await f.rpc(a.accessToken,'social.poke',{to:b.humanId,text:'伪造自定义内容'});
+    assert.equal(poke.result.text,'甲戳了戳乙的小脑袋');
+    const history=(await f.rpc(b.accessToken,'social.history',{kind:'private',target:a.humanId})).result.messages;
+    assert.equal(history.at(-1).text,poke.result.text);assert.equal(history.at(-1).interaction,'poke');
+    assert.equal((await f.rpc(a.accessToken,'social.poke',{to:b.humanId})).status,429);
+    assert.equal((await f.rpc(c.accessToken,'social.poke',{to:b.humanId})).status,403);
+    assert.equal((await f.rpc(a.accessToken,'social.poke',{to:a.humanId})).status,400);
+    assert.equal((await f.rpc(b.accessToken,'social.profile.update',{pokeText:'x'.repeat(41)})).status,400);
+    assert.equal((await f.rpc(b.accessToken,'social.profile.update',{pokeText:'文案\n换行'})).status,400);
+    assert.equal((await f.rpc(a.accessToken,'social.profile',{botId:b.humanId})).result.pokeText,'的小脑袋');
+    for(let i=0;i<5;i++){f.advance(5000);assert.equal((await f.rpc(a.accessToken,'social.poke',{to:b.humanId})).ok,true);}
+    f.advance(5000);assert.equal((await f.rpc(a.accessToken,'social.poke',{to:b.humanId})).status,429);f.advance(60000);
+    const g=(await f.rpc(b.accessToken,'social.group.create',{name:'头像手势测试',members:[a.humanId]})).result;
+    assert.ok(g.id);
+    assert.equal((await f.rpc(b.accessToken,'social.group.manage',{groupId:g.id,operation:'mute',botId:a.humanId,minutes:10})).ok,true);
+    assert.equal((await f.rpc(a.accessToken,'social.poke',{to:b.humanId,groupId:g.id})).status,403);
+    await f.rpc(b.accessToken,'social.group.manage',{groupId:g.id,operation:'unmute',botId:a.humanId});
+    assert.equal((await f.rpc(a.accessToken,'social.poke',{to:c.humanId,groupId:g.id})).ok,false);
+    assert.equal((await f.rpc(a.accessToken,'social.poke',{to:b.humanId,groupId:g.id})).ok,true);
+    assert.equal((await f.rpc(a.accessToken,'social.message.send',{kind:'group',target:g.id,text:'@乙 你好',mentions:[b.humanId]})).ok,true);
+    assert.deepEqual((await f.rpc(b.accessToken,'social.history',{kind:'group',target:g.id})).result.messages.at(-1).mentions,[b.humanId]);
+    assert.equal((await f.rpc(a.accessToken,'social.message.send',{kind:'private',target:b.humanId,text:'@乙 你好',mentions:[b.humanId]})).ok,true);
+    assert.equal((await f.rpc(a.accessToken,'social.message.send',{kind:'private',target:b.humanId,text:'伪造提醒',mentions:[c.humanId]})).ok,false);
+  }finally{await f.close();}
+});
+test('主人可设置绑定 bot 的戳一戳文案，专属频道戳一戳只发给当前 bot 且仍带称呼前缀',async()=>{
+  const f=await fixture();try{
+    const owner=await f.claim('10001','poke-owner@example.com');
+    const other=await f.register('poke-other@example.com');
+    assert.equal((await f.rpc(owner.accessToken,'account.botPokeText',{botId:'10001',pokeText:'的猫耳朵',nickname:'不允许改'})).ok,true);
+    assert.equal(f.app.store.get('profiles','10001').nickname,'');
+    assert.equal((await f.rpc(other.accessToken,'account.botPokeText',{botId:'10001',pokeText:'恶意'})).status,403);
+    assert.equal((await f.rpc(owner.accessToken,'owner.poke')).ok,false,'requires owner address before first send');
+    await f.rpc(owner.accessToken,'owner.address',{address:'主人'});
+    const sent=await f.rpc(owner.accessToken,'owner.poke',{to:'10002'});assert.equal(sent.ok,true,sent.error);assert.match(sent.result.text,/戳了戳10001的猫耳朵$/);
+    assert.equal((await f.rpc(owner.accessToken,'owner.poke')).status,429);
+    const event=(await f.bot('10001','events')).result.find(e=>e.type==='owner.message');assert.equal(event.data.prefix,'以下消息为主人通过星邮向你发送的消息');assert.equal(event.data.text,sent.result.text);
+    assert.equal((await f.bot('10002','events')).result.some(e=>e.type==='owner.message'),false);
+    assert.equal((await f.rpc(owner.accessToken,'owner.history')).result.messages.at(-1).text,sent.result.text);
+    assert.equal((await f.bot('10001','profile.update',{pokeText:''})).ok,true);
+    assert.equal((await f.rpc(owner.accessToken,'account.info')).result.bots[0].pokeText,'');
+  }finally{await f.close();}
+});
+
+
+test('私聊备注仅当前人类可见，好友及绑定 bot 可设置，清除不改公开昵称或通知对方',async()=>{
+ const f=await fixture();try{
+  const a=await f.claim('10001','remark-a@example.com'),b=await f.register('remark-b@example.com'),c=await f.register('remark-c@example.com');
+  f.app.store.befriend(a.humanId,b.humanId);f.app.store.befriend(c.humanId,b.humanId);
+  const before=f.app.store.statement('SELECT count(*) AS n FROM events').get().n;
+  const note='我自己的小月亮';
+  assert.equal((await f.rpc(a.accessToken,'account.contactRemark',{botId:b.humanId,remark:note,owner:c.humanId})).ok,true);
+  assert.equal((await f.rpc(c.accessToken,'account.contactRemark',{botId:b.humanId,remark:'其他人的备注'})).ok,true);
+  assert.equal((await f.rpc(a.accessToken,'social.overview')).result.friendProfiles.find(p=>p.botId===b.humanId).remark,note);
+  assert.equal((await f.rpc(a.accessToken,'social.profile',{botId:b.humanId})).result.remark,note);
+  assert.equal((await f.rpc(c.accessToken,'social.profile',{botId:b.humanId})).result.remark,'其他人的备注');
+  assert.equal((await f.rpc(b.accessToken,'social.profile',{botId:b.humanId})).result.remark,'');
+  assert.equal((await f.rpc(b.accessToken,'account.info')).result.nickname,'相同昵称');
+  assert.ok(!JSON.stringify((await f.bot('10001','profile.read',{botId:b.humanId})).result).includes(note));
+  assert.ok(!JSON.stringify((await f.rpc(a.accessToken,'social.search',{query:b.humanId})).result).includes(note));
+  assert.equal(f.app.store.statement('SELECT count(*) AS n FROM events').get().n,before);
+  assert.equal((await f.rpc(a.accessToken,'account.contactRemark',{botId:'10001',remark:'专属桌宠'})).ok,true);
+  assert.equal((await f.rpc(a.accessToken,'account.info')).result.bots[0].remark,'专属桌宠');
+  assert.equal((await f.bot('10001','profile.read')).result.nickname,'');
+  assert.equal((await f.rpc(c.accessToken,'account.contactRemark',{botId:'10001',remark:'越权'})).status,403);
+  assert.equal((await f.rpc(a.accessToken,'account.contactRemark',{botId:a.humanId,remark:'自己'})).status,403);
+  assert.equal((await f.rpc(a.accessToken,'account.contactRemark',{botId:c.humanId,remark:'非好友'})).status,403);
+  for(const remark of ['x'.repeat(33),'a\nb',null])assert.equal((await f.rpc(a.accessToken,'account.contactRemark',{botId:b.humanId,remark})).status,400);
+  const second=await f.post('/mobile/auth',{action:'login',method:'password',email:'remark-a@example.com',password:'example-pass-123'});
+  assert.equal((await f.rpc(second.result.accessToken,'social.profile',{botId:b.humanId})).result.remark,note);
+  assert.equal((await f.rpc(a.accessToken,'account.contactRemark',{botId:b.humanId,remark:'  '})).result.remark,'');
+  assert.equal((await f.rpc(second.result.accessToken,'social.profile',{botId:b.humanId})).result.remark,'');
+  assert.equal((await f.rpc(c.accessToken,'social.profile',{botId:b.humanId})).result.remark,'其他人的备注');
+ }finally{await f.close();}
+});

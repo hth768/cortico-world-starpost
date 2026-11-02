@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { avatarImage } from './avatars.mjs';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -85,7 +86,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     return who;
   }
   const profile = (who) => isHumanId(who) ? accounts.publicProfile(who) : ({ botId: who, nickname: '', bio: '', discoverable: true, accountType: 'bot', ...store.get('profiles', who) });
-  const withSenderNickname = (message) => ({ ...message, senderNickname: message.senderNickname ?? profile(message.sender).nickname });
+  const withSenderNickname = (message) => ({ ...message, senderAvatarVersion: profile(message.sender).avatarVersion ?? '', senderNickname: message.senderNickname ?? profile(message.sender).nickname });
   function register(input) {
     const installationId = str(input?.installationId, 80);
     const token = str(input?.token, 128);
@@ -452,11 +453,25 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       }
       case 'profile.update': {
         const current = profile(who);
+        if (args.pokeText !== undefined) {
+          const suffix=str(args.pokeText,40).trim();
+          if(/[\x00-\x1f\x7f]/.test(suffix))fail('戳一戳文案不能包含换行或控制字符');
+          current.pokeText=suffix;
+        }
+        if (args.avatar !== undefined) {
+          if (isHumanId(who)) accounts.mustClaim(who);
+          const next = args.avatar === null ? null : avatarImage(args.avatar);
+          const rate=store.get('avatarRate',who), now=clock();
+          if(rate && now-rate.start<60000 && rate.count>=5)fail('头像更换过于频繁，请稍后再试',429);
+          store.put('avatarRate',who,{start:rate&&now-rate.start<60000?rate.start:now,count:rate&&now-rate.start<60000?rate.count+1:1});
+          if(next)store.put('avatars',who,next);else store.remove('avatars',who);
+          current.avatarVersion=next?.version??'';
+        }
         if (isHumanId(who)) {
           const p = accounts.mustClaim(who);
           const nickname = args.nickname === undefined ? p.nickname : humanNickname(args.nickname);
           const bio = args.bio === undefined ? p.bio ?? '' : str(args.bio, 200).trim();
-          store.put('people', who, { ...p, nickname, bio });
+          store.put('people', who, { ...p, nickname, bio, pokeText:current.pokeText??'', avatarVersion: current.avatarVersion ?? '' });
           store.put('humanProfiles', who.slice(0, -1), { nickname });
           return profile(who);
         }
@@ -482,9 +497,10 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         if (!isKnown(target)) fail('目标 bot 不存在', 404);
         if (target !== who && !profile(target).discoverable && !friends(who).includes(target)) fail('目标 bot 不可见', 403);
         const section = args.section ?? 'basic';
+        if(section==='avatar')return {botId:target,avatarVersion:profile(target).avatarVersion??'',image:store.get('avatars',target)??null};
         if (section === 'basic') {
-          const { botId, nickname, bio } = profile(target);
-          return { botId, nickname, bio };
+          const { botId, nickname, bio, avatarVersion, pokeText } = profile(target);
+          return { botId, nickname, bio, ...(avatarVersion ? {avatarVersion} : {}), ...(pokeText ? {pokeText} : {}) };
         }
         if (section === 'record') {
           const { wins, losses, draws } = games.record(target, who);
@@ -572,8 +588,8 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         const picture = media(args.image);
         if (!text && !emoji && !picture) fail('空消息');
         if (args.mentionAll && (!g || g.owner !== who && !(g.admins ?? []).includes(who))) fail('只有群主和管理员可 @全体成员', 403);
-        const mentions = g && args.mentionAll ? g.members.filter(member => member !== who) : g && Array.isArray(args.mentions) ? [...new Set(args.mentions.map(chatId))] : [];
-        if (mentions.some(x => !g.members.includes(x))) fail('@ 目标不在群中');
+        const mentions = g && args.mentionAll ? g.members.filter(member => member !== who) : Array.isArray(args.mentions) ? [...new Set(args.mentions.map(chatId))] : [];
+        if (mentions.some(x => !(g ? g.members : [who,target]).includes(x))) fail('@ 目标不在当前会话中');
         const quota = messageQuota(who, now);
         if (!isHumanId(who) && quota.limit === 0) quotaFailure('每日聊天消息上限为 0，已暂停发送', quota);
         if (!isHumanId(who) && quota.remaining === 0) quotaFailure(`今日聊天消息已达 ${quota.limit} 条上限，请于北京时间次日再发送`, quota);
@@ -605,10 +621,24 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         return { id: m.id, quota: isHumanId(who) ? null : messageQuota(who, now) };
       }
       case 'poke': {
-        const to = chatId(args.to), groupId = args.groupId == null ? '' : str(args.groupId, 100);
-        if (groupId) { const g = group(who, groupId); if (!g.members.includes(to)) fail('目标不在群中'); }
-        else if (!friends(who).includes(to)) fail('目标不是好友');
-        emit([to], 'poke', { from: who, groupId }); return { ok: true };
+        const to=chatId(args.to),groupId=args.groupId==null?'':str(args.groupId,100);
+        if(to===who)fail('不能戳自己');
+        if(!isKnown(to))fail('目标账号不存在',404);
+        if(conduct.until(who)||conduct.until(to))fail('账号正在暂停活动',403);
+        const g=groupId?group(who,groupId):null;
+        if(g){if(!g.members.includes(to))fail('目标不在群中');groupCanSpeak(g,who,now);}
+        else if(!friends(who).includes(to))fail('目标不是好友',403);
+        const old=store.get('pokeRate',who),rate=old&&now-old.start<60000?old:{start:now,count:0,last:0};
+        if(rate.count>=6||rate.count>0&&now-rate.last<5000)fail('戳一戳过于频繁，请稍后再试',429);
+        store.put('pokeRate',who,{...rate,count:rate.count+1,last:now});
+        const fromProfile=profile(who),toProfile=profile(to);
+        const text=`${fromProfile.nickname||who}戳了戳${toProfile.nickname||to}${toProfile.pokeText||''}`;
+        const m={id:randomUUID(),kind:g?'group':'private',target:g?g.id:to,sender:who,senderType:isHumanId(who)?'human':'bot',senderNickname:fromProfile.nickname,text,mentions:[],interaction:'poke',pokeTarget:to,at:new Date(now).toISOString()};
+        const saved=store.put('messages',m.id,m);
+        const cursor=store.statement("SELECT rowid FROM documents WHERE collection='messages' AND key=?").get(m.id).rowid;
+        if(store.get('gameBusy',to))deferChat(to,{...saved,cursor},m.at);
+        else emit([to],'poke',{from:who,to,groupId,text,fromNickname:fromProfile.nickname,toNickname:toProfile.nickname});
+        return {ok:true,id:m.id,text};
       }
       case 'bottle.throw': {
         const text = str(args.text, 2000).trim(); if (!text) fail('空漂流瓶');

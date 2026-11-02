@@ -46,10 +46,10 @@ export class HumanAccounts {
     return this.aliases(id).flatMap(owner => this.store.statement("SELECT key FROM documents WHERE collection='botOwners' AND owner=? ORDER BY rowid").all(owner))
       .map(({ key }) => ({ ...this.botProfile(key), botId: key }));
   }
-  publicProfile(id) { const p = this.person(id); return { humanId: p.humanId, botId: p.humanId, nickname: p.nickname, bio: p.bio ?? '', discoverable: true, accountType: 'human' }; }
+  publicProfile(id) { const p = this.person(id); return { humanId: p.humanId, botId: p.humanId, nickname: p.nickname, avatarVersion:p.avatarVersion??'', pokeText:p.pokeText??'', bio: p.bio ?? '', discoverable: true, accountType: 'human' }; }
   info(id) {
     const p = this.person(id);
-    return { humanId: p.humanId, nickname: p.nickname, email: p.email ?? '', needsEmail: !p.email, bots: this.bots(id), aliases: this.aliases(id), friendLimit: 200, groupLimit: 50 };
+    return { humanId: p.humanId, nickname: p.nickname, avatarVersion:p.avatarVersion??'', pokeText:p.pokeText??'', email: p.email ?? '', needsEmail: !p.email, bots: this.bots(id), aliases: this.aliases(id), friendLimit: 200, groupLimit: 50 };
   }
   mustClaim(id) { const p = this.person(id); if (!p.email) fail('请先绑定邮箱，完成账号升级', 403); return p; }
   allocate(email, nickname, password) {

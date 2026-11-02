@@ -45,11 +45,14 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
     private val mutable = MutableStateFlow(ClientState(theme = preferences.getString("theme", "system") ?: "system", dynamicColor = preferences.getBoolean("dynamic", true)))
     val state = mutable.asStateFlow()
     private val library = StickerLibrary(File(app.filesDir, "sticker-favorites"))
+    private val draftMentions = mutableMapOf<String,Map<String,String>>()
     private val drafts = mutableMapOf<String, String>()
     internal var attachment: JSONObject? = null
     internal val draftKey get() = "${state.value.account.str("humanId")}:${state.value.account.str("botId")}:${state.value.route.page}:${state.value.route.kind}:${state.value.route.id}"
     fun draft() = drafts[draftKey] ?: ""
-    fun draft(value: String) { drafts[draftKey] = value }
+    fun draft(value: String) { drafts[draftKey] = value;draftMentions[draftKey]=draftMentions[draftKey].orEmpty().filterValues{value.contains("@$it ")} }
+    fun mention(id:String,label:String) { draftMentions[draftKey]=draftMentions[draftKey].orEmpty()+(id to label) }
+    fun mentionIds(text:String)=draftMentions[draftKey].orEmpty().filterValues{text.contains("@$it ")}.keys.toList()
     fun theme(value: String) { if (value !in listOf("system", "light", "dark")) return; preferences.edit().putString("theme",value).apply(); mutable.update { it.copy(theme=value) } }
     fun dynamic(value: Boolean) { preferences.edit().putBoolean("dynamic",value).apply(); mutable.update { it.copy(dynamicColor=value) } }
     fun notice(value: String) { mutable.update { it.copy(notice=value) } }
@@ -67,7 +70,7 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
     private fun validServer(value: String) = runCatching { val u=URL(value); u.protocol=="https" && u.host.isNotBlank() && u.userInfo==null && u.query==null && u.ref==null && u.path in listOf("", "/") }.getOrDefault(false)
     private suspend fun saveSession() = withContext(Dispatchers.IO) { sessions.save(obj("server" to server,"token" to token,"botId" to state.value.account.str("botId"),"expiresAt" to state.value.expiresAt).toString()) }
     private fun expire() {
-        sessionEpoch++;token="";sessions.clear();backStack.clear();drafts.clear();attachment=null
+        sessionEpoch++;avatarCache.clear();token="";sessions.clear();backStack.clear();drafts.clear();draftMentions.clear();attachment=null
         mutable.update { ClientState(starting=false,theme=it.theme,dynamicColor=it.dynamicColor) }
     }
     private suspend fun request(path: String, body: JSONObject, auth: Boolean = true): JSONObject = network.withLock {
@@ -101,6 +104,29 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
             if(status!=200 || !result.optBoolean("ok"))throw ApiError(status,result.str("error","请求失败"))
             return result.optJSONObject("result") ?: obj("items" to result.optJSONArray("result"))
         } finally { c.disconnect() }
+    }
+    private val avatarCache = linkedMapOf<String, android.graphics.Bitmap?>()
+    private val avatarLock = Mutex()
+    internal suspend fun avatar(id:String,version:String):android.graphics.Bitmap? = avatarLock.withLock {
+        val epoch=sessionEpoch;val key="$epoch:${state.value.account.str("botId")}:$id:$version"
+        if(avatarCache.containsKey(key))return@withLock avatarCache[key]
+        try {
+            val args=obj("botId" to id,"section" to "avatar")
+            val result=try{rpc("social.profile",args)}catch(e:ApiError){if(e.status==403)rpc("profile",args)else throw e}
+            val image=result.optJSONObject("image")
+            val bitmap=withContext(Dispatchers.Default){
+                val data=image?.str("base64")?:""
+                if(data.isEmpty()||data.length>174764||result.str("avatarVersion")!=version)null else {
+                    val bytes=android.util.Base64.decode(data,android.util.Base64.DEFAULT)
+                    val bounds=android.graphics.BitmapFactory.Options().apply{inJustDecodeBounds=true}
+                    android.graphics.BitmapFactory.decodeByteArray(bytes,0,bytes.size,bounds)
+                    if(bounds.outWidth !in 1..512||bounds.outHeight !in 1..512)null else android.graphics.BitmapFactory.decodeByteArray(bytes,0,bytes.size)
+                }
+            }
+            if(epoch!=sessionEpoch)return@withLock null
+            if(avatarCache.size>=64)avatarCache.remove(avatarCache.keys.first())
+            avatarCache[key]=bitmap;bitmap
+        }catch(e:CancellationException){throw e}catch(e:Exception){null}
     }
     private suspend fun rpc(action: String,args: JSONObject = obj())=request("/mobile/rpc",obj("action" to action,"args" to args))
     private suspend fun handle(error: Throwable,allowExpiry:Boolean=true) {
@@ -190,7 +216,8 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
                 if(epoch!=sessionEpoch)return@launch
                 if(action=="logout"){expire();return@launch}
                 done(result)
-                if(action in listOf("account.select","account.bind","owner.address","human.profile","social.profile.update")){val info=rpc("account.info");mutable.update{it.copy(account=info)};saveSession()}
+                if(action in listOf("account.select","account.bind","account.botAvatar","account.botPokeText","account.contactRemark","owner.address","human.profile","social.profile.update")){val info=rpc("account.info");mutable.update{it.copy(account=info)};saveSession()}
+                if(action=="account.contactRemark"){val contacts=rpc("social.overview");if(epoch==sessionEpoch)mutable.update{it.copy(social=contacts)}}
                 if(result.optBoolean("pendingApproval"))notice("已提交，等待相关用户审批")
                 else if(result.optBoolean("waitingForOthers"))notice("已批准，等待其他 bot 主人审批")
                 if(next!=null)navigate(next)else refreshNow()

@@ -11,6 +11,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
@@ -33,8 +34,16 @@ import java.time.Instant
     "feed","post","square"->DiscoveryScreen(ui,s)
     else->GameScreen(ui,s)
 }}
-internal fun conversationName(data:JSONObject,id:String,kind:String):String =
-    data.rows(if(kind=="group")"groups" else "friendProfiles").find{it.str(if(kind=="group")"id" else "botId")==id}?.str(if(kind=="group")"name" else "nickname")?.ifBlank{null} ?: id
+internal fun contactName(p:JSONObject?,fallback:String=""):String = p?.str("remark")?.ifBlank{null} ?: p?.str("nickname")?.ifBlank{null} ?: fallback
+internal fun conversationName(data:JSONObject,id:String,kind:String):String {
+    val p=data.rows(if(kind=="group")"groups" else "friendProfiles").find{it.str(if(kind=="group")"id" else "botId")==id}
+    return if(kind=="group")p?.str("name")?.ifBlank{null}?:id else contactName(p,id)
+}
+@Composable internal fun RemarkButton(ui:UiActions,id:String,remark:String="",name:String="联系人") {
+    TextButton(onClick={ui.form("设置备注名",listOf(TextFieldSpec("remark","备注名（最多 32 字）",remark)),"仅你可见，不改$name 的公开昵称；留空恢复显示公开昵称。"){fields->
+        ui.vm.perform("account.contactRemark",obj("botId" to id,"remark" to fields["remark"])){ui.vm.notice("备注名已保存")}
+    }}){Text(if(remark.isEmpty())"设置备注名" else "修改备注名")}
+}
 
 @Composable private fun ConversationList(ui:UiActions,s:ClientState){
     var kind by rememberSaveable(s.route.page){mutableStateOf("private")}
@@ -44,8 +53,8 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String =
         else Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Text("今天想和谁聊聊？",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f));IconButton(onClick={ui.go("search")}){Glyph("search","搜索朋友")}}
         ChoiceTabs(listOf("private" to "私聊","group" to "群聊"),kind){kind=it}
         if(chats.isEmpty())EmptyState(if(kind=="group")"还没有群聊" else "还没有会话","点右上角 ＋，让故事从这里开始。")
-        chats.forEach{c->val latest=c.optJSONObject("latest");val id=c.str("target");Entry(conversationName(data,id,kind),(if(latest?.optBoolean("hasImage")==true)"[表情包] " else "")+(latest?.str("text")?:"发出第一声问候吧"),kind,latest?.str("at")?.let(::time)?:""){ui.go(if(s.route.page=="chats")"history" else "socialHistory",id,kind)}}
-        if(s.route.page=="social")TextButton(onClick={ui.modal=Modal.Games}){Glyph("down");Spacer(Modifier.width(8.dp));Text("下拉发现游戏小程序")}
+        chats.forEach{c->val latest=c.optJSONObject("latest");val id=c.str("target");Entry(conversationName(data,id,kind),(if(latest?.optBoolean("hasImage")==true)"[表情包] " else "")+(latest?.str("text")?:"发出第一声问候吧"),kind,latest?.str("at")?.let(::time)?:"",avatarId=if(kind=="private")id else "",avatarVersion=data.rows("friendProfiles").find{it.str("botId")==id}?.str("avatarVersion")?:""){ui.go(if(s.route.page=="chats")"history" else "socialHistory",id,kind)}}
+        if(s.route.page=="social")TextButton(onClick={ui.miniAppsOpen=true}){Glyph("down");Spacer(Modifier.width(8.dp));Text("下拉发现游戏小程序")}
     }
 }
 @Composable private fun Contacts(ui:UiActions,s:ClientState){ContentList(ui){
@@ -53,7 +62,7 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String =
     SectionTitle("新的朋友",if(requests.isEmpty())"没有待处理申请" else "${requests.size} 个待处理申请")
     requests.forEach{r->val id=r.str("from");Panel{Text(id,style=MaterialTheme.typography.titleMedium);Text(r.str("note","想和你成为好友"));Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Button(enabled=!s.working,onClick={ui.vm.perform("social.friend.accept",obj("from" to id))}){Text("接受")};OutlinedButton(enabled=!s.working,onClick={ui.vm.perform("social.friend.reject",obj("from" to id))}){Text("拒绝")}}}}
     SectionTitle("通讯录","${s.data.rows("friendProfiles").size} / 200 位朋友")
-    s.data.rows("friendProfiles").forEach{p->val id=p.str("botId");Entry(p.str("nickname",id),"$id · ${if(id.endsWith("H"))"人类" else "Bot"}"){ui.go("socialHistory",id)};Row{TextButton(onClick={ui.go("profile",id)}){Text("个人资料")};TextButton(onClick={ui.confirm("删除好友","删除 $id？历史消息将保留。 "){ui.vm.perform("social.friend.remove",obj("botId" to id))}}){Text("删除好友",color=MaterialTheme.colorScheme.error)}}}
+    s.data.rows("friendProfiles").forEach{p->val id=p.str("botId");Entry(contactName(p,id),"${p.str("nickname",id)} · $id · ${if(id.endsWith("H"))"人类" else "Bot"}",avatarId=id,avatarVersion=p.str("avatarVersion")){ui.go("socialHistory",id)};Row{RemarkButton(ui,id,p.str("remark"),p.str("nickname",id));TextButton(onClick={ui.go("profile",id)}){Text("个人资料")};TextButton(onClick={ui.confirm("删除好友","删除 $id？历史消息将保留。 "){ui.vm.perform("social.friend.remove",obj("botId" to id))}}){Text("删除好友",color=MaterialTheme.colorScheme.error)}}}
     if(s.data.rows("friendProfiles").isEmpty())EmptyState("寻找你的同频朋友","支持按昵称和完整 ID 搜索。")
     FilledTonalButton(onClick={ui.go("search")}){Glyph("add");Spacer(Modifier.width(8.dp));Text("添加朋友")}
 }}
@@ -74,7 +83,7 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String =
     Surface(onClick=onProfile,shape=RoundedCornerShape(24.dp),color=MaterialTheme.colorScheme.surfaceContainerLow,modifier=Modifier.fillMaxWidth()){
         Column(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
             Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
-                Avatar(nickname);Column(Modifier.weight(1f)){Text(nickname,style=MaterialTheme.typography.titleMedium);Text("$id · ${if(id.endsWith("H"))"人类" else "Bot"}${if(self)" · 我自己" else ""}",style=MaterialTheme.typography.bodyMedium)};Glyph("chevron")
+                Avatar(nickname,avatarId=id,avatarVersion=p.str("avatarVersion"));Column(Modifier.weight(1f)){Text(nickname,style=MaterialTheme.typography.titleMedium);Text("$id · ${if(id.endsWith("H"))"人类" else "Bot"}${if(self)" · 我自己" else ""}",style=MaterialTheme.typography.bodyMedium)};Glyph("chevron")
             }
             Text("点击查看个人主页",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
             when{self->Text("这是你的账号");friend->Text("已是好友");else->FilledTonalButton(onClick=onRequest){Text("申请好友")}}
@@ -84,7 +93,7 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String =
 @Composable private fun GroupForm(ui:UiActions,s:ClientState){var name by rememberSaveable{mutableStateOf("")};var selected by rememberSaveable{mutableStateOf(listOf<String>())};ContentList(ui){
     SectionTitle(if(s.route.page=="invite")"让朋友加入这段故事" else "朋友们聚在一起","混合群需要相关 bot 的主人全部批准。")
     if(s.route.page=="groupCreate")OutlinedTextField(name,{name=it},Modifier.fillMaxWidth(),label={Text("群聊名称")},singleLine=true)
-    s.data.rows("friendProfiles").forEach{p->val id=p.str("botId");Surface(shape=RoundedCornerShape(20.dp),color=MaterialTheme.colorScheme.surfaceContainerLow,modifier=Modifier.fillMaxWidth()){Row(Modifier.clickable{selected=if(id in selected)selected-id else selected+id}.padding(12.dp),verticalAlignment=Alignment.CenterVertically){Checkbox(id in selected,{selected=if(it)selected+id else selected-id});Avatar(p.str("nickname",id));Spacer(Modifier.width(12.dp));Column{Text(p.str("nickname",id));Text(id,style=MaterialTheme.typography.labelMedium)}}}}
+    s.data.rows("friendProfiles").forEach{p->val id=p.str("botId");Surface(shape=RoundedCornerShape(20.dp),color=MaterialTheme.colorScheme.surfaceContainerLow,modifier=Modifier.fillMaxWidth()){Row(Modifier.clickable{selected=if(id in selected)selected-id else selected+id}.padding(12.dp),verticalAlignment=Alignment.CenterVertically){Checkbox(id in selected,{selected=if(it)selected+id else selected-id});Avatar(p.str("nickname",id),avatarId=id,avatarVersion=p.str("avatarVersion"));Spacer(Modifier.width(12.dp));Column{Text(p.str("nickname",id));Text(id,style=MaterialTheme.typography.labelMedium)}}}}
     if(s.data.rows("friendProfiles").isEmpty())EmptyState("先认识一些朋友吧","成为好友后，就可以邀请他们进群。")
     Button(enabled=!s.working&&selected.isNotEmpty()&&(s.route.page=="invite"||name.isNotBlank()),onClick={if(s.route.page=="invite"){if(selected.size!=1)ui.vm.notice("请一次选择一位好友")else ui.vm.perform("social.group.invite",obj("groupId" to s.route.id,"botId" to selected.first()),Route("socialHistory",s.route.id,"group"))}else ui.vm.perform("social.group.create",obj("name" to name,"members" to JSONArray(selected)),Route())}){Text(if(s.route.page=="invite")"邀请所选好友" else "创建群聊 · ${selected.size} 位好友")}
 }}
@@ -92,25 +101,35 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String =
 @Composable private fun ChatScreen(ui:UiActions,s:ClientState){
     val route=s.route;val readOnly=route.page=="history";val owner=route.page=="owner";val messages=s.data.rows("messages");val list=rememberLazyListState();val key=ui.vm.draftKey
     var draft by rememberSaveable(key){mutableStateOf(ui.vm.draft())};var image by remember(key){mutableStateOf<JSONObject?>(null)}
+    val composerFocus=remember{androidx.compose.ui.focus.FocusRequester()}
     var initial by remember(route.page,route.id){mutableStateOf(true)}
     LaunchedEffect(messages.lastOrNull()?.str("id")){if(route.before==null&&(initial||!list.canScrollForward)){if(messages.isNotEmpty())list.animateScrollToItem(messages.size-1);initial=false}}
     Column(Modifier.fillMaxSize()){
         if(readOnly)Text("Bot 的会话 · 只读",Modifier.padding(horizontal=20.dp,vertical=4.dp),style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
         if(route.kind=="group"&&!readOnly&&!owner)Row(Modifier.padding(horizontal=16.dp)){TextButton(onClick={ui.go("invite",route.id)}){Text("邀请好友")};TextButton(onClick={ui.confirm("退出群聊","确定退出这个群吗？"){ui.vm.perform("social.group.leave",obj("groupId" to route.id),Route())}}){Text("退出群聊")}}
+        if(!readOnly&&route.kind=="private"){
+            val p=if(owner)s.account.rows("bots").find{it.str("botId")==s.account.str("botId")}else s.social.rows("friendProfiles").find{it.str("botId")==route.id}
+            if(p!=null)RemarkButton(ui,p.str("botId"),p.str("remark"),p.str("nickname",p.str("botId")))
+        }
         Pager(ui,s)
         if(messages.isEmpty())Box(Modifier.weight(1f),contentAlignment=Alignment.Center){EmptyState("说声你好吧",if(readOnly)"这里还没有聊天记录。" else "文字和表情包，都能传递心情。")}
         else LazyColumn(state=list,modifier=Modifier.weight(1f).fillMaxWidth(),contentPadding=PaddingValues(20.dp),verticalArrangement=Arrangement.spacedBy(16.dp)){
             items(messages,key={it.str("id",it.toString())}){m->val self=if(owner)m.str("direction")=="human" else m.str("sender")==if(readOnly)s.account.str("botId")else s.account.str("humanId")
-                Bubble(ui,m,self,label=if(owner){if(self)"我 · ${m.str("address")}" else "我的 bot"}else m.str("senderNickname",m.str("sender")))}
+                Bubble(ui,m,self,label=if(owner){if(self)"我 · ${m.str("address")}" else contactName(s.account.rows("bots").find{it.str("botId")==s.account.str("botId")},"我的 bot")}else if(!readOnly&&route.kind=="private"&&!self)contactName(s.social.rows("friendProfiles").find{it.str("botId")==m.str("sender")},m.str("senderNickname",m.str("sender")))else m.str("senderNickname",m.str("sender")),
+                    onMention=if(readOnly)null else {id,name->draft+="@$name ";ui.vm.mention(id,name);ui.vm.draft(draft);composerFocus.requestFocus()},
+                    onPoke=if(readOnly||self)null else {id->
+                        if(owner&&s.account.str("address").isEmpty())ui.vm.notice("请先在下方设置桌宠对你的称呼")
+                        else ui.vm.perform(if(owner)"owner.poke" else "social.poke",if(owner)obj() else obj("to" to id,"groupId" to if(route.kind=="group")route.id else "")){ui.vm.notice("已戳一戳")}
+                    })}
         }
         if(!readOnly)Surface(color=MaterialTheme.colorScheme.surfaceContainer,shape=RoundedCornerShape(topStart=28.dp,topEnd=28.dp)){
             Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
                 if(image!=null)Row(verticalAlignment=Alignment.CenterVertically){Text("已选择 1 张表情包",Modifier.weight(1f),style=MaterialTheme.typography.labelMedium);IconButton(onClick={image=null}){Glyph("close","移除图片")}}
                 Row(verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(6.dp)){
                     IconButton(onClick={ui.modal=Modal.Stickers{image=it}}){Glyph("sticker","选择表情包")}
-                    OutlinedTextField(draft,{draft=it;ui.vm.draft(it)},Modifier.weight(1f),placeholder={Text(if(owner)"和你的 bot 说说话…" else "写一条消息…")},shape=RoundedCornerShape(24.dp),maxLines=5)
+                    OutlinedTextField(draft,{draft=it;ui.vm.draft(it)},Modifier.weight(1f).focusRequester(composerFocus),placeholder={Text(if(owner)"和你的 bot 说说话…" else "写一条消息…")},shape=RoundedCornerShape(24.dp),maxLines=5)
                     FilledIconButton(enabled=!s.working&&(draft.isNotBlank()||image!=null),onClick={
-                        fun send(){val sent=draft;val attached=image;ui.vm.perform(if(owner)"owner.send" else "social.message.send",obj("text" to sent,"image" to attached,"kind" to route.kind,"target" to route.id)){if(draft==sent){draft="";ui.vm.draft("")};if(image===attached)image=null}}
+                        fun send(){val sent=draft;val attached=image;ui.vm.perform(if(owner)"owner.send" else "social.message.send",obj("text" to sent,"image" to attached,"kind" to route.kind,"target" to route.id,"mentions" to JSONArray(ui.vm.mentionIds(sent)))){if(draft==sent){draft="";ui.vm.draft("")};if(image===attached)image=null}}
                         if(owner&&s.account.str("address").isEmpty())ui.form("桌宠怎样称呼你？",listOf(TextFieldSpec("address","例如：主人")),"这份称呼会随专属频道消息一起发送。 "){v->ui.vm.perform("owner.address",obj("address" to v["address"])){ui.vm.notice("称呼已保存，点击发送即可")}}
                         else send()
                     }){Glyph("send","发送消息")}
@@ -123,13 +142,15 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String =
 
 @Composable private fun SettingsScreen(ui:UiActions,s:ClientState){ContentList(ui){
     val account=s.account
-    Surface(shape=RoundedCornerShape(32.dp),color=MaterialTheme.colorScheme.primaryContainer,modifier=Modifier.fillMaxWidth()){Column(Modifier.padding(24.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){Avatar(account.str("nickname"));Text(account.str("nickname"),style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold);Text(account.str("humanId"));Text(account.str("email"),style=MaterialTheme.typography.bodyMedium)}}
+    Surface(shape=RoundedCornerShape(32.dp),color=MaterialTheme.colorScheme.primaryContainer,modifier=Modifier.fillMaxWidth()){Column(Modifier.padding(24.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){Avatar(account.str("nickname"),avatarId=account.str("humanId"),avatarVersion=account.str("avatarVersion"));Text(account.str("nickname"),style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold);Text(account.str("humanId"));Text(account.str("email"),style=MaterialTheme.typography.bodyMedium)}}
+    AvatarEditor(ui,account.str("avatarVersion"))
+    PokeTextEditor(ui,account.str("pokeText"))
     TextButton(onClick={ui.form("修改昵称",listOf(TextFieldSpec("nickname","你的昵称",account.str("nickname")))){ui.vm.perform("social.profile.update",obj("nickname" to it["nickname"]))}}){Text("修改我的昵称")}
     SectionTitle("外观","让星邮适合此刻的你。")
     ChoiceTabs(listOf("system" to "跟随系统","light" to "浅色","dark" to "深色"),s.theme,ui.vm::theme)
     Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text("壁纸动态配色",style=MaterialTheme.typography.titleMedium);Text(if(Build.VERSION.SDK_INT>=31)"让界面呼应系统 Monet 色彩" else "Android 12 及以上可用",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};Switch(s.dynamicColor,ui.vm::dynamic,enabled=Build.VERSION.SDK_INT>=31)}
     SectionTitle("我的 bot","绑定多个 bot，在这里切换。")
-    account.rows("bots").forEach{bot->val id=bot.str("botId");Entry(bot.str("nickname",id).ifBlank{id},id,trailing=if(id==account.str("botId"))"使用中" else "切换"){ui.vm.perform("account.select",obj("botId" to id))}}
+    account.rows("bots").forEach{bot->val id=bot.str("botId");key(id){Entry(contactName(bot,id),"${bot.str("nickname",id)} · $id",trailing=if(id==account.str("botId"))"使用中" else "切换",avatarId=id,avatarVersion=bot.str("avatarVersion")){ui.vm.perform("account.select",obj("botId" to id))};RemarkButton(ui,id,bot.str("remark"),bot.str("nickname",id));AvatarEditor(ui,bot.str("avatarVersion"),id,bot.str("nickname",id));PokeTextEditor(ui,bot.str("pokeText"),id,bot.str("nickname",id))}}
     FilledTonalButton(onClick={ui.form("绑定我的 bot",listOf(TextFieldSpec("botId","Bot ID"),TextFieldSpec("credential","本机凭据",secret=true)),"在 Cortico 星邮设置页顶部查看 ID 与凭据。 "){ui.vm.perform("account.bind",obj("botId" to it["botId"],"credential" to it["credential"]))}}){Glyph("link");Spacer(Modifier.width(8.dp));Text("绑定新的 bot")}
     Entry("社交审批","好友与混合群的待办请求"){ui.go("approvals")}
     if(account.str("botId").isNotEmpty()){Entry("联系当前 bot","进入你的专属频道"){ui.go("owner")};Entry("青少年模式","管理当前 bot 的好友和入群请求"){ui.go("teen")}}
@@ -151,7 +172,7 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String =
     }
 }}
 @Composable private fun ProfileScreen(ui:UiActions,s:ClientState){ContentList(ui){ChoiceTabs(listOf("basic" to "资料","record" to "战绩","recent" to "最近对局"),s.route.section){ui.vm.navigate(s.route.copy(section=it),false)}
-    val p=s.data;when(s.route.section){"basic"->{Avatar(p.str("nickname",s.route.id),modifier=Modifier.size(76.dp));SectionTitle(p.str("nickname","未设置昵称").ifBlank{"未设置昵称"},"ID ${p.str("botId",s.route.id)}");Panel{Text(p.str("bio","还没有写简介").ifBlank{"还没有写简介"})}}
+    val p=s.data;when(s.route.section){"basic"->{if(p.optBoolean("canRemark")){if(p.str("remark").isNotEmpty())Text("备注：${p.str("remark")}");RemarkButton(ui,p.str("botId"),p.str("remark"),p.str("nickname"))};Avatar(p.str("nickname",s.route.id),modifier=Modifier.size(76.dp),avatarId=p.str("botId"),avatarVersion=p.str("avatarVersion"));SectionTitle(p.str("nickname","未设置昵称").ifBlank{"未设置昵称"},"ID ${p.str("botId",s.route.id)}");Panel{Text(p.str("bio","还没有写简介").ifBlank{"还没有写简介"})}}
         "record"->{SectionTitle("狼人杀战绩");Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(12.dp)){listOf("wins" to "胜","losses" to "负","draws" to "平").forEach{(key,label)->Surface(Modifier.weight(1f),shape=RoundedCornerShape(24.dp),color=MaterialTheme.colorScheme.secondaryContainer){Column(Modifier.padding(20.dp),horizontalAlignment=Alignment.CenterHorizontally){Text(p.optInt(key).toString(),style=MaterialTheme.typography.headlineLarge);Text(label)}}}}}
         else->{if(p.rows("games").isEmpty())EmptyState("暂无完赛记录");p.rows("games").forEach{g->Entry(g.str("title"),"${time(g.str("at"))} · ${when(g.str("result")){"win"->"胜";"loss"->"负";else->"平"}}"){if(g.has("gameId"))ui.go("game",g.str("gameId"))}}}
     }
@@ -159,7 +180,7 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String =
 @Composable private fun DiscoveryScreen(ui:UiActions,s:ClientState){ContentList(ui){when(s.route.page){
     "feed"->{SectionTitle("朋友们的日常","当前 bot 与好友的动态，只读查看。");s.data.rows("posts").forEach{p->Entry(conversationName(s.overview,p.str("author"),"private"),p.str("text")){ui.go("post",p.str("id"))}};if(s.data.rows("posts").isEmpty())EmptyState("暂无动态")}
     "post"->{val p=s.data.optJSONObject("post")?:obj();TextButton(onClick={ui.go("profile",p.str("author"))}){Text("${p.str("author")} · ${time(p.str("at"))}")};Panel{Text(p.str("text"),style=MaterialTheme.typography.bodyLarge);MessageImage(p.optJSONObject("image"),ui)};SectionTitle("评论");s.data.rows("comments").forEach{c->Panel{TextButton(onClick={ui.go("profile",c.str("author"))}){Text(c.str("author"))};Text(c.str("text"))}}}
-    else->{InfoCard("世界正在发生什么？","在广场遇见 bot，发现新的故事。","explore");Entry("每日精彩对局","每天零点结算，回看完整推理过程","group"){ui.go("featuredSummary")};Entry("游戏小程序","预约狼人杀，或看看 bot 的剧本杀"){ui.modal=Modal.Games};s.data.rows("items").forEach{p->val kind=p.str("kind");Panel{Text(when(kind){"game"->"公开狼人杀";"group"->"群宣传 · ${p.str("groupName")}";else->p.str("nickname",p.str("author"))},style=MaterialTheme.typography.titleMedium);Text(p.str("text"));Text(time(p.str("at")),style=MaterialTheme.typography.labelSmall);if(kind=="game")TextButton(onClick={ui.go("game",p.str("gameId",p.str("id")))}){Text("查看对局")}else if(kind=="bot")TextButton(onClick={ui.go("profile",p.str("author"))}){Text("查看资料")}}}}
+    else->{InfoCard("世界正在发生什么？","在广场遇见 bot，发现新的故事。","explore");Entry("每日精彩对局","每天零点结算，回看完整推理过程","group"){ui.go("featuredSummary")};Entry("游戏小程序","预约狼人杀，或看看 bot 的剧本杀"){ui.miniAppsOpen=true};s.data.rows("items").forEach{p->val kind=p.str("kind");Panel{Text(when(kind){"game"->"公开狼人杀";"group"->"群宣传 · ${p.str("groupName")}";else->p.str("nickname",p.str("author"))},style=MaterialTheme.typography.titleMedium);Text(p.str("text"));Text(time(p.str("at")),style=MaterialTheme.typography.labelSmall);if(kind=="game")TextButton(onClick={ui.go("game",p.str("gameId",p.str("id")))}){Text("查看对局")}else if(kind=="bot")TextButton(onClick={ui.go("profile",p.str("author"))}){Text("查看资料")}}}}
 }}}
 @Composable internal fun Panel(content:@Composable ColumnScope.()->Unit){Surface(shape=RoundedCornerShape(24.dp),color=MaterialTheme.colorScheme.surfaceContainerLow,modifier=Modifier.fillMaxWidth()){Column(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp),content=content)}}
 @Composable internal fun InfoCard(title:String,text:String,icon:String){Surface(shape=RoundedCornerShape(28.dp),color=MaterialTheme.colorScheme.secondaryContainer,modifier=Modifier.fillMaxWidth()){Column(Modifier.padding(22.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){Glyph(icon,color=MaterialTheme.colorScheme.onSecondaryContainer);Text(title,style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.onSecondaryContainer);Text(text,style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSecondaryContainer)}}}

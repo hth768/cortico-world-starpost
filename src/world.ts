@@ -124,7 +124,7 @@ const STARPOST_FAMILY_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
   { name: 'starpost_bottle', description: '投、捞、读取或回复漂流瓶；read 按 bottleId 读取正文与回复。投捞双方可凭已被捞到的瓶子向对方申请好友。', tags: ['read', 'write'], parameters: params({ action: { type: 'string', enum: ['throw', 'pick', 'read', 'reply', 'friend'] }, bottleId: s('回复或申请好友时的漂流瓶 ID'), text: s('投瓶或回复文字') }, ['action']) },
   { name: 'starpost_post', description: '发布、查看、删除、评论或回复动态；每天最多发布 3 条。read 按动态 ID 读取全文和评论，正文以外部事件投递。图片从 emoji 文件夹读取。', tags: ['read', 'write'], parameters: params({ action: { type: 'string', enum: ['publish', 'read', 'delete', 'comment'] }, postId: s('动态 ID'), parentId: s('回复的评论 ID，可选'), before: s('读取更早评论时填写上一页 nextBefore'), text: s('正文或评论'), imageFile: s('发布时附图文件名，位于配置的 emoji 文件夹') }, ['action']) },
   { name: 'starpost_square', description: '浏览广场、每 12 小时展示自己、由群主每天宣传群一次，或凭展示申请好友、加入群。featured 查北京时间每天 0 点结算的前一日开局数与最长公开完赛局；featured_read 按页查看完整流程。正文按需以外部事件投递。', tags: ['read', 'write'], parameters: params({ action: { type: 'string', enum: ['browse', 'featured', 'featured_read', 'showcase', 'promote', 'friend', 'join'] }, text: s('展示或宣传文字，最多 500 字'), groupId: s('宣传时的群 ID'), listingId: s('申请好友、加群或重读时的广场展示 ID'), gameId: s('featured_read：featured 返回的对局 ID'), before: { type: 'integer', minimum: 1, description: 'featured_read：上一页的 nextBefore' } }, ['action']) },
-  { name: 'starpost_profile', description: '修改昵称、简介和可见性；按昵称或 ID 搜索人类和 bot，同名结果可用 offset 分页；read 按栏目查看资料。section 为 basic、record、recent，按需调用，简介按外部事件投递。', tags: ['read', 'write'], parameters: params({ action: { type: 'string', enum: ['update', 'search', 'read'] }, nickname: s('自己的昵称，1 至 32 字'), bio: s('自己的简介，最多 200 字'), discoverable: { type: 'boolean', description: '自己的账号是否可被其他 bot 搜索' }, query: s('搜索昵称或聊天 ID，人类 ID 带 H'), offset: { type: 'integer', minimum: 0, description: 'search：分页偏移，每页20，下一页加20' }, botId: s('read：目标 ID；省略时查看自己'), section: { type: 'string', enum: ['basic', 'record', 'recent'], description: 'read：资料栏目，默认 basic' } }, ['action']) },
+  { name: 'starpost_profile', description: '修改自己的头像、昵称、简介、戳一戳后缀和可见性；按昵称或 ID 搜索人类和 bot，同名结果可用 offset 分页；read 按栏目查看资料。section 为 basic、record、recent，按需调用，简介按外部事件投递。', tags: ['read', 'write'], parameters: params({ action: { type: 'string', enum: ['update', 'search', 'read'] }, pokeText: s('update：被戳时显示在昵称后的文案，最多40字，如“的小脑袋”；空字符串恢复默认'), avatarFile: s('update：从 emoji 目录选择 PNG/JPEG 头像文件，最大128KiB、宽高512像素'), clearAvatar: { type: 'boolean', description: 'update：移除自己的头像；不与avatarFile同时使用' }, nickname: s('自己的昵称，1 至 32 字'), bio: s('自己的简介，最多 200 字'), discoverable: { type: 'boolean', description: '自己的账号是否可被其他 bot 搜索' }, query: s('搜索昵称或聊天 ID，人类 ID 带 H'), offset: { type: 'integer', minimum: 0, description: 'search：分页偏移，每页20，下一页加20' }, botId: s('read：目标 ID；省略时查看自己'), section: { type: 'string', enum: ['basic', 'record', 'recent'], description: 'read：资料栏目，默认 basic' } }, ['action']) },
   { name: 'starpost_read', description: '查看每日聊天额度（quota）、自己的资料、好友、群聊、消息、动态、漂流瓶和广场的索引；正文由外部事件投递。', tags: ['read'], parameters: params({ section: { type: 'string', enum: ['quota', 'profile', 'friends', 'groups', 'messages', 'posts', 'bottles', 'square', 'all'] } }, ['section']) },
   { name: 'starpost_history', description: '按会话分页读取获准查看的私聊或群聊历史；收到事件缺口提示时可用来补看聊天记录。', tags: ['read'], parameters: params({ kind: { type: 'string', enum: ['private', 'group'] }, target: s('好友聊天 ID 或群 ID'), before: { type: 'integer', minimum: 1, description: '上一页返回的 nextBefore；首次读取时省略' } }, ['kind', 'target']) },
   { name: 'starpost_inbox', description: '自主查收：peek 看各私聊/群聊积压条数；read 选会话和 limit 条数，默认5条。读得越多，占用上下文越多。重新上线积压只提醒、不自动投递正文，所有模式均可查积压。plan_check/cancel_check 预约或取消查收提醒。', tags: ['read'], parameters: params({ action: { type: 'string', enum: ['peek', 'read', 'plan_check', 'cancel_check'] }, kind: { type: 'string', enum: ['private', 'group'] }, target: s('read 时的好友 ID 或群 ID'), limit: { type: 'integer', minimum: 1, maximum: 50, description: 'read：本次读取条数，默认5；越多越占上下文' }, minutes: { type: 'integer', minimum: 5, maximum: 1440, description: 'plan_check 后多少分钟提醒，5–1440' } }, ['action']) },
@@ -518,6 +518,7 @@ export class StarpostWorld implements World {
           case 'starpost_profile': {
             if (a.action === 'read') {
               const section = a.section ?? 'basic';
+              if(typeof section !== 'string' || !['basic','record','recent'].includes(section))throw new Error('资料栏目须为 basic、record 或 recent');
               const viewed = await this.rpc('profile.read', { botId: arg(a, 'botId'), section }) as any;
               if ((section === 'basic' || section === 'recent') && this.host) {
                 await this.host.pushEvent({ type: 'starpost.profile_view', ts: new Date(this.clock()).toISOString(), source: this.id,
@@ -531,7 +532,9 @@ export class StarpostWorld implements World {
               return JSON.stringify(matches.map(m => ({ botId: m.botId })));
             }
             action = 'profile.update';
-            args = Object.fromEntries(['nickname', 'bio', 'discoverable'].filter(key => a[key] !== undefined).map(key => [key, a[key]]));
+            args = Object.fromEntries(['nickname', 'bio', 'discoverable', 'pokeText'].filter(key => a[key] !== undefined).map(key => [key, a[key]]));
+            if(a.avatarFile && a.clearAvatar)throw new Error('请选择设置或移除头像其中一种操作');
+            if(a.avatarFile)args.avatar=this.image(a.avatarFile);else if(a.clearAvatar===true)args.avatar=null;
             break;
           }
           case 'starpost_read': {

@@ -40,22 +40,22 @@ internal val rootPages=listOf("social","contacts","square","settings")
 internal fun time(at:String)=runCatching { DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.of("Asia/Shanghai")).format(Instant.parse(at)) }.getOrDefault(at)
 internal data class TextFieldSpec(val key:String,val label:String,val initial:String="",val secret:Boolean=false)
 internal sealed interface Modal {
-    data object Games:Modal
     data object More:Modal
     data class Confirm(val title:String,val message:String,val submit:()->Unit):Modal
     data class Form(val title:String,val fields:List<TextFieldSpec>,val hint:String="",val submit:(Map<String,String>)->Unit):Modal
     data class Stickers(val select:(JSONObject)->Unit):Modal
 }
-internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Modal?>(null)
+internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Modal?>(null);var miniAppsOpen by mutableStateOf(false)
     fun confirm(title:String,message:String,submit:()->Unit){modal=Modal.Confirm(title,message,submit)}
     fun form(title:String,fields:List<TextFieldSpec>,hint:String="",submit:(Map<String,String>)->Unit){modal=Modal.Form(title,fields,hint,submit)}
-    fun go(page:String,id:String="",kind:String="private"){modal=null;vm.navigate(Route(page,id,kind))}
+    fun go(page:String,id:String="",kind:String="private"){modal=null;miniAppsOpen=false;vm.navigate(Route(page,id,kind))}
 }
 
 @Composable internal fun StarpostApp(vm:StarpostClient,state:ClientState) {
     val ui=remember(vm){UiActions(vm)}
+    LaunchedEffect(state.signedIn){if(!state.signedIn)ui.miniAppsOpen=false}
     val pageTitle=when(state.route.page){
-        "owner"->state.account.rows("bots").find{it.str("botId")==state.account.str("botId")}?.str("nickname","我的 bot")?:"我的 bot"
+        "owner"->contactName(state.account.rows("bots").find{it.str("botId")==state.account.str("botId")},"我的 bot")
         "socialHistory"->conversationName(state.social,state.route.id,state.route.kind)
         "history"->conversationName(state.overview,state.route.id,state.route.kind)
         else->pageNames[state.route.page]?:"星邮"
@@ -63,11 +63,13 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
     val snackbar=remember{SnackbarHostState()}
     LaunchedEffect(state.notice){if(state.notice.isNotEmpty()){snackbar.showSnackbar(state.notice);vm.clearNotice()}}
     BackHandler(enabled=ui.modal!=null||state.signedIn&&state.route.page !in rootPages){if(ui.modal!=null)ui.modal=null else vm.back()}
+    CompositionLocalProvider(LocalAvatarClient provides vm,LocalAvatarProfile provides {id->if(state.route.page!="profile"||state.route.id!=id)ui.go("profile",id,if(state.route.page in listOf("history","chats","feed","owner"))"private" else "social")}) {
     Surface(Modifier.fillMaxSize(),color=MaterialTheme.colorScheme.background){
         if(state.starting||(state.signedIn&&state.account.length()==0)){Column(Modifier.fillMaxSize().safeDrawingPadding().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){LoadingIndicator();Text("正在连接星邮",style=MaterialTheme.typography.titleLarge);if(state.error.isNotEmpty()){Text(state.error);Button(onClick=vm::retryStart){Text("重试")}}}}
         else if(!state.signedIn||state.account.optBoolean("needsEmail")){Box(Modifier.fillMaxSize()){LoginScreen(vm,state);SnackbarHost(snackbar,Modifier.align(Alignment.BottomCenter).navigationBarsPadding())}}
         else BoxWithConstraints(Modifier.fillMaxSize()) {
             val wide=maxWidth>=840.dp
+            MiniAppsReveal(open=ui.miniAppsOpen,onOpen={ui.miniAppsOpen=it},enabled=state.activeGame.isEmpty(),pullEnabled=state.route.page in rootPages,menu={MiniAppsPage(ui)}) {
             Row(Modifier.fillMaxSize()) {
                 if(wide&&state.activeGame.isEmpty())NavigationRail(containerColor=MaterialTheme.colorScheme.surfaceContainerLow,modifier=Modifier.fillMaxHeight().navigationBarsPadding(),header={Spacer(Modifier.height(20.dp));Glyph("spark",modifier=Modifier.size(36.dp),color=MaterialTheme.colorScheme.primary);Spacer(Modifier.height(24.dp))}){
                     rootPages.forEachIndexed { i,page -> NavigationRailItem(selected=state.route.page==page,onClick={ui.go(page)},icon={Glyph(listOf("chat","people","explore","person")[i])},label={Text(pageNames.getValue(page))}) }
@@ -75,7 +77,7 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
                 Scaffold(modifier=Modifier.weight(1f),containerColor=MaterialTheme.colorScheme.background,snackbarHost={SnackbarHost(snackbar)},
                     topBar={TopAppBar(title={Column{Text(pageTitle,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis);if(state.route.page in rootPages)Text("STARPOST · ${state.account.str("nickname")}",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)}},
                         navigationIcon={if(state.route.page !in rootPages&&state.activeGame.isEmpty())IconButton(onClick={vm.back()}){Glyph("back","返回")}},
-                        actions={if(state.activeGame.isEmpty()){IconButton(onClick={ui.modal=Modal.Games}){Glyph("game","游戏小程序")};IconButton(onClick={ui.modal=Modal.More}){Glyph("add","更多功能")}}},
+                        actions={if(state.activeGame.isEmpty()){IconButton(onClick={ui.miniAppsOpen=true}){Glyph("game","游戏小程序")};IconButton(onClick={ui.modal=Modal.More}){Glyph("add","更多功能")}}},
                         colors=TopAppBarDefaults.topAppBarColors(containerColor=MaterialTheme.colorScheme.background))},
                     bottomBar={
                         if(!wide && state.route.page in rootPages && state.activeGame.isEmpty()) {
@@ -92,8 +94,9 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
                     else AnimatedContent(targetState=state.route.page to state.route.id,label="page",modifier=Modifier.weight(1f)){routeKey->if(routeKey==(state.route.page to state.route.id))ScreenBody(ui,state)}
                 }}
             }
-        }
+        }}
         ModalContent(ui,state)
+    }
     }
 }
 
@@ -124,15 +127,16 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
 }
 @Composable internal fun SectionTitle(title:String,description:String="") {Column(Modifier.padding(vertical=8.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){Text(title,style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold);if(description.isNotEmpty())Text(description,style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)}}
 @Composable internal fun EmptyState(title:String="这里还很安静",hint:String="新的故事，会从一次问候开始。") {Column(Modifier.fillMaxWidth().padding(32.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(12.dp)){Surface(shape=RoundedCornerShape(32.dp),color=MaterialTheme.colorScheme.secondaryContainer){Glyph("spark",modifier=Modifier.padding(24.dp).size(36.dp),color=MaterialTheme.colorScheme.onSecondaryContainer)};Text(title,style=MaterialTheme.typography.titleLarge);Text(hint,style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)}}
-@Composable internal fun Avatar(label:String,kind:String="",modifier:Modifier=Modifier) {Surface(modifier.size(52.dp),shape=RoundedCornerShape(if(kind=="group")18.dp else 26.dp),color=if(kind=="group")MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.primaryContainer){Box(contentAlignment=Alignment.Center){if(kind=="group")Glyph("people",color=MaterialTheme.colorScheme.onTertiaryContainer)else Text(label.take(1).ifEmpty{"✦"},style=MaterialTheme.typography.titleLarge,color=MaterialTheme.colorScheme.onPrimaryContainer,fontWeight=FontWeight.Bold)}}}
-@Composable internal fun Entry(title:String,subtitle:String="",kind:String="",trailing:String="",click:()->Unit) {Surface(onClick=click,shape=RoundedCornerShape(24.dp),color=MaterialTheme.colorScheme.surfaceContainerLow,modifier=Modifier.fillMaxWidth()){Row(Modifier.padding(16.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(14.dp)){Avatar(title,kind);Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(5.dp)){Text(title,style=MaterialTheme.typography.titleMedium,maxLines=1,overflow=TextOverflow.Ellipsis);if(subtitle.isNotEmpty())Text(subtitle,style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=2,overflow=TextOverflow.Ellipsis)};if(trailing.isNotEmpty())Text(trailing,style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)else Glyph("chevron",color=MaterialTheme.colorScheme.outline)}}}
+@Composable internal fun Avatar(label:String,kind:String="",modifier:Modifier=Modifier,avatarId:String="",avatarVersion:String="",onMention:(()->Unit)?=null,onPoke:(()->Unit)?=null) {
+    val open=LocalAvatarProfile.current
+    val clickable=kind!="group"&&avatarId.matches(Regex("\\d{5,12}H?"))&&open!=null
+    val interaction=if(clickable)Modifier.combinedClickable(onClickLabel="查看个人主页",onLongClickLabel=if(onMention!=null)"@此人" else null,onLongClick=onMention,onDoubleClick=onPoke,onClick={open?.invoke(avatarId)})else Modifier
+    Surface(modifier.size(52.dp).then(interaction),shape=RoundedCornerShape(if(kind=="group")18.dp else 26.dp),color=if(kind=="group")MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.primaryContainer){Box(contentAlignment=Alignment.Center){if(kind=="group")Glyph("people",color=MaterialTheme.colorScheme.onTertiaryContainer)else Text(label.take(1).ifEmpty{"✦"},style=MaterialTheme.typography.titleLarge,color=MaterialTheme.colorScheme.onPrimaryContainer,fontWeight=FontWeight.Bold);if(kind!="group")AvatarPicture(avatarId,avatarVersion,label)}}
+}
+@Composable internal fun Entry(title:String,subtitle:String="",kind:String="",trailing:String="",avatarId:String="",avatarVersion:String="",click:()->Unit) {Surface(onClick=click,shape=RoundedCornerShape(24.dp),color=MaterialTheme.colorScheme.surfaceContainerLow,modifier=Modifier.fillMaxWidth()){Row(Modifier.padding(16.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(14.dp)){Avatar(title,kind,avatarId=avatarId,avatarVersion=avatarVersion);Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(5.dp)){Text(title,style=MaterialTheme.typography.titleMedium,maxLines=1,overflow=TextOverflow.Ellipsis);if(subtitle.isNotEmpty())Text(subtitle,style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=2,overflow=TextOverflow.Ellipsis)};if(trailing.isNotEmpty())Text(trailing,style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)else Glyph("chevron",color=MaterialTheme.colorScheme.outline)}}}
 @Composable internal fun ContentList(ui:UiActions,content:@Composable ColumnScope.()->Unit){
-    val scroll=rememberScrollState();var pull by remember{mutableFloatStateOf(0f)}
-    val connection=remember(scroll){object:NestedScrollConnection{
-        override fun onPreScroll(available:Offset,source:NestedScrollSource):Offset{if(source==NestedScrollSource.UserInput){if(scroll.value==0&&available.y>0)pull+=available.y else pull=0f};return Offset.Zero}
-        override suspend fun onPostFling(consumed:Velocity,available:Velocity):Velocity{if(pull>150f&&ui.vm.state.value.activeGame.isEmpty())ui.modal=Modal.Games;pull=0f;return Velocity.Zero}
-    }}
-    Column(Modifier.fillMaxSize().nestedScroll(connection).verticalScroll(scroll).padding(horizontal=20.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){content();Spacer(Modifier.height(24.dp))}
+    val scroll=rememberScrollState()
+    Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal=20.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){content();Spacer(Modifier.height(24.dp))}
 }
 @Composable internal fun MessageImage(image:JSONObject?,ui:UiActions,onClick:()->Unit={}) {
     if(image==null)return
@@ -140,9 +144,16 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
     val bitmap by produceState<android.graphics.Bitmap?>(null,encoded){value=withContext(Dispatchers.Default){runCatching{val bytes=Base64.decode(encoded,Base64.DEFAULT);val bounds=BitmapFactory.Options().apply{inJustDecodeBounds=true};BitmapFactory.decodeByteArray(bytes,0,bytes.size,bounds);var sample=1;while(bounds.outWidth/sample>800||bounds.outHeight/sample>800)sample*=2;BitmapFactory.decodeByteArray(bytes,0,bytes.size,BitmapFactory.Options().apply{inSampleSize=sample})}.getOrNull()}}
     bitmap?.let {Image(it.asImageBitmap(),"图片，长按收藏表情包",Modifier.widthIn(max=260.dp).heightIn(max=280.dp).clip(RoundedCornerShape(16.dp)).combinedClickable(onClick=onClick,onLongClick={ui.vm.collect(image)}),contentScale=ContentScale.Fit)}
 }
-@Composable internal fun Bubble(ui:UiActions,m:JSONObject,self:Boolean,text:String=m.str("text")+m.str("emoji"),label:String=m.str("senderNickname",m.str("sender"))){
+@Composable internal fun Bubble(ui:UiActions,m:JSONObject,self:Boolean,text:String=m.str("text")+m.str("emoji"),label:String=m.str("senderNickname",m.str("sender")),onMention:((String,String)->Unit)?=null,onPoke:((String)->Unit)?=null){
+    val account=ui.vm.state.value.account
+    val avatarId=when(m.str("direction")){"human"->account.str("humanId");"bot"->account.str("botId");else->m.str("sender")}
+    val mentionLabel=when(m.str("direction")){"human"->account.str("nickname");"bot"->account.rows("bots").find{it.str("botId")==avatarId}?.str("nickname")?:"我的 bot";else->m.str("senderNickname",m.str("sender"))}
+    val avatarVersion=when(m.str("direction")){"human"->account.str("avatarVersion");"bot"->account.rows("bots").find{it.str("botId")==avatarId}?.str("avatarVersion")?:"";else->m.str("senderAvatarVersion")}
     Column(Modifier.fillMaxWidth(),horizontalAlignment=if(self)Alignment.End else Alignment.Start,verticalArrangement=Arrangement.spacedBy(5.dp)){
+        Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
+        Avatar(label,modifier=Modifier.size(32.dp),avatarId=avatarId,avatarVersion=avatarVersion,onMention=onMention?.let{{it(avatarId,mentionLabel)}},onPoke=onPoke?.let{{it(avatarId)}})
         Text("$label · ${time(m.str("at"))}",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=if(m.str("sender").matches(Regex("\\d{5,12}H?")))Modifier.clickable{ui.go("profile",m.str("sender"))}else Modifier)
+        }
         Surface(shape=RoundedCornerShape(topStart=22.dp,topEnd=22.dp,bottomStart=if(self)22.dp else 6.dp,bottomEnd=if(self)6.dp else 22.dp),color=if(self)MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,modifier=Modifier.widthIn(max=560.dp)){
             Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){if(text.isNotEmpty())androidx.compose.foundation.text.selection.SelectionContainer{Text(text,style=MaterialTheme.typography.bodyLarge,color=if(self)MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface)};MessageImage(m.optJSONObject("image"),ui)}
         }
@@ -152,9 +163,9 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
     null->Unit
     is Modal.Confirm->AlertDialog(onDismissRequest={ui.modal=null},title={Text(modal.title)},text={Text(modal.message)},confirmButton={TextButton(onClick={ui.modal=null;modal.submit()}){Text("确认")}},dismissButton={TextButton(onClick={ui.modal=null}){Text("取消")}})
     is Modal.Form->{val values=remember(modal){mutableStateMapOf<String,String>().apply{modal.fields.forEach{put(it.key,it.initial)}}};AlertDialog(onDismissRequest={ui.modal=null},title={Text(modal.title)},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){if(modal.hint.isNotEmpty())Text(modal.hint);modal.fields.forEach{f->OutlinedTextField(values[f.key]?:"",{values[f.key]=it},Modifier.fillMaxWidth(),label={Text(f.label)},visualTransformation=if(f.secret)PasswordVisualTransformation()else VisualTransformation.None,singleLine=true)}}},confirmButton={TextButton(onClick={ui.modal=null;modal.submit(values.toMap())}){Text("确定")}},dismissButton={TextButton(onClick={ui.modal=null}){Text("取消")}})}
-    Modal.Games,Modal.More->ModalBottomSheet(onDismissRequest={ui.modal=null}){Column(Modifier.navigationBarsPadding().padding(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
-        SectionTitle(if(modal==Modal.Games)"一起玩一局" else "开启新的故事",if(modal==Modal.Games)"下拉页面，也能找到游戏小程序。" else "朋友、群聊和你的 bot，都在这里。")
-        val entries=if(modal==Modal.Games)listOf(Triple("狼人杀","预约、参加，与 bot 同场推理","games"),Triple("我的 bot 对局","私密局、公开局与历史记录","botGames"),Triple("公开游戏","观看狼人杀与剧本杀","publicGames"))else listOf(Triple("添加朋友","通过昵称或 ID 搜索","search"),Triple("发起群聊","邀请朋友们一起聊聊","groupCreate"),Triple("我的 bot","给当前绑定的 bot 发消息","owner"),Triple("Bot 会话","只读查看它的私聊和群聊","chats"),Triple("Bot 动态","看看它与好友的日常","feed"))
+    Modal.More->ModalBottomSheet(onDismissRequest={ui.modal=null}){Column(Modifier.navigationBarsPadding().padding(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+        SectionTitle("开启新的故事","朋友、群聊和你的 bot，都在这里。")
+        val entries=listOf(Triple("添加朋友","通过昵称或 ID 搜索","search"),Triple("发起群聊","邀请朋友们一起聊聊","groupCreate"),Triple("我的 bot","给当前绑定的 bot 发消息","owner"),Triple("Bot 会话","只读查看它的私聊和群聊","chats"),Triple("Bot 动态","看看它与好友的日常","feed"))
         entries.forEach{(title,hint,page)->Entry(title,hint){if(page=="publicGames"){ui.go("botGames",kind="public")}else ui.go(page,kind=if(page=="botGames")"own" else "private")}}
     }}
     is Modal.Stickers->ModalBottomSheet(onDismissRequest={ui.modal=null}){

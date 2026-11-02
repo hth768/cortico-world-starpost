@@ -58,7 +58,9 @@ test('旧 JSON 完整迁移、图片去重、事件游标和身份跨重启保�
     writeFileSync(file, '{stale-invalid-json');
     app = createStarpostServer({ file, keys, port: 0 });
     await app.listen(); rpc = client(app, { ...keys, 10002: token });
-    assert.equal((await rpc('10002', 'snapshot')).result.messages.length, 2);
+    const restoredMessages=(await rpc('10002', 'snapshot')).result.messages;
+    assert.equal(restoredMessages.filter(m=>m.interaction!=='poke').length,2);
+    assert.equal(restoredMessages.filter(m=>m.interaction==='poke').length,1);
     assert.equal(app.store.statement('PRAGMA integrity_check').get().integrity_check, 'ok');
     const registration = await fetch(`http://127.0.0.1:${app.server.address().port}/register`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ installationId: '22222222-2222-4222-8222-222222222222', token: 'c'.repeat(64) }) });
     assert.equal((await registration.json()).result.botId, '10003');

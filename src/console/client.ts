@@ -9,9 +9,9 @@ interface Snapshot {
   bottles: Array<{ id: string; author: string; text: string; pickedBy?: string; reply?: string }>;
   square: Array<{ id: string; kind: 'bot' | 'group' | 'game'; author: string; target: string; text: string; nickname?: string; bio?: string; groupName?: string; at: string }>;
 }
-interface Profile { botId: string; nickname: string; bio: string; discoverable: boolean }
+interface Profile { botId: string; nickname: string; bio: string; discoverable: boolean; avatarVersion?: string }
 interface ChatMessage {
-  id: string; cursor: number; kind: 'private' | 'group'; target: string; sender: string; senderNickname: string;
+  id: string; cursor: number; kind: 'private' | 'group'; target: string; sender: string; senderNickname: string; senderAvatarVersion?: string;
   text: string; emoji: string; image?: { mime: string; base64: string }; mentions: string[]; at: string;
 }
 interface HistoryPage { messages: ChatMessage[]; nextBefore: number | null; nextAfter: number | null }
@@ -69,6 +69,8 @@ const chatCss = `
 .sp-console .sp-links{display:flex;flex-wrap:wrap;gap:10px 20px}.sp-console .sp-links a{display:inline-flex;min-height:40px;align-items:center;font-weight:600;text-decoration:none}.sp-console .sp-credentials{flex-basis:100%;border-radius:18px;background:var(--sp-container);padding:14px 18px;margin:8px 0 14px;font-family:ui-monospace,system-ui,sans-serif;font-size:12px}
 .sp-console .sp-nav{display:flex;gap:6px;overflow-x:auto;padding:6px;border-radius:26px;background:var(--sp-container);margin:16px 0}.sp-console .sp-nav button{flex:1;min-width:76px;border-color:transparent;white-space:nowrap;background:transparent;color:var(--sp-muted)}.sp-console .sp-nav button[aria-pressed=true]{background:var(--sp-tonal);color:var(--sp-text);font-weight:750;border-radius:20px}.sp-console .sp-discovery{background:var(--sp-container);padding:20px;border-radius:24px;margin-bottom:14px}.sp-console .sp-discovery>div{padding:10px 0;border-bottom:1px solid var(--sp-border)}
 .sp-console .sp-chat-layout{border-color:var(--sp-border);border-radius:24px}.sp-console .sp-chat-list{background:var(--sp-surface);border-color:var(--sp-border);gap:6px}.sp-console .sp-chat-card{border:0;min-height:64px;border-radius:18px;padding:14px}.sp-console .sp-chat-card[aria-pressed=true]{background:var(--sp-tonal);color:var(--sp-text)}.sp-console .sp-thread-scroll{background:var(--sp-bg)}.sp-console .sp-thread-head,.sp-console .sp-thread-foot{border-color:var(--sp-border)}.sp-console .sp-bubble{background:var(--sp-container);border-radius:6px 20px 20px;padding:12px 16px}.sp-console .sp-self .sp-bubble{background:var(--sp-tonal);border-radius:20px 6px 20px 20px}.sp-console .sp-chat-preview,.sp-console .sp-message-meta,.sp-console .sp-thread-note,.sp-console .sp-thread-foot{opacity:1;color:var(--sp-muted)}.sp-console .sp-sticker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}.sp-console .sp-sticker-grid>div{padding:16px;border-radius:20px;background:var(--sp-container)}
+.sp-avatar{display:inline-flex;width:40px;height:40px;align-items:center;justify-content:center;border-radius:50%;overflow:hidden;background:var(--sp-primary-container,#e8e5ff);color:var(--sp-text,#242333);vertical-align:middle;margin:4px}.sp-avatar img{width:100%;height:100%;object-fit:cover}
+.sp-profile-dialog{width:min(560px,90vw);max-height:85vh;overflow:auto;border:1px solid var(--sp-border);border-radius:24px;background:var(--sp-surface);color:var(--sp-text);padding:24px}.sp-profile-dialog::backdrop{background:#0008}
 @media(max-width:700px){.sp-console{padding:12px}.sp-console .sp-sheet{padding:14px}.sp-console .sp-nav button{min-width:64px;padding:8px 12px}.sp-console .sp-bubble-wrap{max-width:88%}}
 @media(prefers-reduced-motion:reduce){.sp-console button{transition:none}}
 .sp-chat-layout{display:grid;grid-template-columns:minmax(210px,30%) minmax(0,1fr);min-height:540px;border:1px solid rgba(128,128,128,.22);border-radius:14px;overflow:hidden;margin-top:12px}
@@ -110,6 +112,45 @@ function image(ctx: WebUiPanelContext, parent: HTMLElement, value?: { mime: stri
     img.style.maxHeight = expanded ? 'none' : '240px';
   }, { signal: ctx.signal });
   img.src = `data:${value.mime};base64,${value.base64}`; parent.appendChild(img);
+}
+
+function avatarProfile(ctx:WebUiPanelContext,id:string) {
+  ctx.root.querySelector<HTMLDialogElement>('.sp-profile-dialog')?.close();
+  const {ui}=ctx,dialog=ui.h('dialog','sp-profile-dialog'),body=ui.h('div'),tabs=ui.rowbar();
+  const heading=ui.h('h3',null,'个人主页');heading.id=`sp-profile-${id}`;dialog.setAttribute('aria-labelledby',heading.id);
+  const close=()=>dialog.close();const abort=()=>dialog.remove();
+  dialog.addEventListener('close',()=>{ctx.signal.removeEventListener('abort',abort);dialog.remove()},{once:true});ctx.signal.addEventListener('abort',abort,{once:true});
+  dialog.append(heading,ui.button('关闭',{onClick:close}),tabs,body);
+  (ctx.root.querySelector('.sp-console')||ctx.root).appendChild(dialog);dialog.showModal();let request=0;
+  async function load(section:string){
+    const seq=++request;body.replaceChildren();line(ctx,body,'加载中…');
+    try{
+      const p=await ctx.invoke<{botId:string;nickname?:string;bio?:string;avatarVersion?:string;pokeText?:string;wins?:number;losses?:number;draws?:number;games?:Array<{title:string;at:string;result:string}>}>('profileRead',[id,section]);
+      if(ctx.signal.aborted||!dialog.isConnected||seq!==request)return;body.replaceChildren();
+      if(section==='basic'){avatar(ctx,body,p.botId,p.avatarVersion,p.nickname,false);line(ctx,body,`${p.nickname||'未设置昵称'} · ID ${p.botId}`);line(ctx,body,`简介：${p.bio||'未设置'}`);if(p.pokeText)line(ctx,body,`戳一戳文案：${p.pokeText}`);}
+      else if(section==='record')line(ctx,body,`狼人杀：胜 ${p.wins??0} · 负 ${p.losses??0} · 平 ${p.draws??0}`);
+      else {for(const g of p.games??[])line(ctx,body,`${g.title} · ${g.result==='win'?'胜':g.result==='loss'?'负':'平'} · ${g.at}`);if(!p.games?.length)line(ctx,body,'暂无完赛记录');}
+    }catch(error){if(dialog.isConnected&&seq===request){body.replaceChildren();line(ctx,body,String(error));}}
+  }
+  for(const [section,label]of [['basic','资料'],['record','狼人杀战绩'],['recent','最近 3 场对局']])tabs.append(ui.button(label,{onClick:()=>{void load(section)}}));
+  void load('basic');
+}
+
+const avatarCaches = new WeakMap<WebUiPanelContext, Map<string, Promise<{avatarVersion?:string;image?:{mime:string;base64:string}}>>>();
+function avatar(ctx:WebUiPanelContext,parent:HTMLElement,id:string,version?:string,label='',interactive=true) {
+  const node=ctx.ui.h('span','sp-avatar',Array.from(label||'星')[0]);parent.appendChild(node);
+  if(interactive&&/^\d{5,12}H?$/.test(id)){node.tabIndex=0;node.setAttribute('role','button');node.setAttribute('aria-label',`${label||id}的头像，查看个人主页`);node.style.cursor='pointer';node.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();avatarProfile(ctx,id)},{signal:ctx.signal});node.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();avatarProfile(ctx,id)}},{signal:ctx.signal});}
+  if(!version)return;
+  let cache=avatarCaches.get(ctx);if(!cache){cache=new Map();avatarCaches.set(ctx,cache);}
+  const key=`${id}:${version}`;
+  if(!cache.has(key)){
+    if(cache.size>=64)cache.delete(cache.keys().next().value!);
+    cache.set(key,ctx.invoke<{avatarVersion?:string;image?:{mime:string;base64:string}}>('profileRead',[id,'avatar']).catch(()=>({})));
+  }
+  void cache.get(key)!.then(({image:v,avatarVersion})=>{
+    if(ctx.signal.aborted||!v||avatarVersion!==version||!['image/png','image/jpeg'].includes(v.mime)||typeof v.base64!=='string'||v.base64.length>174764||!/^[A-Za-z0-9+/=]+$/.test(v.base64))return;
+    const img=ctx.ui.h('img');img.alt=`${label||'用户'}的头像`;img.src=`data:${v.mime};base64,${v.base64}`;img.onerror=()=>{node.textContent=Array.from(label||'星')[0]};node.replaceChildren(img);
+  });
 }
 
 const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
@@ -333,10 +374,10 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
       async function load(section: string) {
         const request = ++profileRequest; body.replaceChildren(); line(ctx, body, '加载中…');
         try {
-          const p = await ctx.invoke<{botId:string;nickname?:string;bio?:string;wins?:number;losses?:number;draws?:number;games?:Array<{title:string;at:string;result:string}>}>('profileRead', [botId, section]);
+          const p = await ctx.invoke<{botId:string;nickname?:string;bio?:string;avatarVersion?:string;wins?:number;losses?:number;draws?:number;games?:Array<{title:string;at:string;result:string}>}>('profileRead', [botId, section]);
           if(ctx.signal.aborted || request !== profileRequest) return;
           body.replaceChildren();
-          if(section === 'basic') { line(ctx, body, `${p.nickname || '未设置昵称'} · ID ${p.botId}`); line(ctx, body, `简介：${p.bio || '未设置'}`); }
+          if(section === 'basic') { avatar(ctx,body,p.botId,p.avatarVersion,p.nickname); line(ctx, body, `${p.nickname || '未设置昵称'} · ID ${p.botId}`); line(ctx, body, `简介：${p.bio || '未设置'}`); }
           else if(section === 'record') line(ctx, body, `狼人杀：胜 ${p.wins ?? 0} · 负 ${p.losses ?? 0} · 平 ${p.draws ?? 0}`);
           else { for(const game of p.games ?? []) line(ctx, body, `${game.title} · ${game.result === 'win' ? '胜' : game.result === 'loss' ? '负' : '平'} · ${game.at}`); if(!p.games?.length) line(ctx, body, '暂无完赛记录'); }
         } catch(error) { if(!ctx.signal.aborted && request === profileRequest) { body.replaceChildren(); line(ctx, body, String(error)); } }
@@ -350,6 +391,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
         if (!matches.length) line(ctx, results, '没有找到可见账号');
         for (const p of matches) {
           const entry = ui.button(`${p.nickname || '未设置昵称'} · ${p.botId}${p.botId === snapshotData?.botId ? ' · 我自己' : ''} · 查看个人主页`, { onClick: () => { void openProfile(p.botId); } });
+          avatar(ctx,entry,p.botId,p.avatarVersion,p.nickname);
           entry.style.display = 'block'; entry.style.width = '100%'; entry.style.textAlign = 'left'; entry.style.marginBlock = '0.6rem'; results.append(entry);
         }
       }).catch((error: unknown) => { line(ctx, results, String(error)); }).finally(() => { button.disabled = false; });
@@ -448,6 +490,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
       for (const m of visible) {
         const self = m.sender === data.botId, row = ui.h('div', `sp-message${self ? ' sp-self' : ''}`);
         const wrap = ui.h('div', 'sp-bubble-wrap');
+        avatar(ctx,wrap,m.sender,m.senderAvatarVersion,m.senderNickname);
         wrap.appendChild(ui.h('div', 'sp-message-meta', `${self ? '本机 bot' : m.senderNickname || '未设置昵称'} · ${m.sender} · ${displayTime(m.at)}`));
         const bubble = ui.h('div', 'sp-bubble');
         const words = [m.text, m.emoji, ...(m.mentions?.length ? [`@${m.mentions.join(' @')}`] : [])].filter(Boolean).join(' ');

@@ -2,6 +2,13 @@ package io.starpost.mobile
 
 import android.app.Application
 import android.graphics.Bitmap
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Text
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
@@ -25,6 +32,96 @@ class ComposeUiTest {
     private fun client()=StarpostClient(ApplicationProvider.getApplicationContext<Application>())
     private val account get()=obj("humanId" to "10003H","nickname" to "星河访客","email" to "hello@example.com","botId" to "10001","bots" to JSONArray().put(obj("botId" to "10001","nickname" to "陈玥汐")))
     private fun shot(name:String){val file=File("../.deployment/compose/screenshots/$name.png");file.parentFile.mkdirs();compose.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG,100,file.outputStream())}
+    @Test fun privateRemarkDisplaysWithoutEnteringMentionText() {
+        val vm=client();val friend=obj("botId" to "10005H","nickname" to "公开昵称","remark" to "私人备注")
+        val social=obj("friendProfiles" to JSONArray().put(friend))
+        val data=obj("messages" to JSONArray().put(obj("id" to "remark-message","sender" to "10005H","senderNickname" to "公开昵称","text" to "你好","at" to "2026-11-02T10:00:00Z")))
+        compose.setContent{StarpostTheme("light",false){StarpostApp(vm,ClientState(starting=false,signedIn=true,account=account,social=social,data=data,route=Route("socialHistory","10005H")))}}
+        compose.onNodeWithText("修改备注名").assertExists()
+        compose.onNodeWithText("私人备注").assertExists()
+        compose.onNodeWithText("私",useUnmergedTree=true).performTouchInput{longClick()}
+        compose.onNodeWithText("@公开昵称 ").assertExists()
+        org.junit.Assert.assertEquals(listOf("10005H"),vm.mentionIds("@公开昵称 "))
+    }
+    @Test fun avatarSingleDoubleAndLongPressDoNotTriggerEachOther() {
+        var opened=0;var mentioned=0;var poked=0
+        compose.setContent{StarpostTheme("light",false){androidx.compose.runtime.CompositionLocalProvider(LocalAvatarProfile provides {opened++}){
+            Avatar("甲",avatarId="10001",modifier=Modifier.testTag("gesture-avatar"),onMention={mentioned++},onPoke={poked++})
+        }}}
+        compose.onNodeWithTag("gesture-avatar").performTouchInput{doubleClick()};compose.waitForIdle()
+        compose.runOnIdle{org.junit.Assert.assertEquals(1,poked);org.junit.Assert.assertEquals(0,opened);org.junit.Assert.assertEquals(0,mentioned)}
+        compose.onNodeWithTag("gesture-avatar").performTouchInput{longClick()};compose.waitForIdle()
+        compose.runOnIdle{org.junit.Assert.assertEquals(1,mentioned);org.junit.Assert.assertEquals(0,opened);org.junit.Assert.assertEquals(1,poked)}
+        compose.onNodeWithTag("gesture-avatar").performTouchInput{click()};compose.mainClock.advanceTimeBy(400);compose.waitForIdle()
+        compose.runOnIdle{org.junit.Assert.assertEquals(1,opened);org.junit.Assert.assertEquals(1,poked);org.junit.Assert.assertEquals(1,mentioned)}
+    }
+    @Test fun draftMentionsKeepRealIdsAndDisappearWhenTextIsRemoved() {
+        val vm=client();vm.mention("10001","同名");vm.mention("10002","同名");vm.draft("@同名 你好")
+        org.junit.Assert.assertEquals(setOf("10001","10002"),vm.mentionIds(vm.draft()).toSet())
+        vm.draft("你好");org.junit.Assert.assertTrue(vm.mentionIds(vm.draft()).isEmpty())
+    }
+    @Test fun settingsOffersAvatarControlsForEachOwnedBotAndConfirmsTarget() {
+        val vm=client()
+        val profile=account.put("bots",JSONArray().put(obj("botId" to "10001","nickname" to "陈玥汐")).put(obj("botId" to "10002","nickname" to "小星","avatarVersion" to "test-version")))
+        compose.setContent{StarpostTheme("light",false){StarpostApp(vm,ClientState(starting=false,signedIn=true,account=profile,route=Route("settings")))}}
+        compose.onAllNodesWithText("更换 Bot 头像").assertCountEquals(2)
+        compose.onNodeWithText("移除 Bot 头像").performScrollTo().performClick()
+        compose.onNodeWithText("将 小星（10002）的头像恢复为默认图标？").assertIsDisplayed()
+        compose.onNodeWithText("取消").performClick()
+    }
+    @Test fun miniAppsSearchFiltersIconsAndOpensMysteryViewer(){
+        var selected:MiniApp?=null
+        compose.setContent{StarpostTheme("light",false){MiniAppsCatalog({},{selected=it})}}
+        compose.onNodeWithText("搜索游戏和额外功能").performTextInput("剧本杀")
+        compose.onNodeWithText("搜索结果 · 3").assertExists()
+        compose.onNodeWithText("狼人杀").assertDoesNotExist()
+        compose.onNode(hasText("剧本杀") and !hasSetTextAction()).performClick()
+        compose.runOnIdle{org.junit.Assert.assertEquals("mystery",selected?.id);org.junit.Assert.assertEquals("public",selected?.kind)}
+        compose.onNodeWithContentDescription("清空搜索").performClick()
+        compose.onNodeWithText("搜索游戏和额外功能").performTextInput("不存在的功能")
+        compose.onNodeWithText("没有找到相关功能，试试“狼人杀”或“动态”。").assertExists()
+    }
+    @Test fun pullRevealsMiniAppsAndMovesWholePageThenCollapses(){
+        val expanded=mutableStateOf(false)
+        compose.setContent{StarpostTheme("light",false){MiniAppsReveal(expanded.value,{expanded.value=it},true,true,
+            menu={MiniAppsCatalog({expanded.value=false},{})}){
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("pull-list")){Text("聊天首页");Spacer(Modifier.height(100.dp))}
+        }}}
+        compose.onNodeWithTag("pull-list").performTouchInput{swipe(start=center,end=center+androidx.compose.ui.geometry.Offset(0f,45f),durationMillis=400)}
+        compose.waitForIdle();compose.runOnIdle{org.junit.Assert.assertFalse(expanded.value)}
+        compose.onNodeWithTag("pull-list").performTouchInput{swipe(start=androidx.compose.ui.geometry.Offset(centerX,100f),end=androidx.compose.ui.geometry.Offset(centerX,700f),durationMillis=700)}
+        compose.waitForIdle();compose.runOnIdle{org.junit.Assert.assertTrue(expanded.value)}
+        compose.onNodeWithText("小程序").assertIsDisplayed()
+        org.junit.Assert.assertTrue(compose.onNodeWithTag("main-page-surface").fetchSemanticsNode().positionInRoot.y>500f)
+        shot("android-miniapps-reveal-light")
+        compose.onNodeWithContentDescription("收起小程序").performClick();compose.waitForIdle()
+        compose.onNodeWithText("聊天首页").assertIsDisplayed()
+        compose.runOnIdle{org.junit.Assert.assertFalse(expanded.value)}
+    }
+    @Test fun miniAppsEntryUsesRevealAndSupportsDarkMode(){
+        val vm=client();val state=ClientState(starting=false,signedIn=true,account=account,route=Route("social"),theme="dark")
+        compose.setContent{StarpostTheme("dark",false){StarpostApp(vm,state)}}
+        compose.onNodeWithContentDescription("游戏小程序").performClick();compose.waitForIdle()
+        compose.onNodeWithText("小程序").assertIsDisplayed();compose.onNodeWithText("剧本杀").assertIsDisplayed()
+        shot("android-miniapps-dark")
+        compose.onNodeWithText("上滑或点此返回").performClick();compose.waitForIdle()
+        compose.onNodeWithContentDescription("游戏小程序").assertIsDisplayed()
+    }
+    @Test fun scrollingAboveTheListBottomDoesNotOpenMiniApps(){
+        val expanded=mutableStateOf(false)
+        compose.setContent{StarpostTheme("light",false){MiniAppsReveal(expanded.value,{expanded.value=it},true,true,menu={Text("小程序测试页")}){
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState(initial=900)).testTag("scrolled-list")){repeat(60){Text("消息 $it",Modifier.height(48.dp))}}
+        }}}
+        compose.onNodeWithTag("scrolled-list").performTouchInput{swipe(start=center,end=center+androidx.compose.ui.geometry.Offset(0f,250f),durationMillis=600)}
+        compose.waitForIdle();compose.runOnIdle{org.junit.Assert.assertFalse(expanded.value)}
+        compose.onNodeWithText("小程序测试页").assertDoesNotExist()
+    }
+    @Test fun activeGameDisablesAndClosesMiniApps(){
+        val expanded=mutableStateOf(true)
+        compose.setContent{StarpostTheme("light",false){MiniAppsReveal(expanded.value,{expanded.value=it},false,true,menu={Text("小程序测试页")}){Text("对局中")}}}
+        compose.waitForIdle();compose.runOnIdle{org.junit.Assert.assertFalse(expanded.value)}
+        compose.onNodeWithText("对局中").assertIsDisplayed();compose.onNodeWithText("小程序测试页").assertDoesNotExist()
+    }
     @Test fun updateDialogOffersDownloadAndPersistentSnooze(){
         var updated=0;var ignored=0
         val release=AndroidRelease(BuildConfig.VERSION_CODE.toLong()+1,"1.3.1",26,5_000_000,"a".repeat(64),"${UPDATE_REPO}download/v0.21.0/starpost-android.apk","• 支持搜索自己并打开个人主页\n• 游戏成员可以邀请好友\n• 新增手机一键更新")
