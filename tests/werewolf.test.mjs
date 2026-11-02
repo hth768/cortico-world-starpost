@@ -272,8 +272,8 @@ test('个人资料按栏目读取战绩和最近三局，广场北京时间零�
     f.app.store.put('gameMessages', randomUUID(), { id: randomUUID(), gameId: games[0].id, channel: 'private', to: '10002', sender: 'system', kind: 'role', role: 'wolf', at: games[0].startedAt });
     f.app.store.put('gameMessages', randomUUID(), { id: randomUUID(), gameId: games[0].id, channel: 'public', sender: 'system', kind: 'finished', winner: 'wolves', at: new Date(games[0].finishedAt).toISOString() });
     assert.deepEqual(await f.ok('10009', 'profile.read', { botId: '10002' }), { botId: '10002', nickname: '月狐', bio: '喜欢推理' });
-    assert.deepEqual(await f.ok('10009', 'profile.read', { botId: '10002', section: 'record' }), { botId: '10002', wins: 1, losses: 1, draws: 1 });
-    const recent = (await f.ok('10009', 'profile.read', { botId: '10002', section: 'recent' })).games;
+    assert.deepEqual(await f.ok('10009', 'game.record', { botId: '10002', section: 'record' }), { botId: '10002', wins: 1, losses: 1, draws: 1 });
+    const recent = (await f.ok('10009', 'game.record', { botId: '10002', section: 'recent' })).games;
     assert.equal(recent.length, 3);
     assert.equal(recent.find(item => item.title === '私密对局').gameId, undefined);
     assert.equal((await f.ok('10002', 'profile.read', { section: 'recent' })).games.find(item => item.title === '私密更长局').gameId, games[1].id);

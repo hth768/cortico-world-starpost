@@ -74,12 +74,19 @@ for (const role of ['wolf', 'witch', 'seer', 'guard', 'hunter']) test(`人类${r
     assert.equal((await f.phone('game', { gameId })).status, 423);
     let room = await f.ok(f.phone('human.room', { gameId }));
     assert.equal(room.game.ownRole, role);
+    assert.equal(room.serverNow, new Date(f.now).toISOString());
+    assert.deepEqual(room.game.seats.map(s => s.id), f.players);
+    assert.deepEqual(room.game.seats.map(s => s.number), [1,2,3,4,5,6]);
+    assert.ok(room.game.seats.every(s => typeof s.nickname === 'string' && s.alive && s.checkedIn));
+    assert.ok(room.game.seats.every(s => !('role' in s) && !('roles' in s)));
+    assert.equal(room.game.assignments, undefined);
     assert.equal(room.messages.filter(m => m.kind === 'role').length, 1);
     if (role === 'wolf') {
+      assert.equal((await f.phone('human.move', { gameId, move: 'attack', target: '10002', expectedPhase: {status:room.game.status,day:room.game.day-1,deadlineAt:room.game.phaseDeadlineAt} })).status, 409);
       assert.ok(room.options.some(o => o.move === 'attack'));
       const hidden = await f.ok(f.phone('human.message', { gameId, channel: 'wolf', text: '狼人频道讨论目标' }));
       assert.equal((await f.bot('10003', 'game.report', { gameId, messageId: hidden.messageId, reason: 'other' })).status, 403);
-      await f.ok(f.phone('human.move', { gameId, move: 'attack', target: '10002' }));
+      await f.ok(f.phone('human.move', { gameId, move: 'attack', target: '10002', expectedPhase: {status:room.game.status,day:room.game.day,deadlineAt:room.game.phaseDeadlineAt} }));
     } else f.advance(gameId);
     room = await f.ok(f.phone('human.room', { gameId }));
     if (['witch', 'seer', 'guard'].includes(role)) {

@@ -64,17 +64,18 @@ export class HumanAccess {
     if (action === 'social.overview') { const value=this.snapshot(humanId,true);return {...value,friendProfiles:value.friendProfiles.map(p=>this.withRemark(humanId,p))}; }
     if (action === 'social.history') return this.history(humanId, args);
     if (action === 'social.search') return { items: this.rpc(humanId, 'directory.search', { ...args, limit: 50 }) };
-    if (action === 'social.profile') {
+    if (action === 'social.profile' || action === 'game.record') {
+      const readAction=action==='game.record'?'game.record':'profile.read';
       // Owners may view every bound bot, including hidden bots that are not selected.
       if (typeof args.botId === 'string'
         && /^\d{5,12}$/.test(args.botId) && this.accounts.owner(args.botId) === humanId) {
-        const value=this.rpc(args.botId, 'profile.read', { botId:args.botId,section:args.section });
+        const value=this.rpc(args.botId, readAction, { botId:args.botId,section:args.section });
         return !args.section||args.section==='basic'?this.withRemark(humanId,value):value;
       }
-      const value=this.rpc(humanId, 'profile.read', args);
+      const value=this.rpc(humanId, readAction, {...args,botId:args.botId||humanId});
       return !args.section||args.section==='basic'?this.withRemark(humanId,value):value;
     }
-    const allowed = ['friend.request', 'friend.accept', 'friend.reject', 'friend.remove', 'group.create', 'group.invite', 'group.leave', 'group.manage', 'message.send', 'profile.update', 'poke'];
+    const allowed = ['friend.request', 'friend.accept', 'friend.reject', 'friend.remove', 'group.create', 'group.invite', 'group.leave', 'group.manage', 'message.send', 'message.read', 'message.image', 'message.recall', 'profile.update', 'poke'];
     if (action.startsWith('social.') && allowed.includes(action.slice(7))) {
       if (['social.friend.request', 'social.group.create', 'social.group.invite'].includes(action)) {
         const now = this.accounts.clock(), old = this.store.get('humanSocialRate', humanId);
@@ -92,7 +93,7 @@ export class HumanAccess {
     }
     const botId = session.selectedBotId;
     if (botId && this.accounts.owner(botId) !== humanId) fail('当前 bot 已不属于你的账号');
-    if (!botId && !['square', 'featured', 'featured.read', 'games', 'game', 'profile'].includes(action)) fail('请先在设置中绑定并选择自己的 bot');
+    if (!botId && !['square', 'featured', 'featured.read', 'games', 'game', 'profile', 'game.record'].includes(action)) fail('请先在设置中绑定并选择自己的 bot');
     if(action==='owner.poke'){
       if(!botId)fail('请先绑定并选择自己的 bot');
       const now=this.accounts.clock(),old=this.store.get('ownerPokeRate',humanId);

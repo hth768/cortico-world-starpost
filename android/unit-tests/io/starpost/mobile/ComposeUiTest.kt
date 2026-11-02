@@ -32,6 +32,60 @@ class ComposeUiTest {
     private fun client()=StarpostClient(ApplicationProvider.getApplicationContext<Application>())
     private val account get()=obj("humanId" to "10003H","nickname" to "星河访客","email" to "hello@example.com","botId" to "10001","bots" to JSONArray().put(obj("botId" to "10001","nickname" to "陈玥汐")))
     private fun shot(name:String){val file=File("../.deployment/compose/screenshots/$name.png");file.parentFile.mkdirs();compose.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG,100,file.outputStream())}
+    @Test fun messageLongPressQuotesWithoutLosingDraftOnRefresh(){
+        val vm=client();val message=obj("id" to "local-message","sender" to "10003H","senderNickname" to "星河访客","text" to "今晚一起玩狼人杀吧","at" to java.time.Instant.now().toString())
+        val state=mutableStateOf(ClientState(starting=false,signedIn=true,account=account,route=Route("socialHistory","10005H"),data=obj("messages" to JSONArray().put(message))))
+        compose.setContent{StarpostTheme("light",false){StarpostApp(vm,state.value)}}
+        compose.onNode(hasSetTextAction()).performTextInput("未发送的草稿")
+        compose.onNodeWithText("今晚一起玩狼人杀吧").performTouchInput{longClick()}
+        compose.onNodeWithText("复制").assertExists();compose.onNodeWithText("撤回").assertExists();compose.onNodeWithText("转发").assertExists();compose.onNodeWithText("保存表情").assertDoesNotExist()
+        compose.onNodeWithText("引用").performClick();compose.onNodeWithText("取消引用").assertExists()
+        compose.runOnIdle{state.value=state.value.copy(data=obj("messages" to JSONArray().put(JSONObject(message.toString()).put("cursor",1))))}
+        compose.onNodeWithText("未发送的草稿").assertExists();compose.onNodeWithText("取消引用").assertExists()
+        compose.onNodeWithText("今晚一起玩狼人杀吧").performTouchInput{longClick()};compose.onNodeWithText("多选").performClick();compose.onNodeWithText("已选 1/20").assertExists();compose.onNodeWithText("合并转发").assertExists()
+        shot("android-message-selection")
+    }
+    @Test fun readOnlyImageMenuAllowsCopyAndSaveWithoutBotWrites(){
+        val vm=client();val m=obj("id" to "image-message","text" to "图片","image" to obj("mime" to "image/png","base64" to "aGVsbG8="))
+        compose.setContent{StarpostTheme("dark",false){MessageActionMenu(UiActions(vm),m,false,true,{})}}
+        compose.onNodeWithText("复制").assertExists();compose.onNodeWithText("保存表情").assertExists();compose.onNodeWithText("撤回").assertDoesNotExist();compose.onNodeWithText("引用").assertDoesNotExist();compose.onNodeWithText("多选").assertDoesNotExist()
+        shot("android-image-message-menu")
+    }
+    @Test fun forwardCardOpensFullRecordWithOriginalAuthorsAndImage(){
+        val vm=client();val bitmap=Bitmap.createBitmap(240,160,Bitmap.Config.ARGB_8888).apply{eraseColor(0xffa7bcff.toInt())};val out=java.io.ByteArrayOutputStream();bitmap.compress(Bitmap.CompressFormat.PNG,100,out);bitmap.recycle()
+        val rows=JSONArray().put(obj("sender" to "10003H","senderNickname" to "星河","text" to "今晚一起玩狼人杀吧","at" to "2026-11-02T12:00:00Z")).put(obj("sender" to "10005H","senderNickname" to "青岚","text" to "这是今天拍到的天空","at" to "2026-11-02T12:01:00Z","image" to obj("mime" to "image/png","base64" to android.util.Base64.encodeToString(out.toByteArray(),android.util.Base64.NO_WRAP))))
+        val open=mutableStateOf(false)
+        compose.setContent{StarpostTheme("light",false){if(open.value)ForwardRecordDialog(UiActions(vm),obj("items" to rows),{open.value=false})else ForwardCard(obj("count" to 2,"preview" to JSONArray().put("星河：今晚一起玩狼人杀吧"))){open.value=true}}}
+        compose.onNodeWithText("这是今天拍到的天空").assertDoesNotExist();compose.onNodeWithText("查看完整聊天记录 →").performClick();compose.onNodeWithText("这是今天拍到的天空").assertExists();compose.onNodeWithText("完整聊天记录").assertExists();shot("android-forward-record")
+    }
+    @Test fun customBackgroundKeepsDraftAcrossThemesAndCanBeReset(){
+        val context=ApplicationProvider.getApplicationContext<Application>();val file=File(context.filesDir,"appearance-background.jpg")
+        val bitmap=Bitmap.createBitmap(400,800,Bitmap.Config.ARGB_8888)
+        android.graphics.Canvas(bitmap).drawPaint(android.graphics.Paint().apply{shader=android.graphics.LinearGradient(0f,0f,400f,800f,intArrayOf(0xff45a8d5.toInt(),0xffe8bbce.toInt(),0xff5955a0.toInt()),null,android.graphics.Shader.TileMode.CLAMP)})
+        file.outputStream().use{bitmap.compress(Bitmap.CompressFormat.JPEG,85,it)};bitmap.recycle()
+        val theme=androidx.compose.runtime.mutableStateOf("light");val vm=client()
+        val social=obj("friendProfiles" to JSONArray().put(obj("botId" to "10005H","nickname" to "小星")))
+        val data=obj("messages" to JSONArray().put(obj("id" to "background-message","sender" to "10005H","senderNickname" to "小星","text" to "在星邮，分享今天的故事。","at" to "2026-11-02T10:00:00Z")))
+        val route=androidx.compose.runtime.mutableStateOf(Route("socialHistory","10005H"))
+        try{
+            compose.setContent{StarpostTheme(theme.value,false){StarpostApp(vm,ClientState(starting=false,signedIn=true,account=account,social=social,data=data,route=route.value))}}
+            compose.waitUntil(5000){compose.onAllNodesWithTag("custom-background").fetchSemanticsNodes().isNotEmpty()}
+            compose.onNode(hasSetTextAction()).performTextInput("没有发送的草稿")
+            shot("android-background-light");compose.runOnIdle{theme.value="dark"};compose.waitForIdle()
+            compose.onNodeWithText("没有发送的草稿").assertExists();shot("android-background-dark")
+            compose.runOnIdle{route.value=Route("settings")};compose.onNodeWithText("恢复默认背景").performScrollTo().performClick()
+            compose.waitUntil(5000){!file.exists()};compose.onNodeWithText("恢复默认背景").assertDoesNotExist()
+        }finally{file.delete();context.getSharedPreferences("starpost-appearance",0).edit().clear().commit()}
+    }
+    @Test fun personalProfileShowsSocialSectionsInsteadOfGames(){
+        val vm=client();compose.setContent{StarpostTheme("light",false){StarpostApp(vm,ClientState(starting=false,signedIn=true,account=account,data=obj("botId" to "10005H","nickname" to "朋友","bio" to "简介"),route=Route("profile","10005H","social")))}}
+        compose.onNodeWithText("最近动态").assertExists();compose.onNodeWithText("漂流瓶互动").assertExists();compose.onNodeWithText("战绩").assertDoesNotExist();compose.onNodeWithText("最近对局").assertDoesNotExist()
+    }
+    @Test fun gameRecordsHaveTheirOwnMiniAppAndKeepPrivateGameTitlesRedacted(){
+        org.junit.Assert.assertTrue(searchMiniApps("游戏战绩").any{it.page=="gameRecord"})
+        val vm=client();compose.setContent{StarpostTheme("dark",false){StarpostApp(vm,ClientState(starting=false,signedIn=true,account=account,data=obj("games" to JSONArray().put(obj("title" to "私密对局","result" to "win","at" to "2026-11-02T10:00:00Z"))),route=Route("gameRecord","10005H",section="recent")))}}
+        compose.onNodeWithText("私密对局").assertExists();compose.onNodeWithText("最近 3 场对局").assertExists();compose.onNodeWithText("最近动态").assertDoesNotExist()
+    }
     @Test fun privateRemarkDisplaysWithoutEnteringMentionText() {
         val vm=client();val friend=obj("botId" to "10005H","nickname" to "公开昵称","remark" to "私人备注")
         val social=obj("friendProfiles" to JSONArray().put(friend))
@@ -160,7 +214,7 @@ class ComposeUiTest {
             compose.onNodeWithText("立即更新").performClick();compose.waitForIdle()
             compose.runOnIdle {
                 val intent=org.robolectric.Shadows.shadowOf(app).nextStartedActivity
-                org.junit.Assert.assertNotNull(intent)
+                org.junit.Assert.assertNotNull("Installer handoff: ${updater.state.value}",intent)
                 if(allowed){
                     org.junit.Assert.assertEquals(android.content.Intent.ACTION_VIEW,intent.action)
                     org.junit.Assert.assertEquals(APK_MIME,intent.type)
@@ -232,6 +286,36 @@ class ComposeUiTest {
         compose.onNodeWithText("支持星邮开发").performScrollTo().performClick()
         org.junit.Assert.assertEquals("https://afdian.com/a/starpost",opened)
         shot("android-support-afdian")
+    }
+    @Test fun gameTargetRequiresSelectionAndRejectsStalePhase(){
+        val option=obj("move" to "vote","label" to "投票","targets" to JSONArray().put(obj("id" to "10002","nickname" to "小夏")).put(obj("id" to "abstain","nickname" to "弃票")))
+        val valid=mutableStateOf(true);var submitted:String?=null
+        compose.setContent{StarpostTheme("light",false){GameTargetDialog(option,option,valid.value,false,{}){submitted=it}}}
+        compose.onNodeWithText("确认行动").assertIsNotEnabled()
+        compose.onNodeWithText("小夏",useUnmergedTree=true).performClick()
+        compose.onNodeWithText("确认行动").assertIsEnabled()
+        compose.runOnIdle{valid.value=false};compose.onNodeWithText("确认行动").assertIsNotEnabled()
+        compose.runOnIdle{org.junit.Assert.assertNull(submitted);valid.value=true}
+        compose.onNodeWithText("弃票",useUnmergedTree=true).performClick();compose.onNodeWithText("确认行动").performClick()
+        compose.runOnIdle{org.junit.Assert.assertEquals("abstain",submitted)}
+    }
+    @Test fun gameBoardSupportsTwentySeatsAndRetainsDraftAcrossTabsAndPolling(){
+        val vm=client();val theme=mutableStateOf("light");val seats=JSONArray();repeat(20){i->seats.put(obj("id" to if(i==0)"10003H" else "${10010+i}","number" to i+1,"nickname" to if(i==0)"星河访客" else "玩家${i+1}","alive" to (i!=3),"checkedIn" to true))}
+        val g=obj("gameId" to "arena","title" to "星夜推理局","day" to 2,"ownRole" to "seer","status" to "day","seats" to seats,"phaseDeadlineAt" to "2026-11-02T12:03:00Z")
+        val data=mutableStateOf(obj("game" to g,"serverNow" to "2026-11-02T12:00:00Z","humanId" to "10003H","messages" to JSONArray().put(obj("id" to "m1","sender" to "system","kind" to "dawn","day" to 2,"channel" to "public")),"channels" to JSONArray().put("public"),"options" to JSONArray()))
+        compose.setContent{StarpostTheme(theme.value,false){StarpostApp(vm,ClientState(starting=false,signedIn=true,account=account,route=Route("humanRoom","arena"),activeGame="arena",data=data.value))}}
+        compose.onNode(hasSetTextAction()).performTextInput("尚未发送的推理")
+        shot("android-arena-light")
+        compose.runOnIdle{theme.value="dark";data.value=JSONObject(data.value.toString()).put("game",JSONObject(g.toString()).put("status","vote"))};compose.onNodeWithText("尚未发送的推理").assertExists();shot("android-arena-dark")
+        compose.onNodeWithText("玩家20").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("讨论记录").performClick();compose.onNodeWithText("天亮了 · 平安夜").assertExists();compose.onNodeWithText("尚未发送的推理").assertExists()
+        compose.onNodeWithText("牌桌").performClick();compose.onNodeWithText("预言家").assertExists()
+    }
+    @Test fun mysteryViewerShowsProgressWithoutHumanActions(){
+        val vm=client();val g=obj("title" to "午夜列车","gameType" to "mystery","status" to "active","phase" to "clues","seats" to JSONArray().put(obj("id" to "10002","nickname" to "小夏","number" to 1,"alive" to true)))
+        compose.setContent{StarpostTheme("dark",false){StarpostApp(vm,ClientState(starting=false,signedIn=true,account=account,route=Route("game","mystery"),data=obj("game" to g,"messages" to JSONArray())))}}
+        compose.onNodeWithText("3 搜集线索").assertExists();compose.onNodeWithText("确认行动").assertDoesNotExist();compose.onAllNodes(hasSetTextAction()).assertCountEquals(0)
+        shot("android-mystery-arena")
     }
     @Test fun activeGameShowsRoleActionsAndHidesSocialNavigation(){
         val vm=client();val state=ClientState(starting=false,signedIn=true,account=account,route=Route("humanRoom","demo-game"),activeGame="demo-game",theme="dark",data=obj(

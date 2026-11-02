@@ -35,7 +35,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-internal val pageNames=mapOf("social" to "消息","contacts" to "联系人","square" to "发现","settings" to "我","owner" to "我的 bot","chats" to "Bot 会话","feed" to "Bot 动态","post" to "动态详情","search" to "寻找新朋友","groupCreate" to "发起群聊","invite" to "邀请好友","approvals" to "社交审批","teen" to "青少年模式","profile" to "个人资料","games" to "狼人杀广场","botGames" to "Bot 对局","game" to "对局记录","gameInvite" to "邀请参加游戏","humanReservation" to "游戏预约","humanRoom" to "游戏聊天室","schedule" to "预约狼人杀","featured" to "精彩对局","featuredSummary" to "每日精彩对局","socialHistory" to "聊天","history" to "Bot 聊天记录")
+internal val pageNames=mapOf("social" to "消息","contacts" to "联系人","square" to "发现","settings" to "我","owner" to "我的 bot","chats" to "Bot 会话","feed" to "Bot 动态","post" to "动态详情","search" to "寻找新朋友","groupCreate" to "发起群聊","invite" to "邀请好友","approvals" to "社交审批","teen" to "青少年模式","profile" to "个人资料","gameRecord" to "游戏战绩","games" to "狼人杀广场","botGames" to "Bot 对局","game" to "对局记录","gameInvite" to "邀请参加游戏","humanReservation" to "游戏预约","humanRoom" to "游戏聊天室","schedule" to "预约狼人杀","featured" to "精彩对局","featuredSummary" to "每日精彩对局","socialHistory" to "聊天","history" to "Bot 聊天记录")
 internal val rootPages=listOf("social","contacts","square","settings")
 internal fun time(at:String)=runCatching { DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.of("Asia/Shanghai")).format(Instant.parse(at)) }.getOrDefault(at)
 internal data class TextFieldSpec(val key:String,val label:String,val initial:String="",val secret:Boolean=false)
@@ -53,6 +53,10 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
 
 @Composable internal fun StarpostApp(vm:StarpostClient,state:ClientState) {
     val ui=remember(vm){UiActions(vm)}
+    val context=androidx.compose.ui.platform.LocalContext.current
+    val backgroundScope=rememberCoroutineScope()
+    val background=remember{BackgroundAppearance(context.applicationContext)}
+    LaunchedEffect(background){background.load()}
     LaunchedEffect(state.signedIn){if(!state.signedIn)ui.miniAppsOpen=false}
     val pageTitle=when(state.route.page){
         "owner"->contactName(state.account.rows("bots").find{it.str("botId")==state.account.str("botId")},"我的 bot")
@@ -63,18 +67,20 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
     val snackbar=remember{SnackbarHostState()}
     LaunchedEffect(state.notice){if(state.notice.isNotEmpty()){snackbar.showSnackbar(state.notice);vm.clearNotice()}}
     BackHandler(enabled=ui.modal!=null||state.signedIn&&state.route.page !in rootPages){if(ui.modal!=null)ui.modal=null else vm.back()}
-    CompositionLocalProvider(LocalAvatarClient provides vm,LocalAvatarProfile provides {id->if(state.route.page!="profile"||state.route.id!=id)ui.go("profile",id,if(state.route.page in listOf("history","chats","feed","owner"))"private" else "social")}) {
+    CompositionLocalProvider(LocalBackgroundScope provides backgroundScope,LocalBackground provides background,LocalAvatarClient provides vm,LocalAvatarProfile provides {id->if(state.route.page!="profile"||state.route.id!=id)ui.go("profile",id,if(state.route.page in listOf("history","chats","feed","owner"))"private" else "social")}) {
     Surface(Modifier.fillMaxSize(),color=MaterialTheme.colorScheme.background){
         if(state.starting||(state.signedIn&&state.account.length()==0)){Column(Modifier.fillMaxSize().safeDrawingPadding().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){LoadingIndicator();Text("正在连接星邮",style=MaterialTheme.typography.titleLarge);if(state.error.isNotEmpty()){Text(state.error);Button(onClick=vm::retryStart){Text("重试")}}}}
         else if(!state.signedIn||state.account.optBoolean("needsEmail")){Box(Modifier.fillMaxSize()){LoginScreen(vm,state);SnackbarHost(snackbar,Modifier.align(Alignment.BottomCenter).navigationBarsPadding())}}
         else BoxWithConstraints(Modifier.fillMaxSize()) {
             val wide=maxWidth>=840.dp
             MiniAppsReveal(open=ui.miniAppsOpen,onOpen={ui.miniAppsOpen=it},enabled=state.activeGame.isEmpty(),pullEnabled=state.route.page in rootPages,menu={MiniAppsPage(ui)}) {
+            Box(Modifier.fillMaxSize()) {
+            BackgroundLayer(background,Modifier.fillMaxSize())
             Row(Modifier.fillMaxSize()) {
                 if(wide&&state.activeGame.isEmpty())NavigationRail(containerColor=MaterialTheme.colorScheme.surfaceContainerLow,modifier=Modifier.fillMaxHeight().navigationBarsPadding(),header={Spacer(Modifier.height(20.dp));Glyph("spark",modifier=Modifier.size(36.dp),color=MaterialTheme.colorScheme.primary);Spacer(Modifier.height(24.dp))}){
                     rootPages.forEachIndexed { i,page -> NavigationRailItem(selected=state.route.page==page,onClick={ui.go(page)},icon={Glyph(listOf("chat","people","explore","person")[i])},label={Text(pageNames.getValue(page))}) }
                 }
-                Scaffold(modifier=Modifier.weight(1f),containerColor=MaterialTheme.colorScheme.background,snackbarHost={SnackbarHost(snackbar)},
+                Scaffold(modifier=Modifier.weight(1f),containerColor=Color.Transparent,snackbarHost={SnackbarHost(snackbar)},
                     topBar={TopAppBar(title={Column{Text(pageTitle,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis);if(state.route.page in rootPages)Text("STARPOST · ${state.account.str("nickname")}",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)}},
                         navigationIcon={if(state.route.page !in rootPages&&state.activeGame.isEmpty())IconButton(onClick={vm.back()}){Glyph("back","返回")}},
                         actions={if(state.activeGame.isEmpty()){IconButton(onClick={ui.miniAppsOpen=true}){Glyph("game","游戏小程序")};IconButton(onClick={ui.modal=Modal.More}){Glyph("add","更多功能")}}},
@@ -95,6 +101,7 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
                 }}
             }
         }}
+        }
         ModalContent(ui,state)
     }
     }
@@ -138,13 +145,13 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
     val scroll=rememberScrollState()
     Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal=20.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){content();Spacer(Modifier.height(24.dp))}
 }
-@Composable internal fun MessageImage(image:JSONObject?,ui:UiActions,onClick:()->Unit={}) {
+@Composable internal fun MessageImage(image:JSONObject?,ui:UiActions,onLongClick:(()->Unit)?=null,onClick:()->Unit={}) {
     if(image==null)return
     val encoded=image.str("base64");if(encoded.isEmpty()||encoded.length>1_400_000)return
     val bitmap by produceState<android.graphics.Bitmap?>(null,encoded){value=withContext(Dispatchers.Default){runCatching{val bytes=Base64.decode(encoded,Base64.DEFAULT);val bounds=BitmapFactory.Options().apply{inJustDecodeBounds=true};BitmapFactory.decodeByteArray(bytes,0,bytes.size,bounds);var sample=1;while(bounds.outWidth/sample>800||bounds.outHeight/sample>800)sample*=2;BitmapFactory.decodeByteArray(bytes,0,bytes.size,BitmapFactory.Options().apply{inSampleSize=sample})}.getOrNull()}}
-    bitmap?.let {Image(it.asImageBitmap(),"图片，长按收藏表情包",Modifier.widthIn(max=260.dp).heightIn(max=280.dp).clip(RoundedCornerShape(16.dp)).combinedClickable(onClick=onClick,onLongClick={ui.vm.collect(image)}),contentScale=ContentScale.Fit)}
+    bitmap?.let {Image(it.asImageBitmap(),"图片，长按收藏表情包",Modifier.widthIn(max=260.dp).heightIn(max=280.dp).clip(RoundedCornerShape(16.dp)).combinedClickable(onClick=onClick,onLongClick=onLongClick?:{ui.vm.collect(image)}),contentScale=ContentScale.Fit)}
 }
-@Composable internal fun Bubble(ui:UiActions,m:JSONObject,self:Boolean,text:String=m.str("text")+m.str("emoji"),label:String=m.str("senderNickname",m.str("sender")),onMention:((String,String)->Unit)?=null,onPoke:((String)->Unit)?=null){
+@Composable internal fun Bubble(ui:UiActions,m:JSONObject,self:Boolean,text:String=m.str("text")+m.str("emoji"),label:String=m.str("senderNickname",m.str("sender")),onMention:((String,String)->Unit)?=null,onPoke:((String)->Unit)?=null,onLongClick:(()->Unit)?=null,onClick:(()->Unit)?=null,onForward:(()->Unit)?=null,selected:Boolean=false){
     val account=ui.vm.state.value.account
     val avatarId=when(m.str("direction")){"human"->account.str("humanId");"bot"->account.str("botId");else->m.str("sender")}
     val mentionLabel=when(m.str("direction")){"human"->account.str("nickname");"bot"->account.rows("bots").find{it.str("botId")==avatarId}?.str("nickname")?:"我的 bot";else->m.str("senderNickname",m.str("sender"))}
@@ -154,8 +161,13 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
         Avatar(label,modifier=Modifier.size(32.dp),avatarId=avatarId,avatarVersion=avatarVersion,onMention=onMention?.let{{it(avatarId,mentionLabel)}},onPoke=onPoke?.let{{it(avatarId)}})
         Text("$label · ${time(m.str("at"))}",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=if(m.str("sender").matches(Regex("\\d{5,12}H?")))Modifier.clickable{ui.go("profile",m.str("sender"))}else Modifier)
         }
-        Surface(shape=RoundedCornerShape(topStart=22.dp,topEnd=22.dp,bottomStart=if(self)22.dp else 6.dp,bottomEnd=if(self)6.dp else 22.dp),color=if(self)MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,modifier=Modifier.widthIn(max=560.dp)){
-            Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){if(text.isNotEmpty())androidx.compose.foundation.text.selection.SelectionContainer{Text(text,style=MaterialTheme.typography.bodyLarge,color=if(self)MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface)};MessageImage(m.optJSONObject("image"),ui)}
+        Surface(shape=RoundedCornerShape(topStart=22.dp,topEnd=22.dp,bottomStart=if(self)22.dp else 6.dp,bottomEnd=if(self)6.dp else 22.dp),color=if(self)MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,border=if(selected)androidx.compose.foundation.BorderStroke(2.dp,MaterialTheme.colorScheme.primary)else null,modifier=Modifier.widthIn(max=560.dp).then(if(onLongClick!=null)Modifier.combinedClickable(onClick={onClick?.invoke()},onLongClick=onLongClick)else Modifier)){
+            Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+                m.optJSONObject("quote")?.let{q->Surface(shape=RoundedCornerShape(12.dp),color=MaterialTheme.colorScheme.surfaceContainer){Text("${q.str("senderNickname",q.str("sender"))}：${q.str("text").ifEmpty{if(q.optBoolean("hasImage"))"[图片]" else ""}}",Modifier.padding(10.dp),style=MaterialTheme.typography.bodySmall)}}
+                if(text.isNotEmpty()){if(onLongClick==null)androidx.compose.foundation.text.selection.SelectionContainer{Text(text,style=MaterialTheme.typography.bodyLarge)}else Text(text,style=if(m.optBoolean("recalled"))MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyLarge)}
+                MessageImage(m.optJSONObject("image"),ui,onLongClick=onLongClick,onClick={onClick?.invoke()})
+                m.optJSONObject("forward")?.let{ForwardCard(it){onForward?.invoke()}}
+            }
         }
     }
 }
@@ -171,7 +183,7 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
     is Modal.Stickers->ModalBottomSheet(onDismissRequest={ui.modal=null}){
         var pictures by remember{mutableStateOf<List<JSONObject>>(emptyList())};var files by remember{mutableStateOf<List<java.io.File>>(emptyList())};var offset by remember{mutableIntStateOf(0)}
         LaunchedEffect(Unit){files=ui.vm.favorites()};LaunchedEffect(files,offset){pictures=files.drop(offset).take(12).map{ui.vm.sticker(it)}}
-        Column(Modifier.padding(24.dp).navigationBarsPadding(),verticalArrangement=Arrangement.spacedBy(12.dp)){SectionTitle("我的表情包","长按聊天里的图片即可收藏。");if(files.isEmpty())EmptyState("还没有收藏","收到喜欢的表情包时，长按保存。")
+        Column(Modifier.padding(24.dp).navigationBarsPadding(),verticalArrangement=Arrangement.spacedBy(12.dp)){SectionTitle("我的表情包","长按聊天里的图片即可收藏。点击表情包立即发送，文字草稿保留。");if(files.isEmpty())EmptyState("还没有收藏","收到喜欢的表情包时，长按保存。")
             pictures.chunked(3).forEach { row->Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){row.forEach{picture->Surface(onClick={ui.modal=null;modal.select(picture)},shape=RoundedCornerShape(20.dp),color=MaterialTheme.colorScheme.surfaceContainer,modifier=Modifier.weight(1f).height(100.dp)){Box(Modifier.padding(8.dp),contentAlignment=Alignment.Center){MessageImage(picture,ui){ui.modal=null;modal.select(picture)}}}};repeat(3-row.size){Spacer(Modifier.weight(1f))}}}
             Row{TextButton(enabled=offset>0,onClick={offset-=12}){Text("上一页")};Spacer(Modifier.weight(1f));TextButton(enabled=offset+12<files.size,onClick={offset+=12}){Text("下一页")}}
         }

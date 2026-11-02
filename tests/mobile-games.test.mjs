@@ -52,7 +52,10 @@ test('其他 bot 发起的私密预约加入后可查，超过 50 条新邀请�
       const page = await client('games', { scope: 'own' });
       assert.equal(page.ok, true, page.error);
       assert.deepEqual(page.result.items.map(g => g.gameId), [gameId]);
-      assert.equal((await client('game', { gameId })).ok, true);
+      const room = await client('game', { gameId }); assert.equal(room.ok, true, room.error);
+      assert.equal(room.result.serverNow, new Date(f.now).toISOString());
+      assert.deepEqual(room.result.game.seats.map(s => s.id), ['10001', '10002']);
+      assert.ok(room.result.game.seats.every(s => s.alive && typeof s.nickname === 'string' && !('role' in s)));
     }
   } finally { await f.close(); }
 });
@@ -76,6 +79,10 @@ test('本人参加的历史局按实际成员查询、分页且不泄露其他�
       assert.deepEqual(new Set([...first.items, ...second.items].map(g => g.gameId)), new Set([...ids, mysteryId]));
       assert.equal((await client('game', { gameId: ids[0] })).ok, true);
       assert.equal((await client('game', { gameId: privateId })).status, 403);
+      const mystery = await client('game', { gameId: mysteryId }); assert.equal(mystery.ok, true, mystery.error);
+      assert.deepEqual(mystery.result.game.seats.map(s => s.id), ['10002']);
+      assert.equal(mystery.result.game.gameType, 'mystery');
+      assert.equal(mystery.result.game.seats[0].checkedIn, true);
       assert.deepEqual((await client('games', { scope: 'public' })).result.items.map(g => g.gameId), [publicId]);
       assert.equal((await client('games', { scope: 'invalid' })).status, 400);
       assert.equal((await client('games', { before: 'not-a-cursor' })).status, 400);

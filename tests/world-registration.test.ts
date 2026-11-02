@@ -42,6 +42,12 @@ test('初始面板注册后，本机身份与 bot 资料工具可跨重启使用
     writeFileSync(join(dir, 'sticker.png'), stickerBytes);
     const send = await familyTool(second, 'send').handler({ kind: 'private', target: '10001', text: '你好', sticker: 'sticker.png' }, {} as never);
     assert.ok(JSON.parse(String(send)).id);
+    const originalId=JSON.parse(String(send)).id;
+    const forwarded=await familyTool(second,'message').handler({action:'forward',kind:'private',target:'10001',messageIds:[originalId],destinationKind:'private',destinationTarget:'10001'},{} as never);
+    const forwardedId=JSON.parse(String(forwarded)).id;assert.ok(forwardedId);
+    const viewerRecord=await second.webUi().invoke!('viewer','chatMessage',['private','10001',forwardedId]) as {items:unknown[]};assert.equal(viewerRecord.items.length,1);
+    await assert.rejects(()=>second.webUi().invoke!('viewer','message.recall',['private','10001',forwardedId]),/不支持/);
+    const collected=JSON.parse(String(await familyTool(second,'message').handler({action:'save_image',kind:'private',target:'10001',messageId:forwardedId,itemIndex:0},{} as never)));assert.equal(collected.saved,true);assert.ok(collected.file);
     const snapshot = await second.webUi().invoke!('viewer', 'snapshot', []) as { profile: { nickname: string } };
     assert.equal(snapshot.profile.nickname, '小星');
     const squareTool = familyTool(second, 'square');
@@ -66,6 +72,15 @@ test('初始面板注册后，本机身份与 bot 资料工具可跨重启使用
     assert.equal(picture.origin, 'external');
     assert.equal(picture.blobs?.[0].mime, 'image/png');
     assert.deepEqual(Buffer.from(picture.blobs![0].bytes), stickerBytes);
+    app.store.put('posts','profile-latest',{id:'profile-latest',author:'10001',text:'最近动态正文',deleted:false,at:new Date().toISOString(),image:{mime:'image/png',base64:stickerBytes.toString('base64')}});
+    const forwardRead=await familyTool(legacy,'message').handler({action:'read',kind:'private',target:'10002',messageId:forwardedId},{} as never);
+    assert.equal(JSON.parse(String(forwardRead)).count,1);const recordEvent=external.filter(e=>e.type==='starpost.message_view').at(-1)!;assert.equal(recordEvent.origin,'external');assert.match(recordEvent.text,/你好/);assert.equal(recordEvent.text.includes('base64'),false);
+    const profileRead=await familyTool(legacy,'profile').handler({action:'read',section:'post'},{} as never);
+    assert.equal(JSON.parse(String(profileRead)).delivered,true);assert.equal(String(profileRead).includes('最近动态正文'),false);
+    const profileEvent=external.filter(e=>e.type==='starpost.profile_view').at(-1)!;
+    assert.equal(profileEvent.origin,'external');assert.match(profileEvent.text,/最近动态正文/);assert.equal(profileEvent.text.includes('base64'),false);
+    const gameRecord=await familyTool(legacy,'werewolf').handler({action:'record',section:'recent'},{} as never);
+    assert.equal(JSON.parse(String(gameRecord)).delivered,true);assert.ok(external.some(e=>e.type==='starpost.game_view'&&e.origin==='external'&&e.text.includes('游戏资料')));
     await legacy.stop();
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });

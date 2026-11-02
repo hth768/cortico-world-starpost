@@ -39,21 +39,23 @@ export class MobileAccess {
     if (!Number.isSafeInteger(cursor) || cursor < 1) fail('游标无效');
     const rows = this.store.statement("SELECT rowid,data FROM documents WHERE collection='ownerMessages' AND owner=? AND rowid<? ORDER BY rowid DESC LIMIT 9").all(who, cursor);
     const page = rows.slice(0, 8).reverse();
-    return { messages: page.map(row => ({ ...JSON.parse(row.data), cursor: row.rowid })), nextBefore: rows.length > 8 ? page[0].rowid : null };
+    return { messages: page.map(row => ({ ...this.messageActions.view(JSON.parse(row.data)), cursor: row.rowid })), nextBefore: rows.length > 8 ? page[0].rowid : null };
   }
   send(who, direction, args) {
     if (this.humanActive(who)) fail('人类参赛期间，人机私聊不可用', 423);
     const text = short(args?.text ?? '', 3000), image = this.image(args?.image);
-    if (!text && !image) fail('不能发送空消息');
+    const actor=direction==='bot'?who:this.messageActions.owner(who);
+    const content=this.messageActions.prepare(actor,'owner',who,args);
+    if (!text && !image && !content.forward) fail('不能发送空消息');
     const address = this.store.get('mobileProfile', who)?.address;
     if (direction === 'human' && !address) fail('首次发送前请填写桌宠对你的称呼');
     const recent = this.store.count('ownerMessages', 'owner=? AND kind=? AND at>?', [who, direction, new Date(this.clock() - 60000).toISOString()]);
     if (recent >= 12) fail('人机频道每分钟最多发送 12 条', 429);
     const prefix = direction === 'human' ? `以下消息为${address}通过星邮向你发送的消息` : '';
-    const message = { id: randomUUID(), botId: who, direction, address: address ?? '', text,
-      prefix, image, at: new Date(this.clock()).toISOString() };
+    const message = { id: randomUUID(), botId: who, direction, sender:actor, senderNickname:this.messageActions.profile(actor)?.nickname??'', address: address ?? '', text,
+      prefix, image, ...content, at: new Date(this.clock()).toISOString() };
     const saved = this.store.put('ownerMessages', message.id, message);
-    if (direction === 'human') this.store.emit([who], 'owner.message', saved, message.at);
+    if (direction === 'human') this.store.emit([who], 'owner.message', this.messageActions.view(saved), message.at);
     return { id: message.id };
   }
   ownsGame(game, who) {
@@ -104,10 +106,11 @@ export class MobileAccess {
       case 'square': return this.rpc(who, 'square.list');
       case 'featured': return this.rpc(who, 'square.featured', { action: 'summary' });
       case 'featured.read': return this.rpc(who, 'square.featured', { action: 'read', gameId: args.gameId, before: args.before });
+      case 'game.record': return this.rpc(who,'game.record',args);
       case 'profile': return this.rpc(who, 'profile.read', { botId: args.botId, section: args.section });
       case 'games': return this.gamesPage(who, args);
       case 'game': {
-        if (this.store.get('mysteryGames', args.gameId)) return this.mysteryGames.read(who, args.gameId, args.before);
+        if (this.store.get('mysteryGames', args.gameId)) { const page=this.mysteryGames.read(who,args.gameId,args.before);const source=this.store.get('mysteryGames',args.gameId);return {...page,serverNow:new Date(this.clock()).toISOString(),game:{...page.game,seats:source.joined.map((id,index)=>({id,number:index+1,nickname:this.mysteryGames.nickname(id)||id,alive:!source.left?.includes(id),checkedIn:source.checkedIn.includes(id)}))}}; }
         const game = this.games.get(args.gameId);
         const own = this.ownsGame(game, who);
         if (!own && !(game.public && game.published)) fail('对局无权查看', 403);
@@ -115,7 +118,7 @@ export class MobileAccess {
         if (!Number.isSafeInteger(before) || before < 1) fail('游标无效');
         const rows = this.store.statement("SELECT rowid,data FROM documents WHERE collection='gameMessages' AND scope=? AND rowid<? ORDER BY rowid DESC LIMIT 51").all(game.id, before);
         const page = rows.slice(0, 50).reverse();
-        return { game: { ...this.games.summary(game, who), alive: game.alive, day: game.day }, messages: page.map(row => ({ ...JSON.parse(row.data), cursor: row.rowid })), nextBefore: rows.length > 50 ? page[0].rowid : null };
+        return { serverNow:new Date(this.clock()).toISOString(),game: { ...this.games.summary(game, who), seats:(game.status==='scheduled'?game.joined:game.participants).map((id,index)=>({id,number:index+1,nickname:this.games.nickname(id)||id,alive:game.status==='scheduled'||game.alive.includes(id),checkedIn:game.checkedIn.includes(id)})), alive: game.alive, day: game.day }, messages: page.map(row => ({ ...JSON.parse(row.data), cursor: row.rowid })), nextBefore: rows.length > 50 ? page[0].rowid : null };
       }
       case 'owner.history': return this.ownerHistory(who, args.before);
       case 'owner.address': {
@@ -123,6 +126,10 @@ export class MobileAccess {
         if (!/^[\p{L}\p{N}\p{M} _.-]{1,32}$/u.test(address)) fail('称呼须为 1–32 个字母、汉字、数字、空格或 _.-');
         this.store.put('mobileProfile', who, { address }); return { address };
       }
+      case 'message.read': return this.messageActions.read(who,args);
+      case 'message.image': return this.messageActions.image(who,args);
+      case 'owner.recall': return this.messageActions.recall(this.messageActions.owner(who),{kind:'owner',target:who,messageId:args.messageId});
+      case 'owner.read': return this.messageActions.read(this.messageActions.owner(who),{kind:'owner',target:who,messageId:args.messageId});
       case 'owner.send': return this.send(who, 'human', args);
       case 'logout': this.store.remove('mobileSessions', session.key); return { loggedOut: true };
       default: fail('手机端只允许读取内容和联系自己的 bot', 403);

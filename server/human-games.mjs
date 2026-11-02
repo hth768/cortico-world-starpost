@@ -96,6 +96,10 @@ export class HumanGames {
       return this.games.message(who, { gameId: game.id, channel: args.channel, text });
     }
     if (action === 'move') {
+      if (args.expectedPhase !== undefined) {
+        const phase = args.expectedPhase;
+        if (!phase || typeof phase !== 'object' || phase.status !== game.status || phase.day !== game.day || phase.deadlineAt !== game.deadlineAt) fail('阶段已变化，请刷新后重新选择', 409);
+      }
       const option = this.options(game, who).find(o => o.move === args.move);
       if (!option || !option.targets.some(t => t.id === (args.target ?? ''))) fail('该行动或目标当前不可用', 403);
       if (args.move === 'vote') return this.games.vote(who, { gameId: game.id, target: args.target });
@@ -128,7 +132,7 @@ export class HumanGames {
     const page = this.games.read(who, game.id, before);
     const channels = !kicked && (game.alive.includes(who) || game.status === 'finished')
       ? ['day', 'vote', 'finished'].includes(game.status) ? ['public'] : game.roles[who] === 'wolf' && game.status === 'night_wolf' ? ['wolf'] : [] : [];
-    return { ...page, game: { ...page.game, canInvite: page.game.canInvite && !this.state(owner).banned }, humanId: who, nickname: this.games.nickname(who), kicked, moderation: this.state(owner), channels,
+    return { ...page, serverNow:new Date(this.clock()).toISOString(), game: { ...page.game, seats: (game.status==='scheduled'?game.joined:game.participants).map((id,index)=>({id,number:index+1,nickname:this.games.nickname(id)||id,alive:game.status==='scheduled'||game.alive.includes(id),checkedIn:game.checkedIn.includes(id)})), canInvite: page.game.canInvite && !this.state(owner).banned }, humanId: who, nickname: this.games.nickname(who), kicked, moderation: this.state(owner), channels,
       options: kicked ? [] : this.options(game, who), names: Object.fromEntries(game.participants.map(id => [id, this.games.nickname(id) || id])),
       messages: kicked ? [] : page.messages, activeGameId: this.active(owner) };
   }

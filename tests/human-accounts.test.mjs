@@ -358,3 +358,66 @@ test('私聊备注仅当前人类可见，好友及绑定 bot 可设置，清除
   assert.equal((await f.rpc(c.accessToken,'social.profile',{botId:b.humanId})).result.remark,'其他人的备注');
  }finally{await f.close();}
 });
+
+
+test('个人主页只返回最近可见动态和双方瓶子，绑定主人可看自家 bot，游戏入口保持隔离',async()=>{
+  const f=await fixture();try{
+    const owner=await f.claim('10001','profile-owner@example.com'),stranger=await f.register('profile-other@example.com');
+    f.app.store.befriend('10001','10002');
+    for(const [id,deleted]of [['post-old',false],['post-new',false],['post-deleted',true]])f.app.store.put('posts',id,{id,author:'10001',text:id,deleted,at:new Date().toISOString()});
+    assert.equal((await f.bot('10002','profile.read',{botId:'10001',section:'post'})).result.post.id,'post-new');
+    assert.equal((await f.bot('10003','profile.read',{botId:'10001',section:'post'})).result.post,null);
+    assert.equal((await f.rpc(owner.accessToken,'social.profile',{botId:'10001',section:'post'})).result.post.id,'post-new');
+    const shared={id:'shared',author:'10001',pickedBy:'10002',text:'两人的内容',reply:'收到',at:'2026-11-01T00:00:00Z',replyAt:'2026-11-01T02:00:00Z'};
+    f.app.store.put('bottles',shared.id,shared);
+    f.app.store.put('bottles','newer',{...shared,id:'newer',pickedBy:'10003',text:'另一段私密内容',replyAt:'2026-11-01T03:00:00Z'});
+    f.app.store.put('bottles','unpicked',{...shared,id:'unpicked',pickedBy:null,text:'未捞到',replyAt:'2026-11-01T04:00:00Z'});
+    assert.equal((await f.bot('10002','profile.read',{botId:'10001',section:'bottle'})).result.bottle.id,'shared');
+    assert.equal((await f.rpc(owner.accessToken,'social.profile',{botId:'10001',section:'bottle'})).result.bottle.id,'newer');
+    assert.equal((await f.rpc(stranger.accessToken,'social.profile',{botId:'10001',section:'bottle'})).result.bottle,null);
+    const result=await f.rpc(owner.accessToken,'game.record',{botId:'10001',section:'record'});assert.equal(result.ok,true,result.error);assert.equal(result.result.wins,0);assert.equal(result.result.post,undefined);
+    assert.equal((await f.rpc(owner.accessToken,'game.record',{botId:'10001',section:'bottle'})).status,400);
+    await f.bot('10001','profile.update',{discoverable:false});
+    assert.equal((await f.rpc(stranger.accessToken,'game.record',{botId:'10001'})).status,403);
+    assert.equal((await f.rpc(owner.accessToken,'game.record',{botId:'10001'})).ok,true);
+  }finally{await f.close()}
+});
+
+
+test('图片、引用、合并转发卡片与两分钟撤回：作者不可伪造，读取和修改权限分开', async()=>{
+  const f=await fixture();try {
+    const a=await f.claim('10001','message-a@example.com'),b=await f.claim('10002','message-b@example.com'),c=await f.claim('10003','message-c@example.com');
+    f.app.store.befriend(a.humanId,b.humanId);f.app.store.befriend(b.humanId,c.humanId);
+    const ok=async p=>{const r=await p;assert.equal(r.ok,true,r.error);return r.result;};
+    const png={mime:'image/png',base64:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aH1sAAAAASUVORK5CYII='};
+    const m=await ok(f.rpc(a.accessToken,'social.message.send',{kind:'private',target:b.humanId,text:'原作者文字',image:png}));
+    const reply=await ok(f.rpc(b.accessToken,'social.message.send',{kind:'private',target:a.humanId,text:'引用回应',replyTo:m.id,quote:{sender:'伪造'}}));
+    let history=await ok(f.rpc(a.accessToken,'social.history',{kind:'private',target:b.humanId}));assert.equal(history.messages[1].quote.sender,a.humanId);
+    const fw=await ok(f.rpc(b.accessToken,'social.message.send',{kind:'private',target:c.humanId,text:'',forward:{source:{kind:'private',target:a.humanId},messageIds:[reply.id,m.id],items:[{sender:'伪造'}]}}));
+    history=await ok(f.rpc(c.accessToken,'social.history',{kind:'private',target:b.humanId}));assert.equal(history.messages[0].forward.count,2);assert.equal(history.messages[0].forward.items,undefined);
+    const opened=await ok(f.rpc(c.accessToken,'social.message.read',{kind:'private',target:b.humanId,messageId:fw.id}));assert.equal(opened.items.length,2);assert.equal(opened.items[0].sender,a.humanId);assert.equal(opened.items[0].image.base64,png.base64);
+    assert.equal((await f.rpc(c.accessToken,'social.message.read',{kind:'private',target:b.humanId,messageId:m.id})).status,404);
+    assert.equal((await f.rpc(b.accessToken,'social.message.recall',{kind:'private',target:a.humanId,messageId:m.id})).status,403);
+    assert.equal((await f.rpc(b.accessToken,'social.message.send',{kind:'private',target:c.humanId,text:'',forward:{source:{kind:'private',target:a.humanId},messageIds:Array(21).fill(m.id)}})).ok,false);
+    await ok(f.rpc(a.accessToken,'social.message.recall',{kind:'private',target:b.humanId,messageId:m.id}));
+    history=await ok(f.rpc(b.accessToken,'social.history',{kind:'private',target:a.humanId}));assert.equal(history.messages[0].recalled,true);assert.equal(history.messages[0].image,null);assert.equal(history.messages[1].quote.text,'该消息已撤回');
+    const pending=f.app.store.events(b.humanId,0).find(e=>e.data.id===m.id&&e.type==='message');assert.equal(pending.data.recalled,true);assert.equal(pending.data.image,undefined);
+    assert.equal((await f.rpc(b.accessToken,'social.message.image',{kind:'private',target:a.humanId,messageId:m.id})).status,404);
+    await ok(f.rpc(a.accessToken,'owner.address',{address:'主人'}));const own=await ok(f.rpc(a.accessToken,'owner.send',{text:'专属文字',image:png}));
+    assert.equal((await f.bot('10002','message.read',{kind:'owner',target:'10001',messageId:own.id})).status,403);
+    assert.equal((await f.rpc(a.accessToken,'message.recall',{kind:'owner',target:'10001',messageId:own.id})).status,403);
+    await ok(f.rpc(a.accessToken,'owner.recall',{messageId:own.id}));assert.equal((await ok(f.bot('10001','owner.history'))).messages[0].recalled,true);
+    f.app.store.befriend('10001','10002');const bot=await ok(f.bot('10001','message.send',{kind:'private',target:'10002',text:'bot 自己的消息'}));
+    assert.equal((await f.rpc(a.accessToken,'message.recall',{kind:'private',target:'10002',messageId:bot.id})).status,403);
+    const quota=(await ok(f.bot('10001','snapshot'))).messageQuota.used;
+    await ok(f.bot('10001','message.send',{kind:'private',target:'10002',text:'',forward:{source:{kind:'private',target:'10002'},messageIds:[bot.id]}}));
+    assert.equal((await ok(f.bot('10001','snapshot'))).messageQuota.used,quota+1);
+    f.app.store.put('gameBusy','10002',{gameId:'recall-defer-test'});
+    await ok(f.bot('10001','message.recall',{kind:'private',target:'10002',messageId:bot.id}));
+    assert.equal(f.app.store.events('10002',0).some(e=>e.type==='message.recalled'&&e.data.id===bot.id),false);
+    assert.ok(f.app.store.statement("SELECT data FROM documents WHERE collection='deferredChat' AND json_extract(data,'$.data.id')=?").get(bot.id));
+    f.app.store.remove('gameBusy','10002');
+    const expired=await ok(f.bot('10001','message.send',{kind:'private',target:'10002',text:'过期后不可撤回'}));
+    f.advance(120001);assert.equal((await f.bot('10001','message.recall',{kind:'private',target:'10002',messageId:expired.id})).ok,false);
+  }finally{await f.close();}
+});

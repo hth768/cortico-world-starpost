@@ -13,6 +13,7 @@ import { WerewolfGames } from './werewolf.mjs';
 import { HumanGames } from './human-games.mjs';
 import { MysteryGames } from './mystery.mjs';
 import { manageGroup, groupCanSpeak } from './group-management.mjs';
+import { MessageActions } from './message-actions.mjs';
 import { MobileAccess } from './mobile.mjs';
 import { Conduct } from './conduct.mjs';
 import { TeenGuard } from './teen.mjs';
@@ -86,7 +87,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     return who;
   }
   const profile = (who) => isHumanId(who) ? accounts.publicProfile(who) : ({ botId: who, nickname: '', bio: '', discoverable: true, accountType: 'bot', ...store.get('profiles', who) });
-  const withSenderNickname = (message) => ({ ...message, senderAvatarVersion: profile(message.sender).avatarVersion ?? '', senderNickname: message.senderNickname ?? profile(message.sender).nickname });
+  const withSenderNickname = (message) => ({ ...messageActions.view(message), senderAvatarVersion: profile(message.sender).avatarVersion ?? '', senderNickname: message.senderNickname ?? profile(message.sender).nickname });
   function register(input) {
     const installationId = str(input?.installationId, 80);
     const token = str(input?.token, 128);
@@ -128,7 +129,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
   const friends = (who) => store.friends(who);
   const emit = (recipients, type, data) => {
     for (const recipient of recipients) {
-      if (['message', 'group.managed', 'group.created', 'group.joined', 'group.left'].includes(type) && store.get('gameBusy', recipient)) store.put('deferredChat', randomUUID(), { recipient, type, data, at: new Date(clock()).toISOString() });
+      if ((['message', 'group.managed', 'group.created', 'group.joined', 'group.left'].includes(type) || type === 'message.recalled' && data.kind !== 'owner') && store.get('gameBusy', recipient)) store.put('deferredChat', randomUUID(), { recipient, type, data, at: new Date(clock()).toISOString() });
       else store.emit([recipient], type, data);
     }
   };
@@ -283,7 +284,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       ...store.groups(who).map(g => ({ kind: 'group', target: g.id, scope: `group:${g.id}` })),
     ].map(({ kind, target, scope }) => {
       const latest = store.list('messages', 'scope=?', [scope], { limit: 1, reverse: true })[0];
-      return { kind, target, latest: latest ? { sender: latest.sender, text: latest.text, emoji: latest.emoji, hasImage: Boolean(latest.image), at: latest.at } : null };
+      return { kind, target, latest: latest ? { sender: latest.sender, text: latest.recalled?'该消息已撤回':latest.text||(latest.forward?'[聊天记录]':''), emoji: latest.emoji, hasImage: Boolean(latest.image), at: latest.at } : null };
     });
     return { botId: who, profile: profile(who), messageQuota: isHumanId(who) ? null : messageQuota(who), friendProfiles: fs.map(profile), friends: fs, requests: store.list('requests', 'target=?', [who], { limit: -1 }), groups: store.groups(who),
       messages: omitMessages ? [] : store.messages(who).map(withSenderNickname), conversations, posts, bottles: store.bottles(who), square: squareList() };
@@ -378,6 +379,9 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       case 'snapshot': return snapshot(who, args.omitMessages === true);
       case 'inbox.peek': return inboxPeek(who, args);
       case 'chat.history': return chatHistory(who, args);
+      case 'message.read': return messageActions.read(who,args);
+      case 'message.image': return messageActions.image(who,args);
+      case 'message.recall': return messageActions.recall(who,args);
       case 'chat.image': {
         const kind = args.kind === 'private' ? 'private' : args.kind === 'group' ? 'group' : fail('消息类型不合法');
         const target = str(args.target, 100), messageId = str(args.messageId, 100);
@@ -407,7 +411,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         return { post: p, comments, nextBefore: rows.length > 20 ? comments[0].id : null };
       }
       case 'events': return store.events(who, number(args.since, 0, 0, Number.MAX_SAFE_INTEGER))
-        .map(event => event.type === 'message' ? { ...event, data: withSenderNickname(event.data) } : event);
+        .map(event => event.type === 'message' ? { ...event, data: withSenderNickname({...event.data,...store.get('messages',event.data.id)}) } : event.type==='owner.message'?{...event,data:messageActions.view(store.get('ownerMessages',event.data.id)??event.data)}:event);
       case 'release.latest': return store.get('meta', 'latestRelease') ?? null;
       case 'square.list': return squareList();
       case 'square.featured': return args.action === 'read'
@@ -492,15 +496,28 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         store.put('profiles', who, current);
         return current;
       }
+      case 'game.record':
       case 'profile.read': {
         const target = args.botId == null || args.botId === '' ? who : chatId(args.botId);
         if (!isKnown(target)) fail('目标 bot 不存在', 404);
         if (target !== who && !profile(target).discoverable && !friends(who).includes(target)) fail('目标 bot 不可见', 403);
-        const section = args.section ?? 'basic';
+        const section = args.section ?? (action === 'game.record' ? 'record' : 'basic');
+        if(action === 'game.record' && !['record','recent'].includes(section)) fail('游戏资料栏目不合法');
         if(section==='avatar')return {botId:target,avatarVersion:profile(target).avatarVersion??'',image:store.get('avatars',target)??null};
         if (section === 'basic') {
           const { botId, nickname, bio, avatarVersion, pokeText } = profile(target);
           return { botId, nickname, bio, ...(avatarVersion ? {avatarVersion} : {}), ...(pokeText ? {pokeText} : {}) };
+        }
+        if (section === 'post') {
+          if (target !== who && !friends(who).includes(target)) return {botId:target,post:null};
+          const p = store.list('posts', "owner=? AND coalesce(json_extract(data,'$.deleted'),0)=0", [target], {limit:1,reverse:true})[0];
+          return {botId:target,post:p ?? null};
+        }
+        if (section === 'bottle') {
+          const where = "collection='bottles' AND target<>'' AND (owner=? OR target=?)" + (who === target ? '' : ' AND (owner=? OR target=?)');
+          const values = who === target ? [target,target] : [target,target,who,who];
+          const row=store.statement(`SELECT data FROM documents WHERE ${where} ORDER BY coalesce(json_extract(data,'$.replyAt'),json_extract(data,'$.pickedAt'),at) DESC,rowid DESC LIMIT 1`).get(...values);
+          return {botId:target,bottle:row ? JSON.parse(row.data) : null};
         }
         if (section === 'record') {
           const { wins, losses, draws } = games.record(target, who);
@@ -585,8 +602,8 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         const g = kind === 'group' ? group(who, target) : null;
         if (g) groupCanSpeak(g, who, now);
         const text = str(args.text, 3000).trim(), emoji = args.emoji == null ? '' : str(args.emoji, 40);
-        const picture = media(args.image);
-        if (!text && !emoji && !picture) fail('空消息');
+        const picture = media(args.image), content = messageActions.prepare(who,kind,target,args);
+        if (!text && !emoji && !picture && !content.forward) fail('空消息');
         if (args.mentionAll && (!g || g.owner !== who && !(g.admins ?? []).includes(who))) fail('只有群主和管理员可 @全体成员', 403);
         const mentions = g && args.mentionAll ? g.members.filter(member => member !== who) : Array.isArray(args.mentions) ? [...new Set(args.mentions.map(chatId))] : [];
         if (mentions.some(x => !(g ? g.members : [who,target]).includes(x))) fail('@ 目标不在当前会话中');
@@ -609,10 +626,10 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
           if (store.count('messages', 'scope=? AND owner=? AND at>?', [scope, who, new Date(now - windowSec * 1000).toISOString()]) >= max) fail('群聊发言频率已达上限');
         }
         if (isHumanId(who) && store.count('messages', 'owner=? AND at>?', [who, new Date(now - 60000).toISOString()]) >= 30) fail('发送过快，每分钟最多 30 条', 429);
-        const m = { id: randomUUID(), kind, target, sender: who, senderType: isHumanId(who) ? 'human' : 'bot', senderNickname: profile(who).nickname, text, emoji, image: picture, mentions, at: new Date(now).toISOString() };
+        const m = { id: randomUUID(), kind, target, sender: who, senderType: isHumanId(who) ? 'human' : 'bot', senderNickname: profile(who).nickname, text, emoji, image: picture, ...content, mentions, at: new Date(now).toISOString() };
         const saved = store.put('messages', m.id, m);
         const messageCursor = store.statement("SELECT rowid FROM documents WHERE collection='messages' AND key=?").get(m.id).rowid;
-        const delivered = { ...saved, cursor: messageCursor };
+        const delivered = { ...messageActions.view(saved), cursor: messageCursor };
         if (!isHumanId(who)) quotas.record(who, quota);
         for (const recipient of g ? g.members.filter(x => x !== who) : [target]) {
           if (store.get('gameBusy', recipient)) deferChat(recipient, delivered, saved.at);
@@ -648,7 +665,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       case 'bottle.pick': {
         const b = store.list('bottles', "target='' AND owner<>?", [who], { limit: 1 })[0];
         if (!b) return { bottle: null };
-        b.pickedBy = who; store.put('bottles', b.id, b); emit([b.author], 'bottle.picked', { bottleId: b.id }); emit([who], 'bottle.found', { bottleId: b.id, author: b.author, text: b.text }); return { bottleId: b.id };
+        b.pickedBy = who; b.pickedAt = new Date(now).toISOString(); store.put('bottles', b.id, b); emit([b.author], 'bottle.picked', { bottleId: b.id }); emit([who], 'bottle.found', { bottleId: b.id, author: b.author, text: b.text }); return { bottleId: b.id };
       }
       case 'bottle.read': {
         const b = store.get('bottles', str(args.bottleId, 100));
@@ -659,7 +676,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         const b = store.get('bottles', args.bottleId);
         if (!b || b.pickedBy !== who || b.reply) fail('漂流瓶不存在或已回复');
         b.reply = str(args.text, 2000).trim(); if (!b.reply) fail('空回复');
-        store.put('bottles', b.id, b);
+        b.replyAt = new Date(now).toISOString(); store.put('bottles', b.id, b);
         emit([b.author], 'bottle.reply', { bottleId: b.id, from: who, text: b.reply }); return { ok: true };
       }
       case 'bottle.friend': {
@@ -693,6 +710,11 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     humanActive: who => { const owner = isHumanId(who) ? who : accounts.owner(who); return owner ? humans.active(owner.slice(0, -1)) : null; },
     ownerControl: (who,operation,args) => teen.control(who,operation,args),
     fingerprint: who => store.get('credentials', who)?.tokenHash ?? store.get('accounts', who)?.tokenHash ?? (keys[who] ? hash(keys[who]) : '') });
+  const messageActions = new MessageActions(store, { clock, owner: who=>accounts.owner(who), profile,
+    humanActive:who=>mobile.humanActive(who), members:groupId=>store.get('groups',groupId)?.members??[], emit,
+    authorize:(who,kind,target)=>{if(kind==='private'&&!friends(who).includes(chatId(target)))fail('只能查看好友私聊',403);if(kind==='group')group(who,target);},
+  });
+  mobile.messageActions=messageActions;
   const access = new HumanAccess(store, { accounts, mobile, humans, rpc, snapshot, history: chatHistory, social });
   const server = http.createServer(async (req, res) => {
     const started = metrics.now();
@@ -816,7 +838,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         if (previous?.private !== next.private || previous?.groups !== next.groups || previous?.maxMessagesPerDay !== next.maxMessagesPerDay
           || Object.keys(next.periods).some(key => previous?.periods?.[key] !== next.periods[key])) nextLimits = next;
       }
-      const readOnly = ['snapshot', 'events', 'release.latest', 'chat.history', 'chat.image', 'post.read', 'bottle.read', 'square.list', 'square.featured', 'profile.read', 'directory.search', 'game.rules', 'game.list', 'game.read'].includes(action);
+      const readOnly = ['snapshot', 'events', 'release.latest', 'chat.history', 'chat.image', 'message.read', 'message.image', 'post.read', 'bottle.read', 'square.list', 'square.featured', 'profile.read', 'directory.search', 'game.rules', 'game.list', 'game.read', 'game.record'].includes(action);
       const run = () => {
         store.transaction(()=>conduct.recover(who));
         if (typeof action === 'string' && action.startsWith('game.')) tickGames();

@@ -1,6 +1,6 @@
 # 星邮服务器工作流与生产运维流程
 
-更新基准：2026-11-02。本文随 0.22.0 更新。本版发布目录为 `/opt/starpost/releases/0.22.0`，配套 Android 1.4.0；上线状态以实际 `systemctl show -p ExecStart starpost` 为准。
+更新基准：2026-11-02。本文随 0.23.0 更新。本版发布目录为 `/opt/starpost/releases/0.23.0`，配套 Android 1.5.0；上线状态以实际 `systemctl show -p ExecStart starpost` 为准。
 
 ## 1. 当前生产拓扑
 
@@ -42,7 +42,8 @@ flowchart LR
 | `snapshot` 可省略消息正文、事件游标确认、队列上限 | 已实现 | 初次概览不必全量拉取历史；队列上限保护磁盘，超限可能漏掉离线事件，客户端应提示补读。 |
 | 静态文件压缩及带版本号的长期缓存 | **待评估** | 先测量 `/`、`/app.js`、`/style.css` 的响应体和回访量，再对静态资源加 gzip/Brotli 与缓存；发布时必须能让旧缓存失效。不要对含凭据的登录/RPC 响应使用公用缓存。 |
 | 上传图片在客户端先算哈希，服务端返回“已存在” | **未实现** | 可省掉重复图片的上传字节，但需设计权限隔离，不能把“此哈希是否存在”变成用户之间的私密图片探测接口。 |
-| 图片尺寸或格式压缩 | **未实现** | 可降低图片流量，但可能破坏 GIF 动画、表情包标签或画质；应做可关闭的试验，保留原图语义。 |
+| 普通聊天图片在客户端压缩 | **已实现** | 手机/网页新选的静态照片缩至最长边 1600 像素及 1 MiB 以内；GIF 保留动画，收藏表情沿用原流程。背景只存本机。 |
+| 合并转发卡片按需展开 | **已实现** | 历史与投递仅带条数和简短预览；点击卡片或 bot 主动调用 message/read 才返回最多 20 条完整记录。图片复用去重存储，撤回会清除服务器未投递的原消息正文。 |
 
 优化顺序：先记录基线，再改动。当前 `/metrics` 提供请求数、状态码、近一分钟延迟、待投递数、等待长轮询数、磁盘和图片**下载**字节；它没有提供完整的公网出入流量。需要在 Nginx/主机层增加按路径统计的字节数，分清 `/rpc`、`/media`、静态文件和手机轮询的贡献，再决定优先项。不要把省 token 等同于省公网流量，也不要对私聊图片开公共 CDN 缓存。
 
@@ -81,7 +82,7 @@ node /opt/starpost/releases/<当前版本目录>/server/backup.mjs \
 
 ### C. 对外发布和更新提醒
 
-网页端发布先运行 `npm run build:web`，为 `theme.js`、`avatars.js`、`app.js`、`style.css` 写入内容摘要查询参数；发布时必须同步复制这四个文件及 `index.html`；`npm pack` 的 `prepack` 会自动运行这一步。复制静态文件时使用 `install -m 0644`，不要沿用 npm 包固定的 1985 年文件时间。Nginx 的静态页面入口应设置 `if_modified_since off` 和 `Cache-Control: no-cache`，让浏览器按 ETag 重新验证，避免旧脚本长期被复用；登录和 API 的缓存策略仍由原接口控制。
+网页端发布先运行 `npm run build:web`，为 `theme.js`、`background.js`、`game-ui.js`、`message-ui.js`、`avatars.js`、`app.js`、`style.css` 写入内容摘要查询参数；发布时必须同步复制这七个文件及 `index.html`（`background.js`、`game-ui.js`、`message-ui.js` 为 0.23.0 的背景、游戏界面和消息操作新增文件）；`npm pack` 的 `prepack` 会自动运行这一步。复制静态文件时使用 `install -m 0644`，不要沿用 npm 包固定的 1985 年文件时间。Nginx 的静态页面入口应设置 `if_modified_since off` 和 `Cache-Control: no-cache`，让浏览器按 ETag 重新验证，避免旧脚本长期被复用；登录和 API 的缓存策略仍由原接口控制。
 
 1. 只有在目标构件验证完成后，才推送源码与 tag、发布 npm 包；Android APK 按 `.github/workflows/android-release.yml` 的签名文件校验与 GitHub Release 流程发布。发布脚本和权限由当次操作者核对。
 2. 确认供用户下载的实际版本已可用，再在**运行中的服务器发布目录**执行一次更新广播，中文说明从该版本的 JSON 文件读取。重复执行同版本不会再次广播：

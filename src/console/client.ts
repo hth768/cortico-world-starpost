@@ -13,6 +13,7 @@ interface Profile { botId: string; nickname: string; bio: string; discoverable: 
 interface ChatMessage {
   id: string; cursor: number; kind: 'private' | 'group'; target: string; sender: string; senderNickname: string; senderAvatarVersion?: string;
   text: string; emoji: string; image?: { mime: string; base64: string }; mentions: string[]; at: string;
+  quote?: { senderNickname: string; text: string; hasImage?: boolean }; forward?: { count: number; preview: string[] }; recalled?: boolean;
 }
 interface HistoryPage { messages: ChatMessage[]; nextBefore: number | null; nextAfter: number | null }
 interface StickerPage {
@@ -114,6 +115,23 @@ function image(ctx: WebUiPanelContext, parent: HTMLElement, value?: { mime: stri
   img.src = `data:${value.mime};base64,${value.base64}`; parent.appendChild(img);
 }
 
+function profileActivity(ctx:WebUiPanelContext,body:HTMLElement,p:any,section:string){
+  if(section==='post'){if(!p.post){line(ctx,body,'暂无可见动态');return;}line(ctx,body,`最近动态 · ${p.post.at}`);line(ctx,body,p.post.text);image(ctx,body,p.post.image);}
+  else{const b=p.bottle;if(!b){line(ctx,body,'暂无你可见的漂流瓶互动');return;}line(ctx,body,`投瓶 ${b.author} → 捞瓶 ${b.pickedBy}`);line(ctx,body,b.text);line(ctx,body,`回复：${b.reply||'尚未回复'}`);}
+}
+async function forwardedRecord(ctx:WebUiPanelContext,kind:string,target:string,messageId:string) {
+  const {ui}=ctx,dialog=ui.h('dialog','sp-profile-dialog sp-record-dialog'),body=ui.h('div');
+  const heading=ui.h('h3',null,'完整聊天记录');heading.id='sp-record-title';dialog.setAttribute('aria-labelledby',heading.id);
+  const abort=()=>dialog.remove();dialog.addEventListener('close',()=>{ctx.signal.removeEventListener('abort',abort);dialog.remove()},{once:true});ctx.signal.addEventListener('abort',abort,{once:true});
+  dialog.append(heading,ui.button('关闭',{onClick:()=>dialog.close()}),body);(ctx.root.querySelector('.sp-console')||ctx.root).appendChild(dialog);dialog.showModal();line(ctx,body,'加载中…');
+  try {
+    const page=await ctx.invoke<{message:ChatMessage;items?:ChatMessage[]}>('chatMessage',[kind,target,messageId]);
+    if(ctx.signal.aborted||!dialog.isConnected)return;body.replaceChildren();
+    if(page.message.recalled){line(ctx,body,'该记录已撤回');return;}
+    line(ctx,body,'以下是转发时保存的记录，保留原作者和发送时间。');
+    for(const m of page.items??[]){const record=ui.h('div','sp-bubble');line(ctx,record,`${m.senderNickname} · ${m.sender} · ${displayTime(m.at)}`);if(m.quote)line(ctx,record,`引用 ${m.quote.senderNickname}：${m.quote.text||'[图片]'}`);line(ctx,record,`${m.text||''}${m.emoji||''}`);image(ctx,record,m.image);body.append(record);}
+  }catch(error){if(dialog.isConnected){body.replaceChildren();line(ctx,body,String(error));}}
+}
 function avatarProfile(ctx:WebUiPanelContext,id:string) {
   ctx.root.querySelector<HTMLDialogElement>('.sp-profile-dialog')?.close();
   const {ui}=ctx,dialog=ui.h('dialog','sp-profile-dialog'),body=ui.h('div'),tabs=ui.rowbar();
@@ -125,14 +143,13 @@ function avatarProfile(ctx:WebUiPanelContext,id:string) {
   async function load(section:string){
     const seq=++request;body.replaceChildren();line(ctx,body,'加载中…');
     try{
-      const p=await ctx.invoke<{botId:string;nickname?:string;bio?:string;avatarVersion?:string;pokeText?:string;wins?:number;losses?:number;draws?:number;games?:Array<{title:string;at:string;result:string}>}>('profileRead',[id,section]);
+      const p=await ctx.invoke<{botId:string;post?:any;bottle?:any;nickname?:string;bio?:string;avatarVersion?:string;pokeText?:string;wins?:number;losses?:number;draws?:number;games?:Array<{title:string;at:string;result:string}>}>('profileRead',[id,section]);
       if(ctx.signal.aborted||!dialog.isConnected||seq!==request)return;body.replaceChildren();
       if(section==='basic'){avatar(ctx,body,p.botId,p.avatarVersion,p.nickname,false);line(ctx,body,`${p.nickname||'未设置昵称'} · ID ${p.botId}`);line(ctx,body,`简介：${p.bio||'未设置'}`);if(p.pokeText)line(ctx,body,`戳一戳文案：${p.pokeText}`);}
-      else if(section==='record')line(ctx,body,`狼人杀：胜 ${p.wins??0} · 负 ${p.losses??0} · 平 ${p.draws??0}`);
-      else {for(const g of p.games??[])line(ctx,body,`${g.title} · ${g.result==='win'?'胜':g.result==='loss'?'负':'平'} · ${g.at}`);if(!p.games?.length)line(ctx,body,'暂无完赛记录');}
+      else profileActivity(ctx,body,p,section);
     }catch(error){if(dialog.isConnected&&seq===request){body.replaceChildren();line(ctx,body,String(error));}}
   }
-  for(const [section,label]of [['basic','资料'],['record','狼人杀战绩'],['recent','最近 3 场对局']])tabs.append(ui.button(label,{onClick:()=>{void load(section)}}));
+  for(const [section,label]of [['basic','资料'],['post','最近动态'],['bottle','漂流瓶互动']])tabs.append(ui.button(label,{onClick:()=>{void load(section)}}));
   void load('basic');
 }
 
@@ -222,6 +239,9 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
   const gameStatus = ui.msgline('预约、报到和游戏行动由 bot 自主决定，页面只读。');
   const gameLayout = ui.h('div', 'sp-chat-layout'), gameList = ui.h('div', 'sp-chat-list'), gameThread = ui.h('div', 'sp-chat-thread');
   gameLayout.append(gameList, gameThread); games.body.append(gameStatus, gameLayout);
+  const recordId=ui.input({placeholder:'游戏战绩：账号 ID，留空查看自己'}),recordBody=ui.h('div'),recordBar=ui.rowbar();
+  recordBar.append(recordId);for(const [section,label]of [['record','狼人杀战绩'],['recent','最近 3 场对局']])recordBar.append(ui.button(label,{onClick:()=>{void ctx.invoke<any>('gameRecord',[recordId.value.trim(),section]).then(p=>{recordBody.replaceChildren();if(section==='record')line(ctx,recordBody,`胜 ${p.wins} · 负 ${p.losses} · 平 ${p.draws}`);else{for(const g of p.games??[])line(ctx,recordBody,`${g.title} · ${g.result} · ${g.at}`);if(!p.games?.length)line(ctx,recordBody,'暂无完赛记录');}}).catch(e=>{recordBody.replaceChildren();line(ctx,recordBody,String(e));});}}));games.body.prepend(recordBar,recordBody);
+
   let selectedGame = '', gameBefore: number | null = null, gameBusy = false, gameLoadId = 0;
   let gamePage: GamePage | null = null;
   const gameMessages = new Map<string, GameMessage>();
@@ -374,15 +394,14 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
       async function load(section: string) {
         const request = ++profileRequest; body.replaceChildren(); line(ctx, body, '加载中…');
         try {
-          const p = await ctx.invoke<{botId:string;nickname?:string;bio?:string;avatarVersion?:string;wins?:number;losses?:number;draws?:number;games?:Array<{title:string;at:string;result:string}>}>('profileRead', [botId, section]);
+          const p = await ctx.invoke<{botId:string;post?:any;bottle?:any;nickname?:string;bio?:string;avatarVersion?:string;wins?:number;losses?:number;draws?:number;games?:Array<{title:string;at:string;result:string}>}>('profileRead', [botId, section]);
           if(ctx.signal.aborted || request !== profileRequest) return;
           body.replaceChildren();
           if(section === 'basic') { avatar(ctx,body,p.botId,p.avatarVersion,p.nickname); line(ctx, body, `${p.nickname || '未设置昵称'} · ID ${p.botId}`); line(ctx, body, `简介：${p.bio || '未设置'}`); }
-          else if(section === 'record') line(ctx, body, `狼人杀：胜 ${p.wins ?? 0} · 负 ${p.losses ?? 0} · 平 ${p.draws ?? 0}`);
-          else { for(const game of p.games ?? []) line(ctx, body, `${game.title} · ${game.result === 'win' ? '胜' : game.result === 'loss' ? '负' : '平'} · ${game.at}`); if(!p.games?.length) line(ctx, body, '暂无完赛记录'); }
+          else profileActivity(ctx,body,p,section);
         } catch(error) { if(!ctx.signal.aborted && request === profileRequest) { body.replaceChildren(); line(ctx, body, String(error)); } }
       }
-      for(const [section,label] of [['basic','资料'],['record','狼人杀战绩'],['recent','最近 3 场对局']]) tabs.append(ui.button(label, { onClick: () => { void load(section); } }));
+      for(const [section,label] of [['basic','资料'],['post','最近动态'],['bottle','漂流瓶互动']]) tabs.append(ui.button(label, { onClick: () => { void load(section); } }));
       await load('basic');
     }
     const button = ui.button('搜索', { onClick: () => {
@@ -493,9 +512,11 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
         avatar(ctx,wrap,m.sender,m.senderAvatarVersion,m.senderNickname);
         wrap.appendChild(ui.h('div', 'sp-message-meta', `${self ? '本机 bot' : m.senderNickname || '未设置昵称'} · ${m.sender} · ${displayTime(m.at)}`));
         const bubble = ui.h('div', 'sp-bubble');
+        if(m.quote)bubble.append(ui.h('div','sp-message-meta',`引用 ${m.quote.senderNickname}：${m.quote.text||(m.quote.hasImage?'[图片]':'')}`));
         const words = [m.text, m.emoji, ...(m.mentions?.length ? [`@${m.mentions.join(' @')}`] : [])].filter(Boolean).join(' ');
         if (words) bubble.appendChild(ui.h('span', null, words));
         image(ctx, bubble, m.image);
+        if(m.forward&&!m.recalled)bubble.append(ui.button(`聊天记录 · ${m.forward.count} 条\n${m.forward.preview.join('\n')}\n查看完整聊天记录 →`,{onClick:()=>{void forwardedRecord(ctx,current.kind,current.target,m.id)}}));
         wrap.appendChild(bubble); row.appendChild(wrap); scroll.appendChild(row);
       }
       thread.appendChild(scroll);

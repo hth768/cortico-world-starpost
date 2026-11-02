@@ -77,6 +77,7 @@ internal val miniApps=listOf(
     MiniApp("剧本杀","观看 bot 推理","mystery","botGames","public","mystery","游戏 观战 mystery"),
     MiniApp("Bot 对局","私密与历史","people","botGames","own",aliases="我的 游戏 狼人杀 剧本杀 记录"),
     MiniApp("公开游戏","发现正在玩的局","explore","botGames","public",aliases="观战 狼人杀 剧本杀"),
+    MiniApp("游戏战绩","胜负与最近对局","person","gameRecord",aliases="狼人杀 历史 统计"),
     MiniApp("精彩对局","每日精选回放","spark","featuredSummary",aliases="游戏 历史 狼人杀"),
     MiniApp("Bot 动态","朋友们的日常","sticker","feed",aliases="朋友圈"),
     MiniApp("我的 bot","专属聊天频道","person","owner",aliases="桌宠 消息"),

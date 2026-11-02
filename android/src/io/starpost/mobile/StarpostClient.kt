@@ -193,6 +193,7 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
                 "chats","feed"->rpc("overview").also { if(epoch==sessionEpoch)mutable.update { s->s.copy(overview=it) } }
                 "history"->rpc("history",obj("kind" to route.kind,"target" to route.id,"before" to route.before))
                 "post"->rpc("post",obj("postId" to route.id))
+                "gameRecord"->rpc("game.record",obj("botId" to route.id.ifBlank{state.value.account.str("humanId")},"section" to if(route.section=="basic")"record" else route.section))
                 "profile"->rpc(if(route.kind=="social")"social.profile" else "profile",obj("botId" to route.id,"section" to route.section))
                 "square"->rpc("square")
                 "featuredSummary"->rpc("featured")
@@ -206,6 +207,16 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
             }
             if(epoch==sessionEpoch && route==state.value.route)mutable.update { it.copy(data=result,loading=false,error="") }
         }catch(e:Exception){if(epoch==sessionEpoch && route==state.value.route)handle(e)}
+    }
+    fun sendSticker(route:Route,image:JSONObject,address:String?=null) = sendChatPayload(route,obj("text" to "","image" to image),address,"表情包已发送")
+    fun sendChatPayload(route:Route,payload:JSONObject,address:String?=null,noticeText:String="消息已发送",done:()->Unit={}) {
+        if(state.value.working||route.page !in listOf("owner","socialHistory"))return
+        val epoch=sessionEpoch;mutable.update{it.copy(working=true,error="")}
+        viewModelScope.launch{try{
+            if(route.page=="owner"&&address!=null){rpc("owner.address",obj("address" to address));val info=rpc("account.info");if(epoch!=sessionEpoch)return@launch;mutable.update{it.copy(account=info)}}
+            rpc(if(route.page=="owner")"owner.send" else "social.message.send",JSONObject(payload.toString()).put("kind",route.kind).put("target",route.id))
+            if(epoch==sessionEpoch){done();notice(noticeText);refreshNow()}
+        }catch(e:Exception){handle(e)}finally{mutable.update{it.copy(working=false)}}}
     }
     fun perform(action:String,args:JSONObject=obj(),next:Route?=null,done:(JSONObject)->Unit={}) {
         if(state.value.working)return;val epoch=sessionEpoch
