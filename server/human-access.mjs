@@ -1,8 +1,9 @@
 import { hashToken } from './email-auth.mjs';
+import { HumanCommunity } from './human-community.mjs';
 const fail = (text, status = 403) => { const error = new Error(text); error.status = status; throw error; };
 
 export class HumanAccess {
-  constructor(store, options) { Object.assign(this, { store }, options); }
+  constructor(store, options) { Object.assign(this, { store }, options); this.community = new HumanCommunity(store, { ...options, clock: () => this.accounts.clock() }); }
   contactRemark(humanId, target) { return this.store.get('contactRemarks', `${humanId}:${target}`)?.remark ?? ''; }
   canRemark(humanId, target) { return target !== humanId && (this.store.friends(humanId).includes(target) || this.accounts.owner(target) === humanId); }
   withRemark(humanId, profile) { return { ...profile, remark: this.contactRemark(humanId, profile.botId), canRemark: this.canRemark(humanId, profile.botId) }; }
@@ -61,7 +62,7 @@ export class HumanAccess {
     }
     if (action === 'account.approvals') return { items: this.social.status(humanId) };
     if (action === 'account.decide') return this.social.decide(humanId, args);
-    if (action === 'social.overview') { const value=this.snapshot(humanId,true);return {...value,friendProfiles:value.friendProfiles.map(p=>this.withRemark(humanId,p))}; }
+    if (action === 'social.overview') { const value=this.snapshot(humanId,true,true);return {...value,friendProfiles:value.friendProfiles.map(p=>this.withRemark(humanId,p))}; }
     if (action === 'social.history') return this.history(humanId, args);
     if (action === 'social.search') return { items: this.rpc(humanId, 'directory.search', { ...args, limit: 50 }) };
     if (action === 'social.profile' || action === 'game.record') {
@@ -75,13 +76,14 @@ export class HumanAccess {
       const value=this.rpc(humanId, readAction, {...args,botId:args.botId||humanId});
       return !args.section||args.section==='basic'?this.withRemark(humanId,value):value;
     }
-    const allowed = ['friend.request', 'friend.accept', 'friend.reject', 'friend.remove', 'group.create', 'group.invite', 'group.leave', 'group.manage', 'message.send', 'message.read', 'message.image', 'message.recall', 'profile.update', 'poke'];
+    if (/^social\.(post\.|bottle\.)/.test(action) && action !== 'social.bottle.friend') return this.community.call(humanId, action.slice(7), args);
+    const allowed = ['bottle.friend', 'friend.request', 'friend.accept', 'friend.reject', 'friend.remove', 'group.create', 'group.invite', 'group.leave', 'group.manage', 'message.send', 'message.read', 'message.image', 'message.recall', 'profile.update', 'poke'];
     if (action.startsWith('social.') && allowed.includes(action.slice(7))) {
-      if (['social.friend.request', 'social.group.create', 'social.group.invite'].includes(action)) {
+      if (['social.bottle.friend', 'social.friend.request', 'social.group.create', 'social.group.invite'].includes(action)) {
         const now = this.accounts.clock(), old = this.store.get('humanSocialRate', humanId);
         const rate = old && now - old.start < 60000 ? old : { start: now, count: 0 };
         if (rate.count >= 10) fail('好友申请和群邀请过于频繁，请一分钟后重试', 429);
-        if (action === 'social.friend.request' && this.store.count('requests', 'owner=?', [humanId]) >= 40) fail('待处理好友申请已达 40 个，请等待对方处理', 429);
+        if (['social.friend.request', 'social.bottle.friend'].includes(action) && this.store.count('requests', 'owner=?', [humanId]) >= 40) fail('待处理好友申请已达 40 个，请等待对方处理', 429);
         this.store.put('humanSocialRate', humanId, { ...rate, count: rate.count + 1 });
       }
       return this.rpc(humanId, action.slice(7), args);

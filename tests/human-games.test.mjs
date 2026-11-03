@@ -69,6 +69,7 @@ for (const role of ['wolf', 'witch', 'seer', 'guard', 'hunter']) test(`人类${r
   try {
     const gameId = await f.start(role);
     assert.equal((await f.phone('owner.history')).status, 423);
+    for (const action of ['social.post.list','social.post.publish','social.bottle.pick','social.bottle.read','social.bottle.friend']) assert.equal((await f.phone(action, { text:'对局中',bottleId:'anything' })).status, 423);
     assert.equal((await f.phone('owner.send', { text: '作弊询问bot' })).status, 423);
     assert.equal((await f.bot('10001', 'owner.send', { text: '对局时不可私聊' })).status, 423);
     assert.equal((await f.phone('game', { gameId })).status, 423);

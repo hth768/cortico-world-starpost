@@ -21,7 +21,8 @@ internal fun obj(vararg values: Pair<String, Any?>) = JSONObject().apply { value
 internal fun JSONObject.rows(key: String) = optJSONArray(key)?.let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it) } } ?: emptyList()
 internal fun JSONObject.str(key: String, fallback: String = "") = if (isNull(key)) fallback else optString(key, fallback)
 internal fun JSONObject.strings(key: String) = optJSONArray(key)?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: emptyList()
-internal data class Route(val page: String = "social", val id: String = "", val kind: String = "private", val section: String = "basic", val before: Long? = null)
+internal data class Route(val page: String = "social", val id: String = "", val kind: String = "private", val section: String = "basic", val before: Long? = null, val cursor: String? = null)
+internal data class CommunityDraft(var text: String = "", var image: JSONObject? = null)
 internal data class ClientState(
     val starting: Boolean = true, val signedIn: Boolean = false, val account: JSONObject = obj(),
     val route: Route = Route(), val data: JSONObject = obj(), val overview: JSONObject = obj(), val social: JSONObject = obj(),
@@ -47,6 +48,8 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
     private val library = StickerLibrary(File(app.filesDir, "sticker-favorites"))
     private val draftMentions = mutableMapOf<String,Map<String,String>>()
     private val drafts = mutableMapOf<String, String>()
+    private val communityDrafts = mutableMapOf<String, CommunityDraft>()
+    fun communityDraft(key: String) = communityDrafts.getOrPut("${state.value.account.str("humanId")}:$key") { CommunityDraft() }
     internal var attachment: JSONObject? = null
     internal val draftKey get() = "${state.value.account.str("humanId")}:${state.value.account.str("botId")}:${state.value.route.page}:${state.value.route.kind}:${state.value.route.id}"
     fun draft() = drafts[draftKey] ?: ""
@@ -70,7 +73,7 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
     private fun validServer(value: String) = runCatching { val u=URL(value); u.protocol=="https" && u.host.isNotBlank() && u.userInfo==null && u.query==null && u.ref==null && u.path in listOf("", "/") }.getOrDefault(false)
     private suspend fun saveSession() = withContext(Dispatchers.IO) { sessions.save(obj("server" to server,"token" to token,"botId" to state.value.account.str("botId"),"expiresAt" to state.value.expiresAt).toString()) }
     private fun expire() {
-        sessionEpoch++;avatarCache.clear();token="";sessions.clear();backStack.clear();drafts.clear();draftMentions.clear();attachment=null
+        sessionEpoch++;avatarCache.clear();token="";sessions.clear();backStack.clear();drafts.clear();communityDrafts.clear();draftMentions.clear();attachment=null
         mutable.update { ClientState(starting=false,theme=it.theme,dynamicColor=it.dynamicColor) }
     }
     private suspend fun request(path: String, body: JSONObject, auth: Boolean = true): JSONObject = network.withLock {
@@ -190,9 +193,13 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
                 "approvals"->rpc("account.approvals")
                 "teen"->rpc("teen.status")
                 "owner"->rpc("owner.history",cursor)
-                "chats","feed"->rpc("overview").also { if(epoch==sessionEpoch)mutable.update { s->s.copy(overview=it) } }
+                "chats","botFeed"->rpc("overview").also { if(epoch==sessionEpoch)mutable.update { s->s.copy(overview=it) } }
+                "feed"->rpc("social.post.list",cursor)
+                "post"->rpc("social.post.read",obj("postId" to route.id,"before" to route.cursor))
+                "bottles"->rpc("social.bottle.list",obj("scope" to if(route.kind=="thrown")"thrown" else "picked","before" to route.before))
+                "bottle"->rpc("social.bottle.read",obj("bottleId" to route.id))
                 "history"->rpc("history",obj("kind" to route.kind,"target" to route.id,"before" to route.before))
-                "post"->rpc("post",obj("postId" to route.id))
+                "botPost"->rpc("post",obj("postId" to route.id))
                 "gameRecord"->rpc("game.record",obj("botId" to route.id.ifBlank{state.value.account.str("humanId")},"section" to if(route.section=="basic")"record" else route.section))
                 "profile"->rpc(if(route.kind=="social")"social.profile" else "profile",obj("botId" to route.id,"section" to route.section))
                 "square"->rpc("square")

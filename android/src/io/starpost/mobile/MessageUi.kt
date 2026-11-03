@@ -39,13 +39,13 @@ internal fun chatImage(bytes:ByteArray):JSONObject {
     return obj("mime" to "image/jpeg","base64" to Base64.encodeToString(encoded,Base64.NO_WRAP))
 }
 
-@Composable internal fun ChatPhotoButton(ui:UiActions,enabled:Boolean,onSend:(JSONObject)->Unit){
+@Composable internal fun ChatPhotoButton(ui:UiActions,enabled:Boolean,label:String="发送图片",onSend:(JSONObject)->Unit){
     val context=LocalContext.current;val scope=rememberCoroutineScope();var image by remember{mutableStateOf<JSONObject?>(null)};var busy by remember{mutableStateOf(false)}
     val picker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri:Uri?->if(uri!=null)scope.launch{
         busy=true;try{image=withContext(Dispatchers.IO){val bytes=context.contentResolver.openInputStream(uri)?.use{stream->val out=ByteArrayOutputStream();val buf=ByteArray(8192);while(true){val n=stream.read(buf);if(n<0)break;require(out.size()+n<=10*1024*1024){"请选择 10 MB 以内的图片"};out.write(buf,0,n)};out.toByteArray()}?:error("无法读取图片");chatImage(bytes)}}catch(e:CancellationException){throw e}catch(e:Exception){ui.vm.notice(e.message?:"图片处理失败")}finally{busy=false}
     }}
-    IconButton(enabled=enabled&&!busy,onClick={picker.launch("image/*")}){Glyph("add","发送图片")}
-    image?.let{picture->AlertDialog(onDismissRequest={image=null},title={Text("发送图片")},text={MessageImage(picture,ui)},confirmButton={Button(enabled=enabled,onClick={image=null;onSend(picture)}){Text("发送图片")}},dismissButton={TextButton(onClick={image=null}){Text("取消")}})}
+    IconButton(enabled=enabled&&!busy,onClick={picker.launch("image/*")}){Glyph("add",label)}
+    image?.let{picture->AlertDialog(onDismissRequest={image=null},title={Text(label)},text={MessageImage(picture,ui)},confirmButton={Button(enabled=enabled,onClick={image=null;onSend(picture)}){Text(label)}},dismissButton={TextButton(onClick={image=null}){Text("取消")}})}
 }
 
 internal fun messageImageFile(context:Context,image:JSONObject):File {

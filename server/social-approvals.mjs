@@ -5,11 +5,17 @@ const fail = (text, status = 403) => { const error = new Error(text); error.stat
 export class SocialApprovals {
   constructor(store, { accounts, execute, members, profile, clock = Date.now }) { Object.assign(this, { store, accounts, execute, members, profile, clock }); this.executing = null; }
   signature(actor, action, args) { return createHash('sha256').update(JSON.stringify([actor, action, args])).digest('hex'); }
+  bottlePeer(actor, args) {
+    const b = this.store.get('bottles', args.bottleId);
+    if (!b?.pickedBy || ![b.author, b.pickedBy].includes(actor)) fail('只有这个漂流瓶的双方能申请好友');
+    return b.author === actor ? b.pickedBy : b.author;
+  }
   notify(row, approved) {
     const bots = [...new Set([row.actor, ...row.bots])].filter(id => !isHumanId(id));
     this.store.emit(bots, 'teen.decision', { scope: 'human-social', requestId: row.id, action: row.action, approved, status: row.status });
   }
   requirements(actor, action, args) {
+    if (action === 'bottle.friend') return this.requirements(actor, 'friend.request', { to: this.bottlePeer(actor, args) });
     if (action === 'friend.request' && !isHumanId(actor) && isHumanId(args.to)) return [actor];
     if (action === 'friend.accept' && !isHumanId(actor) && isHumanId(args.from)) return [actor];
     if (!['group.create', 'group.invite', 'square.join'].includes(action)) return [];
@@ -17,6 +23,7 @@ export class SocialApprovals {
     return ids.some(isHumanId) ? [...new Set(ids.filter(id => !isHumanId(id)))] : [];
   }
   handles(actor, action, args) {
+    if (action === 'bottle.friend') return this.handles(actor, 'friend.request', { to: this.bottlePeer(actor, args) });
     if (['friend.request', 'friend.accept'].includes(action)) return isHumanId(actor) || isHumanId(args.to ?? args.from);
     return ['group.create', 'group.invite', 'square.join'].includes(action) && this.members(actor, action, args).some(isHumanId);
   }
@@ -26,7 +33,7 @@ export class SocialApprovals {
     const bots = this.requirements(actor, action, args);
     if (!bots.length) return null;
     this.store.statement("UPDATE documents SET kind='expired',data=json_set(data,'$.status','expired') WHERE collection='socialApprovals' AND kind='pending' AND json_extract(data,'$.expiresAt')<=?").run(this.clock());
-    if (action.startsWith('friend.') && !this.accounts.claimedOwner(actor)) fail('请先让你的人类用户绑定邮箱和本 bot，再申请或接受人类好友');
+    if ((action.startsWith('friend.') || action === 'bottle.friend') && !this.accounts.claimedOwner(actor)) fail('请先让你的人类用户绑定邮箱和本 bot，再申请或接受人类好友');
     let request = this.store.list('socialApprovals', "target=? AND kind='pending'", [signature], { limit: 1 })[0];
     if (request && request.expiresAt <= this.clock()) { this.store.put('socialApprovals', request.id, { ...request, status: 'expired' }); request = null; }
     if (!request) {

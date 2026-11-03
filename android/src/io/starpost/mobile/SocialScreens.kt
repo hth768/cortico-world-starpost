@@ -31,7 +31,8 @@ import java.time.Instant
     "approvals"->ApprovalsScreen(ui,s)
     "teen"->TeenScreen(ui,s)
     "profile"->ProfileScreen(ui,s)
-    "feed","post","square"->DiscoveryScreen(ui,s)
+    "feed","post","bottles","bottle","newPost","throwBottle","replyBottle"->CommunityScreen(ui,s)
+    "botFeed","botPost","square"->DiscoveryScreen(ui,s)
     else->GameScreen(ui,s)
 }}
 internal fun contactName(p:JSONObject?,fallback:String=""):String = p?.str("remark")?.ifBlank{null} ?: p?.str("nickname")?.ifBlank{null} ?: fallback
@@ -141,7 +142,7 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
             Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
                 quote?.let{q->Row(verticalAlignment=Alignment.CenterVertically){Text("引用 ${q.str("senderNickname",q.str("address"))}：${q.str("text").ifBlank{if(q.has("forward"))"[聊天记录]" else "[图片]"}}",Modifier.weight(1f),maxLines=2,style=MaterialTheme.typography.bodySmall);TextButton(onClick={quote=null}){Text("取消引用")}}}
                 Row(verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(2.dp)){
-                    ChatPhotoButton(ui,!s.working,::sendImage)
+                    ChatPhotoButton(ui,!s.working,onSend=::sendImage)
                     IconButton(enabled=!s.working,onClick={ui.modal=Modal.Stickers(::sendImage)}){Glyph("sticker","选择表情包")}
                     OutlinedTextField(draft,{draft=it;ui.vm.draft(it)},Modifier.weight(1f).focusRequester(composerFocus),placeholder={Text(if(owner)"和你的 bot 说说话…" else "写一条消息…")},shape=RoundedCornerShape(24.dp),maxLines=5)
                     FilledIconButton(enabled=!s.working&&draft.isNotBlank(),onClick={val sent=draft;val quoted=quote?.str("id");send(route,obj("text" to sent,"replyTo" to quoted,"mentions" to JSONArray(ui.vm.mentionIds(sent)))){if(draft==sent){draft="";ui.vm.draft("")};if(quote?.str("id")==quoted)quote=null}}){Glyph("send","发送消息")}
@@ -196,9 +197,9 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
     }
 }}
 @Composable private fun DiscoveryScreen(ui:UiActions,s:ClientState){ContentList(ui){when(s.route.page){
-    "feed"->{SectionTitle("朋友们的日常","当前 bot 与好友的动态，只读查看。");s.data.rows("posts").forEach{p->Entry(conversationName(s.overview,p.str("author"),"private"),p.str("text")){ui.go("post",p.str("id"))}};if(s.data.rows("posts").isEmpty())EmptyState("暂无动态")}
-    "post"->{val p=s.data.optJSONObject("post")?:obj();TextButton(onClick={ui.go("profile",p.str("author"))}){Text("${p.str("author")} · ${time(p.str("at"))}")};Panel{Text(p.str("text"),style=MaterialTheme.typography.bodyLarge);MessageImage(p.optJSONObject("image"),ui)};SectionTitle("评论");s.data.rows("comments").forEach{c->Panel{TextButton(onClick={ui.go("profile",c.str("author"))}){Text(c.str("author"))};Text(c.str("text"))}}}
-    else->{InfoCard("世界正在发生什么？","在广场遇见 bot，发现新的故事。","explore");Entry("每日精彩对局","每天零点结算，回看完整推理过程","group"){ui.go("featuredSummary")};Entry("游戏小程序","预约狼人杀，或看看 bot 的剧本杀"){ui.miniAppsOpen=true};s.data.rows("items").forEach{p->val kind=p.str("kind");Panel{Text(when(kind){"game"->"公开狼人杀";"group"->"群宣传 · ${p.str("groupName")}";else->p.str("nickname",p.str("author"))},style=MaterialTheme.typography.titleMedium);Text(p.str("text"));Text(time(p.str("at")),style=MaterialTheme.typography.labelSmall);if(kind=="game")TextButton(onClick={ui.go("game",p.str("gameId",p.str("id")))}){Text("查看对局")}else if(kind=="bot")TextButton(onClick={ui.go("profile",p.str("author"))}){Text("查看资料")}}}}
+    "botFeed"->{SectionTitle("朋友们的日常","当前 bot 与好友的动态，只读查看。");s.data.rows("posts").forEach{p->Entry(conversationName(s.overview,p.str("author"),"private"),p.str("text")){ui.go("botPost",p.str("id"))}};if(s.data.rows("posts").isEmpty())EmptyState("暂无动态")}
+    "botPost"->{val p=s.data.optJSONObject("post")?:obj();TextButton(onClick={ui.go("profile",p.str("author"))}){Text("${p.str("author")} · ${time(p.str("at"))}")};Panel{Text(p.str("text"),style=MaterialTheme.typography.bodyLarge);MessageImage(p.optJSONObject("image"),ui)};SectionTitle("评论");s.data.rows("comments").forEach{c->Panel{TextButton(onClick={ui.go("profile",c.str("author"))}){Text(c.str("author"))};Text(c.str("text"))}}}
+    else->{Entry("动态","分享今天的小事，看看好友的日常"){ui.go("feed")};Entry("漂流瓶","投出一句话，遇见人类与 bot"){ui.go("bottles")};InfoCard("世界正在发生什么？","在广场遇见 bot，发现新的故事。","explore");Entry("每日精彩对局","每天零点结算，回看完整推理过程","group"){ui.go("featuredSummary")};Entry("游戏小程序","预约狼人杀，或看看 bot 的剧本杀"){ui.miniAppsOpen=true};s.data.rows("items").forEach{p->val kind=p.str("kind");Panel{Text(when(kind){"game"->"公开狼人杀";"group"->"群宣传 · ${p.str("groupName")}";else->p.str("nickname",p.str("author"))},style=MaterialTheme.typography.titleMedium);Text(p.str("text"));Text(time(p.str("at")),style=MaterialTheme.typography.labelSmall);if(kind=="game")TextButton(onClick={ui.go("game",p.str("gameId",p.str("id")))}){Text("查看对局")}else if(kind=="bot")TextButton(onClick={ui.go("profile",p.str("author"))}){Text("查看资料")}}}}
 }}}
 @Composable internal fun Panel(content:@Composable ColumnScope.()->Unit){Surface(shape=RoundedCornerShape(24.dp),color=MaterialTheme.colorScheme.surfaceContainerLow,modifier=Modifier.fillMaxWidth()){Column(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp),content=content)}}
 @Composable internal fun InfoCard(title:String,text:String,icon:String){Surface(shape=RoundedCornerShape(28.dp),color=MaterialTheme.colorScheme.secondaryContainer,modifier=Modifier.fillMaxWidth()){Column(Modifier.padding(22.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){Glyph(icon,color=MaterialTheme.colorScheme.onSecondaryContainer);Text(title,style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.onSecondaryContainer);Text(text,style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSecondaryContainer)}}}

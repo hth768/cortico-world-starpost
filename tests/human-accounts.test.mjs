@@ -38,6 +38,115 @@ async function fixture() {
   return { directory, app, mails, keys, post, rpc, bot, sendCode, register, claim, base, advance(ms) { now += ms; }, async close() { await app.close(); rmSync(directory, { recursive: true, force: true }); } };
 }
 
+test('人类动态：无绑定也可图文发布、不设每日上限、防刷、只能删除自己的动态', async () => {
+  const f = await fixture(); try {
+    const a = await f.register('feed-a@example.com'), b = await f.register('feed-b@example.com');
+    f.app.store.befriend(a.humanId, b.humanId);
+    const image = { mime:'image/png', base64:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aH1sAAAAASUVORK5CYII=' };
+    const published = await f.rpc(a.accessToken, 'social.post.publish', { text:'今天很开心',image,author:'10001',botId:'10001' });
+    assert.equal(published.ok,true,published.error);const id=published.result.id;
+    const read=(await f.rpc(b.accessToken,'social.post.read',{postId:id})).result;
+    assert.equal(read.post.author,a.humanId);assert.equal(read.post.image.base64,image.base64);assert.equal(read.post.authorProfile.botId,a.humanId);
+    const list=(await f.rpc(b.accessToken,'social.post.list')).result;
+    assert.equal(list.items[0].hasImage,true);assert.equal(list.items[0].image,undefined);
+    const overview=(await f.rpc(b.accessToken,'social.overview')).result;
+    assert.deepEqual(overview.posts,[]);assert.deepEqual(overview.bottles,[]);
+    assert.equal((await f.rpc(b.accessToken,'social.post.delete',{postId:id})).status,403);
+    for(let i=0;i<2;i++)assert.equal((await f.rpc(a.accessToken,'social.post.publish',{text:`日常${i}`})).ok,true);
+    assert.equal((await f.rpc(a.accessToken,'social.post.publish',{text:'太频繁'})).status,429);
+    f.advance(60001);assert.equal((await f.rpc(a.accessToken,'social.post.publish',{text:'今日第4条'})).ok,true);
+    for(let i=0;i<3;i++)assert.equal((await f.bot('10001','post.publish',{text:`bot 日常${i}`})).ok,true);
+    assert.match((await f.bot('10001','post.publish',{text:'bot 第4条'})).error,/3 条/);
+    assert.equal((await f.rpc(a.accessToken,'post.publish',{text:'不能冒充bot'})).ok,false);
+    const botPost=f.app.store.list('posts','owner=?',['10001'])[0];
+    assert.equal((await f.rpc(a.accessToken,'social.post.delete',{postId:botPost.id})).status,403);
+    assert.equal((await f.rpc(a.accessToken,'social.post.delete',{postId:id})).ok,true);
+    assert.equal((await f.rpc(b.accessToken,'social.post.read',{postId:id})).ok,false);
+  } finally { await f.close(); }
+});
+
+test('人类动态：好友可评论与回复，非好友/解除好友后不可读写；列表与评论游标可翻页', async () => {
+  const f=await fixture();try{
+    const a=await f.register('comment-a@example.com'),b=await f.register('comment-b@example.com'),c=await f.register('comment-c@example.com');
+    f.app.store.befriend(a.humanId,b.humanId);
+    const id=(await f.rpc(a.accessToken,'social.post.publish',{text:'第一条'})).result.id;
+    assert.equal((await f.rpc(c.accessToken,'social.post.read',{postId:id})).status,403);
+    assert.equal((await f.rpc(c.accessToken,'social.post.comment',{postId:id,text:'不可评论'})).status,403);
+    const parent=(await f.rpc(b.accessToken,'social.post.comment',{postId:id,text:'<script>external text</script>'})).result.id;
+    const reply=await f.rpc(a.accessToken,'social.post.comment',{postId:id,parentId:parent,text:'谢谢'});assert.equal(reply.ok,true);
+    const read=(await f.rpc(a.accessToken,'social.post.read',{postId:id})).result;
+    assert.equal(read.comments[1].replyTo.text,'<script>external text</script>');
+    const other=(await f.rpc(a.accessToken,'social.post.publish',{text:'第二条'})).result.id;
+    assert.equal((await f.rpc(a.accessToken,'social.post.comment',{postId:other,parentId:parent,text:'跨动态回复'})).ok,false);
+    for(let i=0;i<25;i++){
+      f.advance(61000);await f.rpc(a.accessToken,'social.post.publish',{text:`动态 ${i}`});
+      assert.equal((await f.rpc(b.accessToken,'social.post.comment',{postId:id,text:`评论 ${i}`})).ok,true);
+    }
+    const first=(await f.rpc(a.accessToken,'social.post.list')).result,second=(await f.rpc(a.accessToken,'social.post.list',{before:first.nextBefore})).result;
+    assert.equal(first.items.length,20);assert.equal(second.items.length,7);assert.equal(second.nextBefore,null);
+    assert.equal(new Set([...first.items,...second.items].map(p=>p.id)).size,27);
+    const latest=(await f.rpc(a.accessToken,'social.post.read',{postId:id})).result,older=(await f.rpc(a.accessToken,'social.post.read',{postId:id,before:latest.nextBefore})).result;
+    assert.equal(latest.comments.length,20);assert.equal(older.comments.length,7);assert.equal(older.nextBefore,null);
+    assert.equal((await f.rpc(a.accessToken,'social.post.list',{before:'bad'})).status,400);
+    for(let i=0;i<20;i++){
+      if(i===0)f.advance(61000);
+      assert.equal((await f.rpc(b.accessToken,'social.post.comment',{postId:id,text:`刷屏 ${i}`})).ok,true);
+    }
+    assert.equal((await f.rpc(b.accessToken,'social.post.comment',{postId:id,text:'第21次'})).status,429);
+    await f.rpc(a.accessToken,'social.friend.remove',{botId:b.humanId});
+    assert.equal((await f.rpc(b.accessToken,'social.post.read',{postId:id})).status,403);
+    assert.equal((await f.rpc(b.accessToken,'social.post.list')).result.items.length,0);
+  }finally{await f.close()}
+});
+
+test('人类漂流瓶：共用池、并发只能捞起一次、权限隔离、一次回复与好友审批',async()=>{
+  const f=await fixture();try{
+    const owner=await f.claim('10001','bottle-owner@example.com'),a=await f.register('bottle-a@example.com'),b=await f.register('bottle-b@example.com');
+    const id=(await f.bot('10001','bottle.throw',{text:'来自 bot 的瓶子'})).result.id;
+    const picked=await Promise.all([f.rpc(a.accessToken,'social.bottle.pick'),f.rpc(b.accessToken,'social.bottle.pick')]);
+    assert.equal(picked.filter(r=>r.result.bottleId===id).length,1);
+    const who=picked[0].result.bottleId?a:b,other=who===a?b:a;
+    assert.equal((await f.rpc(other.accessToken,'social.bottle.read',{bottleId:id})).status,403);
+    assert.equal((await f.rpc(other.accessToken,'social.bottle.friend',{bottleId:id})).status,403);
+    assert.equal((await f.rpc(other.accessToken,'social.bottle.reply',{bottleId:id,text:'冒名'})).ok,false);
+    assert.equal((await f.rpc(who.accessToken,'social.bottle.reply',{bottleId:id,text:'来自人类的回复'})).ok,true);
+    assert.equal((await f.rpc(who.accessToken,'social.bottle.reply',{bottleId:id,text:'再次回复'})).ok,false);
+    assert.equal((await f.bot('10001','bottle.read',{bottleId:id})).result.reply,'来自人类的回复');
+    const request=await f.rpc(who.accessToken,'social.bottle.friend',{bottleId:id});assert.equal(request.ok,true,request.error);
+    const accept=await f.bot('10001','friend.accept',{from:who.humanId});assert.equal(accept.result.pendingApproval,true);
+    await f.rpc(owner.accessToken,'account.decide',{requestId:accept.result.requestId,approve:true});
+    assert.equal((await f.rpc(who.accessToken,'social.bottle.read',{bottleId:id})).result.isFriend,true);
+    await f.rpc(who.accessToken,'social.friend.remove',{botId:'10001'});
+    const botRequest=await f.bot('10001','bottle.friend',{bottleId:id});assert.equal(botRequest.result.pendingApproval,true);
+    assert.equal((await f.rpc(who.accessToken,'social.overview')).result.requests.length,0);
+    await f.rpc(owner.accessToken,'account.decide',{requestId:botRequest.result.requestId,approve:true});
+    assert.equal((await f.rpc(who.accessToken,'social.overview')).result.requests[0].from,'10001');
+    assert.equal((await f.rpc(who.accessToken,'social.friend.accept',{from:'10001'})).ok,true);
+    const own=(await f.rpc(other.accessToken,'social.bottle.throw',{text:'我投出的',author:'10001'})).result.id;
+    assert.equal((await f.rpc(other.accessToken,'social.bottle.pick')).result.bottle,null);
+    assert.equal((await f.rpc(other.accessToken,'social.bottle.list',{scope:'thrown'})).result.items[0].author,other.humanId);
+    assert.equal((await f.bot('10002','bottle.pick')).result.bottleId,own);
+    assert.equal((await f.bot('10002','bottle.friend',{bottleId:own})).status,403);
+    assert.equal((await f.rpc(who.accessToken,'social.bottle.list',{scope:'picked'})).result.items[0].id,id);
+    f.advance(61000);
+    for(let i=0;i<6;i++)assert.equal((await f.rpc(other.accessToken,'social.bottle.throw',{text:`瓶子${i}`})).ok,true);
+    assert.equal((await f.rpc(other.accessToken,'social.bottle.pick')).status,429);
+  }finally{await f.close()}
+});
+
+test('网页会话复用人类社交权限；旧凭据登录不能开放人类动态写入口',async()=>{
+  const f=await fixture();try{
+    const old=await f.post('/mobile/login',{botId:'10002',credential:f.keys['10002']});
+    assert.equal((await f.rpc(old.result.accessToken,'social.post.publish',{text:'先升级账号'})).status,403);
+    const a=await f.register('web-feed@example.com');
+    const headers={origin:f.base,cookie:`starpost_session=${a.accessToken}`};
+    const publish=await f.post('/web/rpc',{action:'social.post.publish',args:{text:'网页发布'}},'','',headers);
+    assert.equal(publish.ok,true,publish.error);
+    const read=await f.rpc(a.accessToken,'social.post.read',{postId:publish.result.id});assert.equal(read.result.post.author,a.humanId);
+    assert.equal((await f.post('/web/rpc',{action:'social.bottle.throw',args:{text:'跨站请求'}},'','',{...headers,origin:'https://untrusted.example'})).status,403);
+  }finally{await f.close()}
+});
+
 test('密码加盐哈希，SMTP 要求加密和证书验证，不读取邮件中的文件或远程资源', async () => {
   const a = await passwordHash('correct-password'), b = await passwordHash('correct-password');assert.notEqual(a, b);
   assert.equal(await passwordMatches('correct-password', a), true);assert.equal(await passwordMatches('wrong', a), false);assert.equal(await passwordMatches('guess', undefined), false);

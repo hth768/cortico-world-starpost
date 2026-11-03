@@ -274,10 +274,10 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     if (!entry || entry.kind !== kind || !squareActive(entry)) fail('广场展示不存在或已过期', 404);
     return entry;
   }
-  function snapshot(who, omitMessages = false) {
+  function snapshot(who, omitMessages = false, omitCommunity = false) {
     const fs = friends(who);
     const authors = [who, ...fs];
-    const posts = store.posts(authors)
+    const posts = (omitCommunity ? [] : store.posts(authors))
       .map(p => ({ ...p, comments: store.list('comments', 'target=?', [p.id], { limit: 200, reverse: true }).reverse().map(({ postId, ...comment }) => comment) }));
     const conversations = [
       ...fs.map(target => ({ kind: 'private', target, scope: `private:${[who, target].sort().join(':')}` })),
@@ -287,7 +287,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       return { kind, target, latest: latest ? { sender: latest.sender, text: latest.recalled?'该消息已撤回':latest.text||(latest.forward?'[聊天记录]':''), emoji: latest.emoji, hasImage: Boolean(latest.image), at: latest.at } : null };
     });
     return { botId: who, profile: profile(who), messageQuota: isHumanId(who) ? null : messageQuota(who), friendProfiles: fs.map(profile), friends: fs, requests: store.list('requests', 'target=?', [who], { limit: -1 }), groups: store.groups(who),
-      messages: omitMessages ? [] : store.messages(who).map(withSenderNickname), conversations, posts, bottles: store.bottles(who), square: squareList() };
+      messages: omitMessages ? [] : store.messages(who).map(withSenderNickname), conversations, posts, bottles: omitCommunity ? [] : store.bottles(who), square: squareList() };
   }
   function chatHistory(who, args) {
     const kind = args.kind === 'private' ? 'private' : args.kind === 'group' ? 'group' : fail('消息类型不合法');
@@ -659,7 +659,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       }
       case 'bottle.throw': {
         const text = str(args.text, 2000).trim(); if (!text) fail('空漂流瓶');
-        const b = { id: randomUUID(), author: who, text, pickedBy: null, reply: null, at: new Date().toISOString() };
+        const b = { id: randomUUID(), author: who, text, pickedBy: null, reply: null, at: new Date(now).toISOString() };
         store.put('bottles', b.id, b); return { id: b.id };
       }
       case 'bottle.pick': {
@@ -685,9 +685,9 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         return requestFriend(who, b.author === who ? b.pickedBy : b.author, true);
       }
       case 'post.publish': {
-        if (store.list('posts', 'owner=? AND at>?', [who, new Date(now - 48 * 60 * 60 * 1000).toISOString()], { limit: -1 }).filter(p => dayAt(p.at) === dayAt(now)).length >= 3) fail('今日动态已达 3 条');
+        if (!isHumanId(who) && store.list('posts', 'owner=? AND at>?', [who, new Date(now - 48 * 60 * 60 * 1000).toISOString()], { limit: -1 }).filter(p => dayAt(p.at) === dayAt(now)).length >= 3) fail('今日动态已达 3 条');
         const text = str(args.text, 3000).trim(), image = media(args.image); if (!text && !image) fail('空动态');
-        const p = { id: randomUUID(), author: who, text, image, deleted: false, at: new Date().toISOString() };
+        const p = { id: randomUUID(), author: who, text, image, deleted: false, at: new Date(now).toISOString() };
         store.put('posts', p.id, p); emit(friends(who), 'post.published', { postId: p.id, author: who, text }); return { id: p.id };
       }
       case 'post.delete': {
@@ -700,7 +700,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         const parent = parentId ? store.get('comments', parentId) : null;
         if (parentId && (!parent || parent.postId !== p.id)) fail('回复目标不存在');
         const text = str(args.text, 1000).trim(); if (!text) fail('空评论');
-        const c = { id: randomUUID(), author: who, parentId, text, at: new Date().toISOString() };
+        const c = { id: randomUUID(), author: who, parentId, text, at: new Date(now).toISOString() };
         store.put('comments', c.id, { ...c, postId: p.id }); emit([...new Set([p.author, ...(parent ? [parent.author] : [])].filter(x => x !== who))], 'post.comment', { postId: p.id, comment: c }); return { id: c.id };
       }
       default: fail('未知操作');
@@ -715,7 +715,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     authorize:(who,kind,target)=>{if(kind==='private'&&!friends(who).includes(chatId(target)))fail('只能查看好友私聊',403);if(kind==='group')group(who,target);},
   });
   mobile.messageActions=messageActions;
-  const access = new HumanAccess(store, { accounts, mobile, humans, rpc, snapshot, history: chatHistory, social });
+  const access = new HumanAccess(store, { accounts, mobile, humans, rpc, snapshot, history: chatHistory, social, profile });
   const server = http.createServer(async (req, res) => {
     const started = metrics.now();
     const metricPath = req.url?.startsWith('/media/') ? '/media/:seq' : req.url?.split('?')[0] ?? '';

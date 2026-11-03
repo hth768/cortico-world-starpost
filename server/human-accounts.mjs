@@ -153,7 +153,7 @@ export class HumanAccounts {
   }
   prune() {
     const now = new Date(this.clock()).toISOString(), cutoff = new Date(this.clock() - 30 * 86400000).toISOString();
-    this.store.statement("DELETE FROM documents WHERE collection IN ('emailChallenges','authRates','humanSessions') AND at<=?").run(now);
+    this.store.statement("DELETE FROM documents WHERE collection IN ('emailChallenges','authRates','humanSessions','humanCommunityRate') AND at<=?").run(now);
     this.store.statement("UPDATE documents SET kind='expired',data=json_set(data,'$.status','expired') WHERE collection='socialApprovals' AND kind='pending' AND json_extract(data,'$.expiresAt')<=?").run(this.clock());
     this.store.statement("DELETE FROM documents WHERE collection='socialApprovals' AND kind<>'pending' AND at<?").run(cutoff);
   }

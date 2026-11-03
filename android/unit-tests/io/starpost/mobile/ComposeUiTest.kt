@@ -32,6 +32,49 @@ class ComposeUiTest {
     private fun client()=StarpostClient(ApplicationProvider.getApplicationContext<Application>())
     private val account get()=obj("humanId" to "10003H","nickname" to "星河访客","email" to "hello@example.com","botId" to "10001","bots" to JSONArray().put(obj("botId" to "10001","nickname" to "陈玥汐")))
     private fun shot(name:String){val file=File("../.deployment/compose/screenshots/$name.png");file.parentFile.mkdirs();compose.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG,100,file.outputStream())}
+    @Test fun humanFeedWorksWithoutBotBindingAndHasNoDailyQuota(){
+        val vm=client();val human=JSONObject(account.toString()).put("botId","").put("bots",JSONArray())
+        val post=obj("id" to "post-1","authorProfile" to obj("botId" to "10005H","nickname" to "海风"),"text" to "今天在海边看见了一颗很亮的星星。","at" to "2026-11-03T11:00:00Z","hasImage" to true)
+        compose.setContent{StarpostTheme("light",false){StarpostApp(vm,ClientState(starting=false,signedIn=true,account=human,route=Route("feed"),data=obj("items" to JSONArray().put(post))))}}
+        compose.onNodeWithText("发动态").assertExists();compose.onNodeWithText("查看 Bot 动态 · 只读").assertDoesNotExist();compose.onNodeWithText("今天在海边看见了一颗很亮的星星。").assertExists();shot("android-human-feed")
+        compose.onNodeWithText("海",useUnmergedTree=true).performTouchInput{click()};compose.mainClock.advanceTimeBy(400);compose.waitForIdle();org.junit.Assert.assertEquals("social",vm.state.value.route.kind)
+    }
+    @Test fun communityComposerPreservesDraftOnFailedRequestAndThemeChange(){
+        val vm=client()
+        // The real app waits for session loading before showing an editor. Let that
+        // finish before injecting the signed-in UI fixture, so startup cannot clear its draft.
+        val state=mutableStateOf(ClientState(starting=false,signedIn=true,account=account,route=Route("newPost")))
+        val dark=mutableStateOf(false)
+        val ready=mutableStateOf(false)
+        compose.setContent{StarpostTheme(if(dark.value)"dark" else "light",false){if(ready.value)StarpostApp(vm,state.value)else Text("正在初始化测试会话")}}
+        compose.waitUntil(5000){compose.runOnIdle{!vm.state.value.starting}}
+        compose.runOnIdle{ready.value=true}
+        compose.onNode(hasSetTextAction()).performTextInput("今天的小事，留在星邮。")
+        compose.runOnIdle{org.junit.Assert.assertEquals("今天的小事，留在星邮。",vm.communityDraft("post").text)}
+        compose.runOnIdle{state.value=state.value.copy(error="操作过于频繁，请稍后重试");dark.value=true}
+        compose.onNodeWithText("今天的小事，留在星邮。").assertExists();compose.onNodeWithContentDescription("添加到动态").assertExists();shot("android-post-compose-dark")
+        compose.runOnIdle{state.value=state.value.copy(route=Route("throwBottle"),error="")}
+        compose.onNodeWithText("今天的小事，留在星邮。").assertDoesNotExist();compose.onNodeWithContentDescription("添加到动态").assertDoesNotExist()
+        compose.runOnIdle{state.value=state.value.copy(route=Route("newPost"))};compose.onNodeWithText("今天的小事，留在星邮。").assertExists()
+    }
+    @Test fun postRepliesAndDeleteBelongToHumanAuthorOnly(){
+        val vm=client();val post=obj("id" to "post-1","author" to "10005H","authorProfile" to obj("botId" to "10005H","nickname" to "海风"),"text" to "你的今天过得怎么样？","at" to "2026-11-03T11:00:00Z")
+        val comment=obj("id" to "comment-1","author" to "10006H","authorProfile" to obj("botId" to "10006H","nickname" to "小夏"),"text" to "捞到了一个有趣的瓶子。","at" to "2026-11-03T11:01:00Z")
+        val state=mutableStateOf(ClientState(starting=false,signedIn=true,account=account,route=Route("post","post-1"),data=obj("post" to post,"comments" to JSONArray().put(comment))))
+        compose.setContent{StarpostTheme("light",false){StarpostApp(vm,state.value)}}
+        compose.onNodeWithText("删除我的动态").assertDoesNotExist();compose.onNodeWithText("回复这条评论").performScrollTo().performClick();compose.onNodeWithText("回复 小夏").assertExists()
+        compose.onNode(hasSetTextAction()).performTextInput("我也想看看");compose.onNodeWithText("取消回复").performScrollTo().performClick();compose.onNodeWithText("我也想看看").assertExists()
+        compose.runOnIdle{state.value=state.value.copy(data=obj("post" to JSONObject(post.toString()).put("author","10003H"),"comments" to JSONArray().put(comment)))}
+        compose.onNodeWithText("删除我的动态").assertExists()
+    }
+    @Test fun bottleReplyIsAvailableOnlyToPickerAndBeforeReply(){
+        val vm=client();val bottle=obj("id" to "bottle-1","author" to "10001","authorProfile" to obj("botId" to "10001","nickname" to "小星"),"pickedBy" to "10003H","pickerProfile" to obj("botId" to "10003H","nickname" to "星河访客"),"text" to "偶然看到这只瓶子的人，你好呀。","at" to "2026-11-03T10:00:00Z","pickedAt" to "2026-11-03T11:00:00Z")
+        val state=mutableStateOf(ClientState(starting=false,signedIn=true,account=account,route=Route("bottle","bottle-1"),data=bottle))
+        compose.setContent{StarpostTheme("dark",false){StarpostApp(vm,state.value)}}
+        compose.onNodeWithText("回复这个瓶子").assertExists();compose.onNodeWithText("申请加对方为好友").assertExists();shot("android-human-bottle-dark")
+        compose.runOnIdle{state.value=state.value.copy(data=JSONObject(bottle.toString()).put("reply","很高兴遇见你").put("isFriend",true))}
+        compose.onNodeWithText("回复这个瓶子").assertDoesNotExist();compose.onNodeWithText("申请加对方为好友").assertDoesNotExist();compose.onNodeWithText("你们已经是好友。").assertExists()
+    }
     @Test fun messageLongPressQuotesWithoutLosingDraftOnRefresh(){
         val vm=client();val message=obj("id" to "local-message","sender" to "10003H","senderNickname" to "星河访客","text" to "今晚一起玩狼人杀吧","at" to java.time.Instant.now().toString())
         val state=mutableStateOf(ClientState(starting=false,signedIn=true,account=account,route=Route("socialHistory","10005H"),data=obj("messages" to JSONArray().put(message))))
