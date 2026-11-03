@@ -42,10 +42,11 @@ export class HumanGames {
     const who = this.id(owner), profile = this.store.get('humanProfiles', owner);
     const aliases = this.ownerKeys(owner).map(key => this.id(key));
     return { ownerBotId: owner, humanId: who, nickname: profile?.nickname || '匿名人类', moderation: this.state(owner), activeGameId: this.active(owner),
-      rules: this.games.rules(who), games: [...new Map([...aliases.flatMap(id => this.games.list(id)), ...this.games.publicListings()].map(g => [g.gameId, g])).values()]
+      rules: this.games.rules(who), matching: this.games.matchStatus(who), games: [...new Map([...aliases.flatMap(id => this.games.list(id)), ...this.games.publicListings()].map(g => [g.gameId, g])).values()]
         .map(g => { const game = this.games.get(g.gameId); const identity = aliases.find(id => [...game.joined, ...game.participants, game.creator].includes(id)) ?? who; return this.games.summary(game, identity); }) };
   }
   call(owner, action, args) {
+    this.games.touchWaiting(this.id(owner));
     this.games.tick();
     if (args?.gameId && this.accounts) {
       const game = this.games.get(args.gameId), aliases = this.ownerKeys(owner);
@@ -61,15 +62,19 @@ export class HumanGames {
       this.store.put('humanProfiles', owner, { nickname }); return { humanId: who, nickname: nickname || '匿名人类' };
     }
     this.assertEligible(owner);
+    if (action === 'match') {
+      if (this.active(owner) && (args.operation ?? 'status') === 'join') fail('请先完成当前对局');
+      return this.games.match(who, args);
+    }
     if (action === 'schedule') {
       if (this.active(owner)) fail('请先完成当前对局');
       const title = field(args.title || '人类发起的狼人杀', 60);
       if (humanViolation(title)) fail('预约标题不合法');
-      const game = this.games.schedule(who, { title, scheduledAt: args.scheduledAt, maxPlayers: args.maxPlayers,
+      const game = this.games.schedule(who, { title, scheduledAt: args.scheduledAt, startMode: args.startMode, maxPlayers: args.maxPlayers,
         roles: args.roles, public: args.public === true, judgeMode: 'program',
         sourceKind: args.sourceTarget || (this.accounts ? this.accounts.bots(who)[0]?.botId : owner) ? 'private' : 'square',
         sourceTarget: args.sourceTarget || (this.accounts ? this.accounts.bots(who)[0]?.botId : owner) });
-      if (args.public === true) this.games.publish(who, game.gameId);
+      if (args.public === true && !game.published) this.games.publish(who, game.gameId);
       return game;
     }
     if (action === 'join') {
@@ -107,9 +112,10 @@ export class HumanGames {
     const role = game.roles[who], targets = game.alive.map(id => ({ id, nickname: this.games.nickname(id) || id }));
     const option = (move, label, list) => ({ move, label, targets: list });
     if (game.status === 'vote' && !Object.hasOwn(game.votes, who)) return [option('vote', '投票', [...targets, { id: 'abstain', nickname: '弃票' }])];
+    if (game.status === 'day' && !game.dayDone?.includes(who)) return [option('end_speech', '结束发言', [{ id: '', nickname: '结束本轮发言，全员结束后立即投票' }])];
     if (game.status === 'hunter' && game.pendingHunter === who) return [option('shoot', '猎人开枪或放弃', [...targets, { id: '', nickname: '放弃开枪' }])];
     if (game.night.passed?.includes(who)) return [];
-    if (game.status === 'night_wolf' && role === 'wolf') return [option('attack', '选择狼刀目标', targets.filter(t => game.roles[t.id] !== 'wolf')),
+    if (game.status === 'night_wolf' && role === 'wolf' && !Object.hasOwn(game.night.wolfVotes ?? {}, who)) return [option('attack', '选择狼刀目标', targets.filter(t => game.roles[t.id] !== 'wolf')),
       ...(!game.night.wolfVotes?.[who] ? [option('skip', '跳过本夜', [{ id: '', nickname: '跳过' }])] : [])];
     if (game.status !== 'night_gods') return [];
     const choices = [];

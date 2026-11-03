@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID, timingSafeEqual, createHash } from 'node:crypto';
 import { StarpostStorage } from './storage.mjs';
+import { TimeCapsules } from './capsules.mjs';
 import { SquareReminders } from './square-reminders.mjs';
 import { announceRelease, releaseNotesEvent } from './release.mjs';
 import { RelayMetrics } from './metrics.mjs';
@@ -61,6 +62,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
   if (new Set(Object.values(keys)).size !== known.size) fail('不同 bot 必须使用不同密钥');
   const legacyFile = file.endsWith('.json') ? file : undefined;
   const store = new StarpostStorage({ dbFile: dbFile ?? (legacyFile ? file.replace(/\.json$/, '.sqlite') : file), legacyFile, mediaDir });
+  const capsules = new TimeCapsules(store, { clock, media });
   const metrics = new RelayMetrics();
   const accountIds = () => store.statement("SELECT key FROM documents WHERE collection='accounts'").all().map(row => row.key);
   const knownIds = () => [...new Set([...known, ...accountIds()])];
@@ -236,6 +238,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
   };
   const games = new WerewolfGames(store, {
     isKnown: who => isKnown(who),
+    eligible: who => who.endsWith('H') ? !humans.state(who.slice(0, -1)).banned : !conduct.until(who),
     ownsHuman: (bot, human) => !isHumanId(bot) && isHumanId(human) && accounts.owner(bot) === accounts.canonical(human),
     friends: who => who.endsWith('H') ? [...friends(who), ...accounts.bots(who).map(b => b.botId)] : [...friends(who), ...[accounts.owner(who)].filter(Boolean)], group,
     nickname: who => who.endsWith('H') ? store.get('humanProfiles', who.slice(0, -1))?.nickname || profile(who).nickname || '匿名人类' : profile(who).nickname, clock,
@@ -243,7 +246,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     resumeChat: who => { if (!who.endsWith('H')) resumeChat(who); }, consume: consumeSpectator, knownIds });
   const humans = new HumanGames(store, games, clock, accounts);
   const mysteryGames = new MysteryGames(store, { isKnown, friends, group, nickname: who => profile(who).nickname,
-    clock, pauseChat, resumeChat });
+    clock, pauseChat, resumeChat, eligible: who => !conduct.until(who) });
   const post = (postId) => { const p = store.get('posts', postId); if (!p || p.deleted) fail('动态不存在', 404); return p; };
   const canSeePost = (who, p) => p.author === who || friends(who).includes(p.author);
   const squareActive = (entry, now = clock()) => {
@@ -327,6 +330,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     }).filter(item => item.unread > 0), gameBusy: false };
   }
   function rpc(who, action, args = {}) {
+    if (typeof action === 'string' && action.startsWith('capsule.')) return capsules.call(who, action.slice(8), args);
     const now = clock();
     const mixed = social.handles(who, action, args);
     if (mixed && ['friend.request', 'friend.accept'].includes(action)) {
@@ -363,6 +367,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       case 'game.watch': return games.watch(who, args.gameId, true);
       case 'game.unwatch': return games.watch(who, args.gameId, false);
       case 'game.rules': return games.rules(who);
+      case 'game.match': return games.match(who, args);
       case 'game.schedule': return games.schedule(who, args);
       case 'game.invite': return games.invite(who, args);
       case 'game.join': return games.join(who, args.gameId);
@@ -748,8 +753,9 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       if (req.method !== 'POST' || !['/rpc', '/register', '/login', '/credential/claim', '/mobile/login', '/mobile/rpc', '/owner/control', '/web/login', '/web/rpc', '/web/auth', '/mobile/auth'].includes(req.url)) fail('未找到接口', 404);
       const who = ['/rpc', '/credential/claim', '/owner/control'].includes(req.url) ? auth(req) : null;
       const chunks = []; let length = 0;
-      for await (const chunk of req) { length += chunk.length; if (length > 1600000) fail('请求过大', 413); chunks.push(chunk); }
+      for await (const chunk of req) { length += chunk.length; if (length > 4300000) fail('请求过大', 413); chunks.push(chunk); }
       const raw = Buffer.concat(chunks).toString('utf8');
+      if (length > 1600000 && (!['/rpc','/web/rpc','/mobile/rpc'].includes(req.url) || JSON.parse(raw).action !== 'capsule.create')) fail('请求过大', 413);
       const remote = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) ? String(req.headers['x-real-ip'] ?? req.socket.remoteAddress) : req.socket.remoteAddress;
       if (req.url === '/web/auth' || req.url === '/mobile/auth') {
         if (raw.length > 8192) fail('账号请求过大', 413);
@@ -838,25 +844,27 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         if (previous?.private !== next.private || previous?.groups !== next.groups || previous?.maxMessagesPerDay !== next.maxMessagesPerDay
           || Object.keys(next.periods).some(key => previous?.periods?.[key] !== next.periods[key])) nextLimits = next;
       }
-      const readOnly = ['snapshot', 'events', 'release.latest', 'chat.history', 'chat.image', 'message.read', 'message.image', 'post.read', 'bottle.read', 'square.list', 'square.featured', 'profile.read', 'directory.search', 'game.rules', 'game.list', 'game.read', 'game.record'].includes(action);
+      const readOnly = ['capsule.list', 'capsule.status', 'snapshot', 'events', 'release.latest', 'chat.history', 'chat.image', 'message.read', 'message.image', 'post.read', 'bottle.read', 'square.list', 'square.featured', 'profile.read', 'directory.search', 'game.rules', 'game.list', 'game.read', 'game.record'].includes(action);
       const run = () => {
-        store.transaction(()=>conduct.recover(who));
+        store.transaction(()=>{conduct.recover(who);games.touchWaiting(who);mysteryGames.touchWaiting(who);});
         if (typeof action === 'string' && action.startsWith('game.')) tickGames();
         const observedAt = clock(), ready = action === 'events' && reminders.hasDue(who, observedAt);
+        const capsuleReady = action === 'events' && !conduct.until(who) && capsules.nextDueMs(who, observedAt) === 0;
         const ackNeeded = action === 'events' && store.needsAck(who, since);
         const invoke = () => {
           if (nextLimits) store.put('limits', who, nextLimits);
           if (ackNeeded) store.ackEvents(who, since);
+          if (capsuleReady) capsules.deliver(who, observedAt);
           if (ready) reminders.deliver(who, observedAt, profile(who).discoverable);
           if(action==='events'&&conduct.until(who))return store.events(who,since).filter(event=>event.type==='moderation.warning');
           return rpc(who, action, args ?? {});
         };
-        return readOnly && !nextLimits && !ready && !ackNeeded ? invoke() : store.transaction(invoke);
+        return readOnly && !nextLimits && !ready && !capsuleReady && !ackNeeded ? invoke() : store.transaction(invoke);
       };
       let result = run();
       if (action === 'events' && waitMs > 0 && result.length === 0) {
         const observedAt = clock(), quota = messageQuota(who, observedAt);
-        await waitForEvents(who, res, Math.min(waitMs, reminders.nextDueMs(who, observedAt), Math.max(0, Date.parse(quota.period.endAt) - observedAt), conduct.until(who)?Math.max(1,conduct.until(who)-clock()):Infinity));
+        await waitForEvents(who, res, Math.min(waitMs, conduct.until(who) ? Infinity : capsules.nextDueMs(who, observedAt), reminders.nextDueMs(who, observedAt), Math.max(0, Date.parse(quota.period.endAt) - observedAt), conduct.until(who)?Math.max(1,conduct.until(who)-clock()):Infinity));
         if (res.destroyed) return;
         result = run();
       }

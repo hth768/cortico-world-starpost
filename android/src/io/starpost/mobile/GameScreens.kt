@@ -40,10 +40,11 @@ private fun gameText(m:JSONObject):String {val kind=m.str("kind");if(m.str("game
     else->m.str("text").ifBlank{"第 ${m.optInt("day")} 天 · ${gameStates[kind]?:"游戏状态更新"}"}
 }}
 private fun rulesText(game:JSONObject):String=roleSummary(game.optJSONObject("rules"))+"\n"+(game.optJSONObject("rulebook")?.let{r->r.keys().asSequence().flatMap{key->val v=r.opt(key);if(v is JSONObject)v.keys().asSequence().map{v.str(it)}else sequenceOf(v.toString())}.joinToString("\n")}?:"")
+internal fun gameStartLabel(g:JSONObject)=if(g.str("startMode")=="full")(if(g.optBoolean("matching"))"实时匹配 · 人满就开" else "人满就开")+" · 加入即准备，请保持在线" else "集合时间：${time(g.str("scheduledAt"))} · 开局前 3 分钟报到"
 @Composable internal fun PublicGameJoin(ui:UiActions,s:ClientState,g:JSONObject){
     if(g.str("gameType")=="mystery"||!g.optBoolean("public")||!g.optBoolean("published")||g.str("status")!="scheduled")return
     val id=g.str("gameId",g.str("id"))
-    Button(enabled=!s.working,onClick={ui.confirm("加入预约","以自己的人类身份加入「${g.str("title")}」？集合时间：${time(g.str("scheduledAt"))}。请在开局前 3 分钟报到。"){ui.vm.perform("human.join",obj("gameId" to id),Route("humanReservation",id))}}){Text("加入预约（无需邀请）")}
+    Button(enabled=!s.working,onClick={ui.confirm("加入预约","以自己的人类身份加入「${g.str("title")}」？${gameStartLabel(g)}。"){ui.vm.perform("human.join",obj("gameId" to id),Route("humanReservation",id))}}){Text("加入预约（无需邀请）")}
 }
 
 @Composable internal fun GameScreen(ui:UiActions,s:ClientState){when(s.route.page){
@@ -57,8 +58,9 @@ private fun rulesText(game:JSONObject):String=roleSummary(game.optJSONObject("ru
             val rules=s.data.optJSONObject("rules")?:JSONObject();SectionTitle("狼人杀广场","${s.data.str("nickname")} · ${s.data.str("humanId")} · 今日 ${rules.optInt("usedToday")}/${rules.optInt("dailyLimit",5)} 局")
             val moderation=s.data.optJSONObject("moderation")?:JSONObject();if(moderation.str("message").isNotEmpty())Text(moderation.str("message"),color=MaterialTheme.colorScheme.error)
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){if(!moderation.optBoolean("banned"))Button(onClick={ui.go("schedule")}){Text("发起预约")};TextButton(onClick={ui.form("设置人类昵称",listOf(TextFieldSpec("nickname","昵称",s.data.str("nickname")))){ui.vm.perform("human.profile",obj("nickname" to it["nickname"]))}}){Text("修改昵称")}}
-            Text("已公告的公开预约可直接加入，无需邀请；加入后仍须在开局前 3 分钟报到。",style=MaterialTheme.typography.bodySmall);val games=s.data.rows("games");if(games.isEmpty())EmptyState("还没有游戏预约","发起一局，等朋友们一起加入。")
-            games.forEach{g->val joined=g.optBoolean("participant")||g.str("creator")==s.data.str("humanId");GameLobbyCard(g){if(joined)ui.go("humanReservation",g.str("gameId"))else if(g.str("status")=="scheduled"&&!moderation.optBoolean("banned"))ui.confirm("加入预约",g.str("title")){ui.vm.perform("human.join",obj("gameId" to g.str("gameId")),Route("humanReservation",g.str("gameId")))}else if(g.optBoolean("public")&&!moderation.optBoolean("banned"))ui.go("game",g.str("gameId"))else ui.vm.notice("当前无法加入此预约")}}
+            Matchmaking(ui,s,moderation.optBoolean("banned"))
+            Text("公开局可直接加入；定时局提前 3 分钟报到，人满就开局加入即准备。",style=MaterialTheme.typography.bodySmall);val games=s.data.rows("games");if(games.isEmpty())EmptyState("还没有游戏预约","发起一局，等朋友们一起加入。")
+            games.forEach{g->val joined=g.optBoolean("participant")||g.str("creator")==s.data.str("humanId");GameLobbyCard(g){if(joined)ui.go("humanReservation",g.str("gameId"))else if(g.str("status")=="scheduled"&&!moderation.optBoolean("banned"))ui.confirm("加入预约",g.str("title")+"\n"+gameStartLabel(g)){ui.vm.perform("human.join",obj("gameId" to g.str("gameId")),Route("humanReservation",g.str("gameId")))}else if(g.optBoolean("public")&&!moderation.optBoolean("banned"))ui.go("game",g.str("gameId"))else ui.vm.notice("当前无法加入此预约")}}
 
         }
         "gameRecord"->{
@@ -80,7 +82,7 @@ private fun rulesText(game:JSONObject):String=roleSummary(game.optJSONObject("ru
 
         }
         "featuredSummary"->{SectionTitle("每日精彩对局","北京时间每天 00:00 结算前一日。");Text(if(s.data.optBoolean("published"))"${s.data.str("date")} · 共开局 ${s.data.optInt("totalGames")} 场" else "当天统计尚未发布");val f=s.data.optJSONObject("featured");if(f!=null)Entry(f.str("title"),"最长公开完赛局 · ${f.optLong("durationMs")/60000} 分钟"){ui.go("featured",f.str("gameId"))}else EmptyState("暂无精彩对局","完赛的公开对局参与每日选取。")}
-        "humanReservation"->{val g=s.data.optJSONObject("game")?:JSONObject();GameBanner(g,if(g.str("status")=="scheduled")"预约房间" else "个人回放",s.data.str("serverNow"));Text("北京时间 · ${time(g.str("scheduledAt"))}");GameSeatBoard(g,s.data.str("humanId"));TextButton(onClick={ui.confirm("本局规则",rulesText(g)) {}}){Text("查看规则")};if(g.optBoolean("canInvite"))Button(enabled=!s.working,onClick={ui.go("gameInvite",s.route.id)}){Text("邀请好友 / 群成员")};if(g.str("status")=="scheduled"){Button(enabled=!s.working,onClick={ui.vm.perform("human.checkin",obj("gameId" to s.route.id))}){Text("集合报到")};OutlinedButton(onClick={ui.confirm("退出预约",g.str("title")){ui.vm.perform("human.leave",obj("gameId" to s.route.id),Route("games"))}}){Text("退出预约")};if(g.str("creator")==s.data.str("humanId"))TextButton(onClick={ui.confirm("取消本局","所有预约参与者都会看到取消结果。 "){ui.vm.perform("human.cancel",obj("gameId" to s.route.id),Route("games"))}}){Text("取消本局",color=MaterialTheme.colorScheme.error)}}else{Pager(ui,s);GameMessages(ui,s.data.rows("messages"))}}
+        "humanReservation"->{val g=s.data.optJSONObject("game")?:JSONObject();GameBanner(g,if(g.str("status")=="scheduled")"预约房间" else "个人回放",s.data.str("serverNow"));Text(gameStartLabel(g));GameSeatBoard(g,s.data.str("humanId"));TextButton(onClick={ui.confirm("本局规则",rulesText(g)) {}}){Text("查看规则")};if(g.optBoolean("canInvite"))Button(enabled=!s.working,onClick={ui.go("gameInvite",s.route.id)}){Text("邀请好友 / 群成员")};if(g.str("status")=="scheduled"){if(g.str("startMode")!="full")Button(enabled=!s.working,onClick={ui.vm.perform("human.checkin",obj("gameId" to s.route.id))}){Text("集合报到")};OutlinedButton(onClick={ui.confirm("退出预约",g.str("title")){ui.vm.perform("human.leave",obj("gameId" to s.route.id),Route("games"))}}){Text("退出预约")};if(g.str("creator")==s.data.str("humanId")&&!g.optBoolean("matching"))TextButton(onClick={ui.confirm("取消本局","所有预约参与者都会看到取消结果。 "){ui.vm.perform("human.cancel",obj("gameId" to s.route.id),Route("games"))}}){Text("取消本局",color=MaterialTheme.colorScheme.error)}}else{Pager(ui,s);GameMessages(ui,s.data.rows("messages"))}}
         else->{val g=s.data.optJSONObject(if(s.route.page=="featured")"featured" else "game")?:JSONObject();if(s.route.page=="featured")Text("${s.data.str("date")} · 当日 ${s.data.optInt("totalGames")} 场 · ${g.optLong("durationMs")/60000} 分钟",style=MaterialTheme.typography.bodyMedium);GameBanner(g,"只读观战 / 回放",s.data.str("serverNow"));if(s.route.page!="featured"){GameSeatBoard(g);PublicGameJoin(ui,s,g)};Text("对局过程 · 只读查看",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant);Pager(ui,s);GameMessages(ui,s.data.rows("messages"))}
     }}
 }}
@@ -148,20 +150,33 @@ private fun rulesText(game:JSONObject):String=roleSummary(game.optJSONObject("ru
         Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){Text("✦ 星邮法官 · $lane · ${time(m.str("at"))}",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSecondaryContainer);Text(gameText(m),style=MaterialTheme.typography.bodyMedium)}
     }else Bubble(ui,m,mine,text=gameText(m),label="${m.str("senderNickname",m.str("sender"))} · $lane")
 }
+@Composable internal fun Matchmaking(ui:UiActions,s:ClientState,banned:Boolean=false){
+    var count by rememberSaveable{mutableStateOf("6")}
+    val matching=s.data.optJSONObject("matching")?:JSONObject();val waiting=matching.str("state")=="waiting";val game=matching.optJSONObject("game")?:JSONObject()
+    Panel{
+        Text("实时匹配",style=MaterialTheme.typography.titleMedium)
+        ChoiceTabs(listOf(6,8,10,12,16,20).map{it.toString() to "$it 人"},if(waiting)game.optInt("maxPlayers").toString()else count){if(!waiting)count=it}
+        Text(if(waiting)"正在匹配 ${game.optInt("maxPlayers")} 人局 · 已就位 ${game.optInt("joined")}/${game.optInt("maxPlayers")} 人" else "与选择相同人数的人类和 bot 匹配，满员立即开局。")
+        Text("标准身份配置与程序法官。保持在线，断连超过 2 分钟释放席位；每日 5 局和开局时段限制仍适用。",style=MaterialTheme.typography.bodySmall)
+        if(waiting)OutlinedButton(enabled=!s.working,onClick={ui.vm.perform("human.match",obj("operation" to "leave"),Route("games"))}){Text("退出匹配")}
+        else Button(enabled=!s.working&&!banned,onClick={ui.confirm("开始匹配","以自己的人类身份匹配 $count 人局？匹配满员立即开局。"){ui.vm.perform("human.match",obj("operation" to "join","maxPlayers" to count.toInt()),Route("games"))}}){Text("开始匹配")}
+    }
+}
 @Composable private fun ScheduleGame(ui:UiActions,s:ClientState){
-    var title by rememberSaveable{mutableStateOf("")};var count by rememberSaveable{mutableStateOf("6")};var custom by rememberSaveable{mutableStateOf("")};var public by rememberSaveable{mutableStateOf(true)}
+    var title by rememberSaveable{mutableStateOf("")};var count by rememberSaveable{mutableStateOf("6")};var custom by rememberSaveable{mutableStateOf("")};var public by rememberSaveable{mutableStateOf(true)};var startMode by rememberSaveable{mutableStateOf("scheduled")}
     var at by rememberSaveable{mutableLongStateOf(Instant.now().plusSeconds(600).toEpochMilli())};var showDate by remember{mutableStateOf(false)};var showTime by remember{mutableStateOf(false)};var chosenDate by remember{mutableStateOf(LocalDate.now(ZoneId.of("Asia/Shanghai")))}
-    ContentList(ui){SectionTitle("约一场认真推理","到约定时间前 3 分钟，请记得集合报到。")
+    ContentList(ui){SectionTitle("约一场认真推理","定时局提前 3 分钟报到；人满就开加入即准备。")
+        ChoiceTabs(listOf("scheduled" to "定时预约","full" to "人满就开"),startMode){startMode=it;if(it=="full")public=true}
         OutlinedTextField(title,{title=it},Modifier.fillMaxWidth(),label={Text("预约标题")},singleLine=true)
-        OutlinedButton(onClick={showDate=true},modifier=Modifier.fillMaxWidth()){Text("北京时间 · ${time(Instant.ofEpochMilli(at).toString())}")}
-        ChoiceTabs(listOf("6" to "6 人","8" to "8 人","10" to "10 人","12" to "12 人"),count){count=it}
+        if(startMode=="scheduled")OutlinedButton(onClick={showDate=true},modifier=Modifier.fillMaxWidth()){Text("北京时间 · ${time(Instant.ofEpochMilli(at).toString())}")}
+        ChoiceTabs(listOf(6,8,10,12,16,20).map{it.toString() to "$it 人"},count){count=it}
         OutlinedTextField(count,{count=it.filter(Char::isDigit).take(2)},Modifier.fillMaxWidth(),label={Text("人数（6–20）")},singleLine=true)
-        Row(verticalAlignment=Alignment.CenterVertically){Text("公开并公告到广场",Modifier.weight(1f));Switch(public,{public=it})}
+        Row(verticalAlignment=Alignment.CenterVertically){Text("公开并公告到广场",Modifier.weight(1f));Switch(public,{public=it},enabled=startMode!="full")}
         OutlinedTextField(custom,{custom=it},Modifier.fillMaxWidth(),label={Text("自定义身份（选填）")},supportingText={Text("狼,巫,预,守,猎,民，例如 2,1,1,0,0,4")})
         Text("每天最多 5 局。北京时间周末全天可开局，工作日 06–09、12–14、18–24；私密预约可通过自己的 bot 邀请朋友。",style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
         Button(enabled=!s.working,onClick={runCatching{
             val players=count.toInt();require(players in 6..20){"人数须在 6–20 之间"}
-            val args=obj("title" to title.ifBlank{"一起玩狼人杀"},"scheduledAt" to Instant.ofEpochMilli(at).toString(),"maxPlayers" to players,"public" to public)
+            val args=obj("title" to title.ifBlank{"一起玩狼人杀"},"startMode" to startMode,"scheduledAt" to (if(startMode=="scheduled")Instant.ofEpochMilli(at).toString()else null),"maxPlayers" to players,"public" to public)
             if(custom.isNotBlank()){val values=custom.split(',','，').map{it.trim().toInt()};require(values.size==6&&values.all{it>=0}){"请填写六个非负整数"};args.put("roles",JSONObject().apply{listOf("wolf","witch","seer","guard","hunter","villager").forEachIndexed{i,k->put(k,values[i])}})}
             ui.vm.perform("human.schedule",args,Route("games"))
         }.onFailure{ui.vm.notice(it.message?:"请检查预约内容")}}){Text("发起预约")}

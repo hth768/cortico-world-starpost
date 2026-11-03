@@ -27,7 +27,7 @@ internal data class ClientState(
     val starting: Boolean = true, val signedIn: Boolean = false, val account: JSONObject = obj(),
     val route: Route = Route(), val data: JSONObject = obj(), val overview: JSONObject = obj(), val social: JSONObject = obj(),
     val loading: Boolean = false, val working: Boolean = false, val error: String = "", val notice: String = "",
-    val theme: String = "system", val dynamicColor: Boolean = true, val activeGame: String = "", val expiresAt: Long = 0
+    val capsuleUnread: Int = 0, val theme: String = "system", val dynamicColor: Boolean = true, val activeGame: String = "", val expiresAt: Long = 0
 )
 internal class ApiError(val status: Int, message: String): IOException(message)
 private class ConnectionFailure(cause: IOException): IOException(cause)
@@ -48,6 +48,10 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
     private val library = StickerLibrary(File(app.filesDir, "sticker-favorites"))
     private val draftMentions = mutableMapOf<String,Map<String,String>>()
     private val drafts = mutableMapOf<String, String>()
+    private val capsuleDrafts = mutableMapOf<String, CapsuleDraft>()
+    fun capsuleDraft() = capsuleDrafts.getOrPut(state.value.account.str("humanId")){CapsuleDraft()}
+    private var lastCapsuleCheck = 0L
+    private var capsuleReminder = ""
     private val communityDrafts = mutableMapOf<String, CommunityDraft>()
     fun communityDraft(key: String) = communityDrafts.getOrPut("${state.value.account.str("humanId")}:$key") { CommunityDraft() }
     internal var attachment: JSONObject? = null
@@ -73,7 +77,7 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
     private fun validServer(value: String) = runCatching { val u=URL(value); u.protocol=="https" && u.host.isNotBlank() && u.userInfo==null && u.query==null && u.ref==null && u.path in listOf("", "/") }.getOrDefault(false)
     private suspend fun saveSession() = withContext(Dispatchers.IO) { sessions.save(obj("server" to server,"token" to token,"botId" to state.value.account.str("botId"),"expiresAt" to state.value.expiresAt).toString()) }
     private fun expire() {
-        sessionEpoch++;avatarCache.clear();token="";sessions.clear();backStack.clear();drafts.clear();communityDrafts.clear();draftMentions.clear();attachment=null
+        sessionEpoch++;avatarCache.clear();token="";sessions.clear();backStack.clear();drafts.clear();communityDrafts.clear();capsuleDrafts.clear();lastCapsuleCheck=0L;capsuleReminder="";draftMentions.clear();attachment=null
         mutable.update { ClientState(starting=false,theme=it.theme,dynamicColor=it.dynamicColor) }
     }
     private suspend fun request(path: String, body: JSONObject, auth: Boolean = true): JSONObject = network.withLock {
@@ -142,7 +146,7 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
         try {
             val account=rpc("account.info")
             mutable.update { it.copy(account=account,starting=false,signedIn=true,error="") }
-            if(!account.optBoolean("needsEmail")){checkGame();refreshNow()}
+            if(!account.optBoolean("needsEmail")){checkGame();refreshNow();checkCapsules()}
         }catch(e:Exception){handle(e)}
     }
     fun retryStart() { viewModelScope.launch { mutable.update { it.copy(starting=true,error="") };start() } }
@@ -198,6 +202,8 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
                 "post"->rpc("social.post.read",obj("postId" to route.id,"before" to route.cursor))
                 "bottles"->rpc("social.bottle.list",obj("scope" to if(route.kind=="thrown")"thrown" else "picked","before" to route.before))
                 "bottle"->rpc("social.bottle.read",obj("bottleId" to route.id))
+                "capsules"->rpc("capsule.list",cursor)
+                "capsule"->rpc("capsule.read",obj("capsuleId" to route.id))
                 "history"->rpc("history",obj("kind" to route.kind,"target" to route.id,"before" to route.before))
                 "botPost"->rpc("post",obj("postId" to route.id))
                 "gameRecord"->rpc("game.record",obj("botId" to route.id.ifBlank{state.value.account.str("humanId")},"section" to if(route.section=="basic")"record" else route.section))
@@ -212,7 +218,10 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
                 "gameInvite"->{val room=rpc("human.room",obj("gameId" to route.id));if(room.optJSONObject("game")?.optBoolean("canInvite")!=true)throw IOException("当前不能邀请，请确认已加入预约且尚未开局");rpc("social.overview")}
                 else->obj()
             }
-            if(epoch==sessionEpoch && route==state.value.route)mutable.update { it.copy(data=result,loading=false,error="") }
+            if(epoch==sessionEpoch && route==state.value.route) {
+                mutable.update { it.copy(data=result,loading=false,error="",capsuleUnread=if(route.page=="capsules")result.optInt("unread") else it.capsuleUnread) }
+                if(route.page=="capsule"){lastCapsuleCheck=0;checkCapsules()}
+            }
         }catch(e:Exception){if(epoch==sessionEpoch && route==state.value.route)handle(e)}
     }
     fun sendSticker(route:Route,image:JSONObject,address:String?=null) = sendChatPayload(route,obj("text" to "","image" to image),address,"表情包已发送")
@@ -238,6 +247,7 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
                 if(action=="account.contactRemark"){val contacts=rpc("social.overview");if(epoch==sessionEpoch)mutable.update{it.copy(social=contacts)}}
                 if(result.optBoolean("pendingApproval"))notice("已提交，等待相关用户审批")
                 else if(result.optBoolean("waitingForOthers"))notice("已批准，等待其他 bot 主人审批")
+                if(action in listOf("human.join","human.match","human.schedule")){checkGame();if(state.value.activeGame.isNotEmpty())return@launch}
                 if(next!=null)navigate(next)else refreshNow()
             }catch(e:Exception){handle(e)}finally{mutable.update{it.copy(working=false)}}
         }
@@ -250,12 +260,26 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
     fun foreground(active:Boolean) {
         pollJob?.cancel();pollJob=null
         if(active)pollJob=viewModelScope.launch { while(isActive){delay(8000);if(!state.value.signedIn || state.value.working || state.value.account.optBoolean("needsEmail"))continue
-            try { checkGame();if(state.value.route.before==null && state.value.route.page in listOf("social","socialHistory","owner","humanRoom"))refreshNow(true) }catch(e:Exception){handle(e)}
+            try { checkGame();checkCapsules();if(state.value.route.before==null && state.value.route.page in listOf("social","socialHistory","owner","humanRoom","humanReservation"))refreshNow(true) }catch(e:Exception){handle(e)}
         } }
+    }
+    private suspend fun checkCapsules() {
+        val now=System.currentTimeMillis()
+        if(state.value.activeGame.isNotEmpty() || now-lastCapsuleCheck<60000)return
+        lastCapsuleCheck=now;val epoch=sessionEpoch
+        try {
+            val v=rpc("capsule.status");if(epoch!=sessionEpoch)return
+            val changed=state.value.capsuleUnread!=v.optInt("unread")
+            mutable.update{it.copy(capsuleUnread=v.optInt("unread"))}
+            if(changed&&state.value.route.page=="capsules")refreshNow(true)
+            val id=v.str("latestId")
+            if(v.optInt("unread")>0 && id!=capsuleReminder){capsuleReminder=id;notice("有 ${v.optInt("unread")} 份时间胶囊到期，请到时间胶囊查看")}
+        }catch(e:CancellationException){throw e}catch(_:Exception){/* Older relays must not interrupt chat. */}
     }
     private suspend fun checkGame() {
         val v=rpc("human.status");val active=v.str("activeGameId")
         if(active!=state.value.activeGame){mutable.update{it.copy(activeGame=active)};navigate(if(active.isEmpty())Route("games")else Route("humanRoom",active),false)}
+        if(state.value.route.page=="games"&&active.isEmpty())mutable.update{it.copy(data=v)}
         for(g in v.rows("games")){val delta=runCatching { Instant.parse(g.str("scheduledAt")).toEpochMilli()-System.currentTimeMillis() }.getOrDefault(-1)
             if(g.optBoolean("participant")&&!g.optBoolean("checkedInSelf")&&g.str("status")=="scheduled"&&delta in 1..180000&&reminded.add(g.str("gameId")))notice("「${g.str("title")}」已到集合时间，请进入游戏报到")}
     }

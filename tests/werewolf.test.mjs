@@ -69,7 +69,7 @@ test('公开全知观战与局外讨论隔离，只有观众发言扣额度，�
     await f.ok('10008', 'message.send', { kind: 'group', target: f.groupId, text: '游戏期间收到的群消息' });
     assert.equal((await f.ok('10001', 'events')).some(event => event.type === 'message'), false);
     const wolf = Object.keys(f.app.store.get('games', gameId).roles).find(id => f.app.store.get('games', gameId).roles[id] === 'wolf');
-    f.advance(gameId); f.advance(gameId);
+    f.advance(gameId); // No gods in this custom deck: the empty phase is skipped.
     await f.ok('10001', 'game.message', { gameId, channel: 'public', text: '参赛发言免费' }, { maxMessagesPerDay: 0 });
     assert.equal((await f.ok('10001', 'snapshot')).messageQuota.used, 0);
     f.advance(gameId);
@@ -173,16 +173,15 @@ test('bot 法官手动分发、私密夜间行动与公共投票、药剂和守�
     await f.ok('10002', 'game.message', { gameId, channel: 'wolf', text: '第一夜秘密' });
     assert.equal((await f.rpc('10004', 'game.message', { gameId, channel: 'wolf', text: '偷看' })).status, 403);
     for (const who of ['10002', '10003']) await f.ok(who, 'game.act', { gameId, action: 'attack', target: '10007' });
-    f.advance(gameId);
+    assert.equal(f.app.store.get('games', gameId).status, 'night_gods');
     await f.ok('10004', 'game.act', { gameId, action: 'inspect', target: '10002' });
     await f.ok('10006', 'game.act', { gameId, action: 'protect', target: '10007' });
     await f.ok('10005', 'game.act', { gameId, action: 'poison', target: '10002' });
     assert.equal((await f.rpc('10005', 'game.act', { gameId, action: 'save' })).ok, false);
-    assert.equal((await f.rpc('10008', 'game.act', { gameId, action: 'inspect', target: '10002' })).status, 403);
+    assert.equal((await f.rpc('10008', 'game.act', { gameId, action: 'inspect', target: '10009' })).status, 403);
     const seer = await f.ok('10004', 'game.read', { gameId });
     assert.equal(seer.messages.find(message => message.kind === 'inspect_result').isWolf, true);
     assert.equal((await f.ok('10008', 'game.read', { gameId })).messages.some(message => message.kind === 'inspect_result' || message.channel === 'wolf'), false);
-    f.advance(gameId);
     assert.equal(f.app.store.get('games', gameId).status, 'day');
     await f.ok('10009', 'game.message', { gameId, channel: 'public', text: '游戏发言不扣聊天额度' }, { maxMessagesPerDay: 0 });
     for (let i = 0; i < 5; i++) await f.ok('10009', 'game.message', { gameId, channel: 'public', text: `讨论 ${i}\n第二行` });
@@ -196,7 +195,6 @@ test('bot 法官手动分发、私密夜间行动与公共投票、药剂和守�
     await f.ok('10003', 'game.message', { gameId, channel: 'wolf', text: '第二夜秘密' });
     assert.equal((await f.ok('10002', 'game.read', { gameId })).messages.some(message => message.text === '第二夜秘密'), false);
     await f.ok('10003', 'game.act', { gameId, action: 'attack', target: '10007' });
-    f.advance(gameId);
     assert.equal((await f.rpc('10006', 'game.act', { gameId, action: 'protect', target: '10007' })).ok, false);
     await f.ok('10006', 'game.act', { gameId, action: 'protect', target: '10009' });
     assert.equal((await f.rpc('10005', 'game.act', { gameId, action: 'poison', target: '10003' })).ok, false);
@@ -224,7 +222,6 @@ test('女巫首夜不能自救，第二夜可用解药自救且解药只消耗�
     assert.match((await f.ok('10003', 'game.rules')).rulebook.roles.witch, /首夜不能自救，之后的夜晚可以自救/);
 
     await f.ok('10002', 'game.act', { gameId, action: 'attack', target: '10003' });
-    f.advance(gameId);
     let prompt = (await f.ok('10003', 'game.read', { gameId })).messages.filter(message => message.kind === 'witch_prompt').at(-1);
     assert.equal(prompt.saveAvailable, false);
     assert.match((await f.rpc('10003', 'game.act', { gameId, action: 'save' })).error, /首夜不能自救/);
@@ -236,7 +233,6 @@ test('女巫首夜不能自救，第二夜可用解药自救且解药只消耗�
     assert.equal(f.app.store.get('games', gameId).day, 2);
 
     await f.ok('10002', 'game.act', { gameId, action: 'attack', target: '10003' });
-    f.advance(gameId);
     prompt = (await f.ok('10003', 'game.read', { gameId })).messages.filter(message => message.kind === 'witch_prompt').at(-1);
     assert.equal(prompt.saveAvailable, true);
     await f.ok('10003', 'game.act', { gameId, action: 'save' });
@@ -246,7 +242,6 @@ test('女巫首夜不能自救，第二夜可用解药自救且解药只消耗�
     f.advance(gameId);
     for (const who of players) await f.ok(who, 'game.vote', { gameId, target: 'abstain' });
     await f.ok('10002', 'game.act', { gameId, action: 'attack', target: '10003' });
-    f.advance(gameId);
     prompt = (await f.ok('10003', 'game.read', { gameId })).messages.filter(message => message.kind === 'witch_prompt').at(-1);
     assert.equal(prompt.saveAvailable, false);
     assert.match((await f.rpc('10003', 'game.act', { gameId, action: 'save' })).error, /解药不可用/);
@@ -306,7 +301,6 @@ test('猎人夜间出局后完成开枪再进入同一天讨论，结算前不�
     const players = f.ids.slice(1, 7), gameId = await f.reserve(players, { judgeMode: 'bot', assignmentMode: 'judge', roles: { wolf: 1, hunter: 1, villager: 4 } });
     await f.ok('10001', 'game.assign', { gameId, assignments: players.map((botId, i) => ({ botId, role: i === 0 ? 'wolf' : i === 1 ? 'hunter' : 'villager' })) });
     await f.ok('10002', 'game.act', { gameId, action: 'attack', target: '10003' });
-    f.advance(gameId); f.advance(gameId);
     assert.equal(f.app.store.get('games', gameId).status, 'hunter');
     await f.ok('10003', 'game.act', { gameId, action: 'shoot', target: '10004' });
     assert.equal(f.app.store.get('games', gameId).status, 'day'); assert.equal(f.app.store.get('games', gameId).day, 1);
@@ -323,7 +317,7 @@ test('每天最多五局在实际开局时持久化计数，跨北京时间午�
     for (let round = 0; round < 5; round++) {
       const gameId = await f.reserve(players, { roles: { wolf: 1, villager: 5 } });
       const wolf = Object.keys(f.app.store.get('games', gameId).roles).find(id => f.app.store.get('games', gameId).roles[id] === 'wolf');
-      f.advance(gameId); f.advance(gameId); f.advance(gameId);
+      f.advance(gameId); f.advance(gameId);
       for (const who of players) await f.ok(who, 'game.vote', { gameId, target: wolf });
       f.advance(gameId);
     }
@@ -347,7 +341,11 @@ test('超时与重启可继续所有阶段，连续三天无人出局以平局�
     const assigned = f.app.store.get('games', gameId).roles;
     await f.restart();
     assert.deepEqual(f.app.store.get('games', gameId).roles, assigned);
-    for (let phase = 0; phase < 12; phase++) f.advance(gameId);
+    for (let round = 0; round < 3; round++) {
+      assert.equal(f.app.store.get('games', gameId).status, 'night_wolf'); f.advance(gameId);
+      assert.equal(f.app.store.get('games', gameId).status, 'day'); f.advance(gameId);
+      assert.equal(f.app.store.get('games', gameId).status, 'vote'); f.advance(gameId);
+    }
     assert.equal(f.app.store.get('games', gameId).status, 'finished');
     assert.equal(f.app.store.get('games', gameId).winner, 'draw');
     f.advance(gameId);

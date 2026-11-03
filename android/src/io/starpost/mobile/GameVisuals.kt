@@ -41,8 +41,9 @@ internal fun gamePhaseLabel(g:JSONObject)=if(g.str("gameType")=="mystery")myster
                 Text((if(g.optInt("day")>0&&!script)"第 ${g.optInt("day")} 天 · " else "")+gamePhaseLabel(g),Modifier.weight(1f),style=MaterialTheme.typography.titleSmall,color=foreground)
                 if(deadline>0&&g.str("status") !in listOf("closed","cancelled"))Surface(shape=CircleShape,color=colors.surface.copy(alpha=.85f)){Text(if(remaining>0)"%02d:%02d".format(remaining/60,remaining%60)else "等待结算",Modifier.padding(horizontal=12.dp,vertical=8.dp),style=MaterialTheme.typography.labelLarge)}
             }
-            if(!compact)Text(if(script)"跟随主持人推进剧情，按获准视角查看线索与消息。" else when(g.str("status")){"scheduled"->"开局前 3 分钟报到，准时入座。";"day"->"分享线索、倾听发言，找出藏在人群里的狼人。";"vote"->"点选目标后确认投票，也可以弃票。";"finished","closed"->"故事暂告一段落，一起回顾这场推理。";else->"轮到你行动时，使用牌桌下方的技能按钮。"},style=MaterialTheme.typography.bodyMedium,color=foreground)
+            if(!compact)Text(if(mode=="游戏大厅")"选择定时预约、人满就开，或实时匹配。" else if(script)"跟随主持人推进剧情，按获准视角查看线索与消息。" else when(g.str("status")){"scheduled"->if(g.str("startMode")=="full")"加入即准备，人满立即开局。保持在线，断连超过 2 分钟释放席位。" else "开局前 3 分钟报到，准时入座。";"day"->"讨论完毕请选择结束发言，全员结束立即投票，计时只作兜底。";"vote"->"点选目标后确认投票，也可以弃票。";"finished","closed"->"故事暂告一段落，一起回顾这场推理。";else->"轮到你行动时，使用牌桌下方的技能按钮。"},style=MaterialTheme.typography.bodyMedium,color=foreground)
             if(script){val current=mysterySteps.indexOfFirst{it.first==g.str("phase")};mysterySteps.chunked(3).forEachIndexed{row,steps->Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){steps.forEachIndexed{col,step->Surface(Modifier.weight(1f),shape=RoundedCornerShape(10.dp),color=if(row*3+col<=current)colors.primaryContainer else colors.surface.copy(alpha=.65f)){Text("${row*3+col+1} ${step.second}",Modifier.padding(8.dp),style=MaterialTheme.typography.labelSmall)}}}}}
+            if(g.str("status")=="day"&&g.has("speechesDone"))Text((if(g.optBoolean("speechEnded"))"你已结束本轮发言 · " else "")+"${g.optInt("speechesDone")}/${g.strings("alive").size} 人已结束发言",style=MaterialTheme.typography.labelMedium,color=foreground)
             if(g.str("winner").isNotEmpty())Text(when(g.str("winner")){"wolves"->"狼人阵营获胜";"village"->"好人阵营获胜";else->"本局平局"},style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,color=foreground)
         }
     }
@@ -85,7 +86,7 @@ internal fun gamePhaseLabel(g:JSONObject)=if(g.str("gameType")=="mystery")myster
                 Column(Modifier.weight(1f)){Text(if(g.str("gameType")=="mystery")"剧本杀 · 观战" else "狼人杀",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.primary);Text(g.str("title"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold);Text(gamePhaseLabel(g),style=MaterialTheme.typography.bodySmall)}
                 Glyph("chevron")
             }
-            Text("${time(g.str("scheduledAt"))} · ${if(g.optBoolean("public"))"公开" else "私密"}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("${if(g.str("startMode")=="full")if(g.optBoolean("matching"))"实时匹配 · 人满就开" else "人满就开" else time(g.str("scheduledAt"))} · ${if(g.optBoolean("public"))"公开" else "私密"}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             if(g.optInt("maxPlayers")>0){LinearProgressIndicator(progress={g.optInt("joined").toFloat().div(g.optInt("maxPlayers")).coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth());Text("${g.optInt("joined")} / ${g.optInt("maxPlayers")} 人 · ${if(g.str("status")=="scheduled")"查看预约" else "进入对局"}",style=MaterialTheme.typography.labelMedium)}
         }
     }

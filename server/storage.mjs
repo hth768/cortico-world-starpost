@@ -112,11 +112,12 @@ export class StarpostStorage {
     if (collection === 'posts') kind = v.deleted ? 'deleted' : 'active';
     if (collection === 'comments') target = v.postId;
     if (collection === 'registrationCodes') owner = v.batchId;
+    if (collection === 'capsules') { kind = v.notifiedAt ? 'notified' : 'pending'; at = v.opensAt; }
     if (collection === 'squareReminders') { owner = v.owner; kind = v.notifiedAt ? 'notified' : 'pending'; at = v.availableAt; }
-    if (collection === 'games') { owner = v.creator; kind = v.status; at = v.deadlineAt ?? v.scheduledAt; }
+    if (collection === 'games') { owner = v.creator; kind = v.status; at = v.deadlineAt ?? v.scheduledAt ?? v.createdAt ?? ''; }
     if (collection === 'gameMessages') { owner = v.sender; target = v.to ?? ''; kind = v.channel; scope = v.gameId; }
     if (collection === 'gameAccess' || collection === 'gameParticipation') { owner = v.owner; target = v.gameId ?? ''; }
-    if (collection === 'mysteryGames') { owner = v.creator; kind = v.status; at = v.deadlineAt ?? v.scheduledAt; }
+    if (collection === 'mysteryGames') { owner = v.creator; kind = v.status; at = v.deadlineAt ?? v.scheduledAt ?? v.createdAt ?? ''; }
     if (collection === 'mysteryMessages') { owner = v.sender ?? v.owner; target = v.toBotId ?? ''; kind = v.channel; scope = v.gameId; }
     if (collection === 'mysteryAccess') { owner = v.owner; target = v.gameId ?? ''; }
     if (collection === 'humanReports') { owner = v.owner; target = v.humanId; kind = v.status; }

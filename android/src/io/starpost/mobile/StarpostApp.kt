@@ -35,7 +35,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-internal val pageNames=mapOf("social" to "消息","contacts" to "联系人","square" to "发现","settings" to "我","owner" to "我的 bot","chats" to "Bot 会话","feed" to "动态","botFeed" to "Bot 动态","botPost" to "Bot 动态详情","bottles" to "漂流瓶","bottle" to "漂流瓶详情","newPost" to "发动态","throwBottle" to "投漂流瓶","replyBottle" to "回复漂流瓶","post" to "动态详情","search" to "寻找新朋友","groupCreate" to "发起群聊","invite" to "邀请好友","approvals" to "社交审批","teen" to "青少年模式","profile" to "个人资料","gameRecord" to "游戏战绩","games" to "狼人杀广场","botGames" to "Bot 对局","game" to "对局记录","gameInvite" to "邀请参加游戏","humanReservation" to "游戏预约","humanRoom" to "游戏聊天室","schedule" to "预约狼人杀","featured" to "精彩对局","featuredSummary" to "每日精彩对局","socialHistory" to "聊天","history" to "Bot 聊天记录")
+internal val pageNames=mapOf("capsules" to "时间胶囊","capsule" to "来自过去的自己","newCapsule" to "写给未来的我","social" to "消息","contacts" to "联系人","square" to "发现","settings" to "我","owner" to "我的 bot","chats" to "Bot 会话","feed" to "动态","botFeed" to "Bot 动态","botPost" to "Bot 动态详情","bottles" to "漂流瓶","bottle" to "漂流瓶详情","newPost" to "发动态","throwBottle" to "投漂流瓶","replyBottle" to "回复漂流瓶","post" to "动态详情","search" to "寻找新朋友","groupCreate" to "发起群聊","invite" to "邀请好友","approvals" to "社交审批","teen" to "青少年模式","profile" to "个人资料","gameRecord" to "游戏战绩","games" to "狼人杀广场","botGames" to "Bot 对局","game" to "对局记录","gameInvite" to "邀请参加游戏","humanReservation" to "游戏预约","humanRoom" to "游戏聊天室","schedule" to "预约狼人杀","featured" to "精彩对局","featuredSummary" to "每日精彩对局","socialHistory" to "聊天","history" to "Bot 聊天记录")
 internal val rootPages=listOf("social","contacts","square","settings")
 internal fun time(at:String)=runCatching { DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.of("Asia/Shanghai")).format(Instant.parse(at)) }.getOrDefault(at)
 internal data class TextFieldSpec(val key:String,val label:String,val initial:String="",val secret:Boolean=false)
@@ -95,6 +95,7 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
                         }
                     })
                 {padding->Column(Modifier.padding(padding).fillMaxSize().imePadding()){
+                    if(state.capsuleUnread>0&&state.activeGame.isEmpty()&&state.route.page !in listOf("capsules","capsule","newCapsule"))TextButton(onClick={ui.go("capsules")},modifier=Modifier.fillMaxWidth()){Text("有 ${state.capsuleUnread} 份时间胶囊到期，点击开启 →")}
                     if(state.error.isNotEmpty())Surface(color=MaterialTheme.colorScheme.errorContainer,shape=RoundedCornerShape(20.dp),modifier=Modifier.padding(horizontal=16.dp).fillMaxWidth()){Row(Modifier.padding(12.dp),verticalAlignment=Alignment.CenterVertically){Text(state.error,Modifier.weight(1f),color=MaterialTheme.colorScheme.onErrorContainer,style=MaterialTheme.typography.bodyMedium);TextButton(onClick=vm::refresh){Text("重试")}}}
                     if(state.loading&&state.data.length()==0)Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){LoadingIndicator()}
                     else AnimatedContent(targetState=state.route.page to state.route.id,label="page",modifier=Modifier.weight(1f)){routeKey->if(routeKey==(state.route.page to state.route.id))ScreenBody(ui,state)}
@@ -175,9 +176,9 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
     null->Unit
     is Modal.Confirm->AlertDialog(onDismissRequest={ui.modal=null},title={Text(modal.title)},text={Text(modal.message)},confirmButton={TextButton(onClick={ui.modal=null;modal.submit()}){Text("确认")}},dismissButton={TextButton(onClick={ui.modal=null}){Text("取消")}})
     is Modal.Form->{val values=remember(modal){mutableStateMapOf<String,String>().apply{modal.fields.forEach{put(it.key,it.initial)}}};AlertDialog(onDismissRequest={ui.modal=null},title={Text(modal.title)},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){if(modal.hint.isNotEmpty())Text(modal.hint);modal.fields.forEach{f->OutlinedTextField(values[f.key]?:"",{values[f.key]=it},Modifier.fillMaxWidth(),label={Text(f.label)},visualTransformation=if(f.secret)PasswordVisualTransformation()else VisualTransformation.None,singleLine=true)}}},confirmButton={TextButton(onClick={ui.modal=null;modal.submit(values.toMap())}){Text("确定")}},dismissButton={TextButton(onClick={ui.modal=null}){Text("取消")}})}
-    Modal.More->ModalBottomSheet(onDismissRequest={ui.modal=null}){Column(Modifier.navigationBarsPadding().padding(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+    Modal.More->ModalBottomSheet(onDismissRequest={ui.modal=null}){Column(Modifier.navigationBarsPadding().verticalScroll(rememberScrollState()).padding(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
         SectionTitle("开启新的故事","朋友、群聊和你的 bot，都在这里。")
-        val entries=listOf(Triple("添加朋友","通过昵称或 ID 搜索","search"),Triple("发起群聊","邀请朋友们一起聊聊","groupCreate"),Triple("我的 bot","给当前绑定的 bot 发消息","owner"),Triple("Bot 会话","只读查看它的私聊和群聊","chats"),Triple("动态","分享日常，查看好友与 bot 的动态","feed"),Triple("漂流瓶","投瓶、捞瓶，遇见新朋友","bottles"))
+        val entries=listOf(Triple("添加朋友","通过昵称或 ID 搜索","search"),Triple("发起群聊","邀请朋友们一起聊聊","groupCreate"),Triple("我的 bot","给当前绑定的 bot 发消息","owner"),Triple("Bot 会话","只读查看它的私聊和群聊","chats"),Triple("动态","分享日常，查看好友与 bot 的动态","feed"),Triple("漂流瓶","投瓶、捞瓶，遇见新朋友","bottles"),Triple("时间胶囊","把此刻寄给未来的自己","capsules"))
         entries.forEach{(title,hint,page)->Entry(title,hint){if(page=="publicGames"){ui.go("botGames",kind="public")}else ui.go(page,kind=if(page=="botGames")"own" else "private")}}
     }}
     is Modal.Stickers->ModalBottomSheet(onDismissRequest={ui.modal=null}){

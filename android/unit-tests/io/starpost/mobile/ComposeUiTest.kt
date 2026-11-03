@@ -32,13 +32,65 @@ class ComposeUiTest {
     private fun client()=StarpostClient(ApplicationProvider.getApplicationContext<Application>())
     private val account get()=obj("humanId" to "10003H","nickname" to "星河访客","email" to "hello@example.com","botId" to "10001","bots" to JSONArray().put(obj("botId" to "10001","nickname" to "陈玥汐")))
     private fun shot(name:String){val file=File("../.deployment/compose/screenshots/$name.png");file.parentFile.mkdirs();compose.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG,100,file.outputStream())}
+    @Test fun capsuleComposerKeepsDraftAndSupportsCustomTimeAndThreePhotos(){
+        val vm=client();val ready=mutableStateOf(false);val dark=mutableStateOf(false)
+        val state=mutableStateOf(ClientState(starting=false,signedIn=true,account=account,route=Route("newCapsule")))
+        compose.setContent{StarpostTheme(if(dark.value)"dark" else "light",false){if(ready.value)StarpostApp(vm,state.value)else Text("正在初始化测试会话")}}
+        compose.waitUntil(5000){compose.runOnIdle{!vm.state.value.starting}};compose.runOnIdle{ready.value=true}
+        compose.onNodeWithText("时间胶囊留言").performTextInput("未来的我，希望你仍然记得今天。")
+        compose.onNodeWithText("1 年后").performScrollTo().performClick()
+        compose.runOnIdle{org.junit.Assert.assertEquals("years",vm.capsuleDraft().unit);org.junit.Assert.assertEquals("未来的我，希望你仍然记得今天。",vm.capsuleDraft().text);dark.value=true}
+        compose.onNodeWithText("指定日期").performScrollTo().performClick()
+        compose.onNodeWithText("开启时间（北京时间）").performScrollTo().performTextInput("2035-01-01 09:00")
+        compose.onNodeWithContentDescription("添加到时间胶囊").performScrollTo().assertIsEnabled()
+        compose.runOnIdle{repeat(3){vm.capsuleDraft().images.add(obj("mime" to "image/png","base64" to "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNIOfHsPwAGuAMSOUNQWgAAAABJRU5ErkJggg=="))}}
+        compose.onNodeWithContentDescription("添加到时间胶囊").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithText("移除图片 3").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("添加到时间胶囊").performScrollTo().assertIsEnabled();shot("android-capsule-compose-dark")
+        compose.runOnIdle{state.value=state.value.copy(error="网络暂时不可用")}
+        compose.onNodeWithText("未来的我，希望你仍然记得今天。").assertExists()
+    }
+    @Test fun capsuleListHidesSealedContentAndOffersOnlyDueLetterRead(){
+        val vm=client();val items=JSONArray().put(obj("id" to "sealed","opensAt" to "2030-11-03T10:00:00Z","createdAt" to "2026-11-03T10:00:00Z","imageCount" to 3,"ready" to false)).put(obj("id" to "due","opensAt" to "2026-11-03T10:00:00Z","createdAt" to "2025-11-03T10:00:00Z","imageCount" to 0,"ready" to true))
+        compose.setContent{StarpostTheme("light",false){StarpostApp(vm,ClientState(starting=false,signedIn=true,account=account,route=Route("capsules"),data=obj("items" to items,"sealed" to 1,"unread" to 1)))}}
+        compose.onNodeWithText("封存中",substring=false).assertExists()
+        compose.onAllNodesWithText("打开时间胶囊").assertCountEquals(1)
+        compose.onNodeWithText("打开时间胶囊").performScrollTo().assertExists();shot("android-capsule-list-light")
+    }
+    @Test fun matchmakingChoosesTwentyPlayersAndShowsWaitingAndExit(){
+        val vm=client();val data=mutableStateOf(obj("humanId" to "10003H","rules" to obj("dailyLimit" to 5),"games" to JSONArray()))
+        compose.setContent{StarpostTheme("dark",false){StarpostApp(vm,ClientState(starting=false,signedIn=true,account=account,route=Route("games"),data=data.value))}}
+        compose.onNodeWithText("20 人").performScrollTo().performClick()
+        compose.onNodeWithText("开始匹配").performScrollTo().performClick()
+        compose.onNodeWithText("以自己的人类身份匹配 20 人局？匹配满员立即开局。").assertExists()
+        compose.onNodeWithText("取消",useUnmergedTree=true).performClick()
+        compose.runOnIdle{data.value=JSONObject(data.value.toString()).put("matching",obj("state" to "waiting","game" to obj("gameId" to "queue","maxPlayers" to 20,"joined" to 7)))}
+        compose.onNodeWithText("正在匹配 20 人局 · 已就位 7/20 人").performScrollTo().assertExists()
+        compose.onNodeWithText("开始匹配").assertDoesNotExist();compose.onNodeWithText("退出匹配").performScrollTo().assertExists();shot("android-match-waiting")
+    }
+    @Test fun fullRoomOmitsCheckinAndMatchCreatorCannotCancelOtherPlayers(){
+        val vm=client();val g=obj("gameId" to "queue","title" to "6 人实时匹配","startMode" to "full","matching" to true,"status" to "scheduled","creator" to "10003H","joined" to 2,"maxPlayers" to 6,"checkedIn" to 2,"seats" to JSONArray())
+        val data=mutableStateOf(obj("humanId" to "10003H","game" to g,"messages" to JSONArray()))
+        compose.setContent{StarpostTheme("light",false){StarpostApp(vm,ClientState(starting=false,signedIn=true,account=account,route=Route("humanReservation","queue"),data=data.value))}}
+        compose.onNodeWithText("实时匹配 · 人满就开 · 加入即准备，请保持在线").assertExists()
+        compose.onNodeWithText("集合报到").assertDoesNotExist();compose.onNodeWithText("取消本局").assertDoesNotExist()
+        compose.onNodeWithText("退出预约").performScrollTo().assertExists()
+        compose.runOnIdle{data.value=obj("humanId" to "10003H","game" to JSONObject(g.toString()).put("startMode","scheduled").put("matching",false).put("scheduledAt","2026-11-03T12:00:00Z"),"messages" to JSONArray())}
+        compose.onNodeWithText("集合报到").performScrollTo().assertExists();compose.onNodeWithText("取消本局").performScrollTo().assertExists()
+    }
+    @Test fun scheduleRetainsTimedModeAndOffersPublicFullMode(){
+        val vm=client();compose.setContent{StarpostTheme("light",false){StarpostApp(vm,ClientState(starting=false,signedIn=true,account=account,route=Route("schedule")))}}
+        compose.onNodeWithText("定时预约").assertExists();compose.onNodeWithText("人满就开").performClick()
+        compose.onNodeWithText("公开并公告到广场").assertExists();compose.onNode(isToggleable()).assertIsOn().assertIsNotEnabled()
+        compose.onNodeWithText("定时预约").performClick();compose.onNode(isToggleable()).assertIsEnabled()
+    }
     @Test fun publicReservationOffersHumanJoinWithoutInvitationOnlyBeforeStart(){
         val vm=client()
         val game=obj("gameId" to "public-game","title" to "今晚的公开局","public" to true,"published" to true,"status" to "scheduled","gameType" to "werewolf","scheduledAt" to "2026-11-03T10:00:00Z")
         val state=mutableStateOf(ClientState(starting=false,signedIn=true,account=account,route=Route("game","public-game"),data=obj("game" to game,"messages" to JSONArray())))
         compose.setContent{StarpostTheme("light",false){StarpostApp(vm,state.value)}}
         compose.onNodeWithText("加入预约（无需邀请）").performScrollTo().performClick()
-        compose.onNodeWithText("以自己的人类身份加入「今晚的公开局」？集合时间：${time(game.str("scheduledAt"))}。请在开局前 3 分钟报到。").assertExists()
+        compose.onNodeWithText("以自己的人类身份加入「今晚的公开局」？${gameStartLabel(game)}。").assertExists()
         compose.onNodeWithText("取消",useUnmergedTree=true).performClick()
         for(updated in listOf(JSONObject(game.toString()).put("public",false),JSONObject(game.toString()).put("published",false),JSONObject(game.toString()).put("status","day"),JSONObject(game.toString()).put("gameType","mystery"))){
             compose.runOnIdle{state.value=state.value.copy(data=obj("game" to updated,"messages" to JSONArray()))}

@@ -21,7 +21,7 @@ interface StickerPage {
   items: Array<{ file: string; emotion: string; usage: string; tag: string; label: string; note: string; count: number; qqImported: boolean }>;
 }
 interface GameSummary {
-  gameId: string; title: string; status: string; scheduledAt: string; maxPlayers: number; joined: number; checkedIn: number;
+  gameId: string; title: string; status: string; scheduledAt: string | null; startMode?: 'scheduled' | 'full'; matching?: boolean; maxPlayers: number; joined: number; checkedIn: number;
   judge: boolean; judgeMode: string; judgeBotId: string | null; rules: Record<string, number | string>; phaseDeadlineAt: string | null;
 }
 interface GameMessage {
@@ -254,7 +254,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
     const game = gamePage.game;
     const head = ui.h('div', 'sp-thread-head', game.title);
     head.appendChild(ui.h('span', 'sp-thread-note', `${gameStates[game.status] || game.status} · ${game.gameId}`));
-    line(ctx, head, `预约 ${displayTime(game.scheduledAt)} · 已加入 ${game.joined}/${game.maxPlayers} · 已报到 ${game.checkedIn}`);
+    line(ctx, head, ` ${game.startMode === 'full' ? (game.matching ? '实时匹配 · 人满就开' : '人满就开') : '预约 ' + displayTime(game.scheduledAt ?? '')} · 已加入 ${game.joined}/${game.maxPlayers} · 已准备 ${game.checkedIn}`);
     if (game.ownRole) line(ctx, head, `本机身份：${roleNames[game.ownRole] || game.ownRole} · 存活：${game.alive.join('、')}`);
     if (game.judge) line(ctx, head, '本机 bot 担任法官');
     if (game.phaseDeadlineAt) line(ctx, head, `本阶段截止：${displayTime(game.phaseDeadlineAt)}`);
@@ -299,7 +299,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
       if (!list.length) line(ctx, gameList, '暂无狼人杀预约');
       for (const game of list) {
         const button = ui.h('button', 'sp-chat-card'); button.type = 'button'; button.setAttribute('aria-pressed', String(selectedGame === game.gameId));
-        button.append(ui.h('span', 'sp-chat-title', game.title), ui.h('span', 'sp-chat-preview', `${gameStates[game.status] || game.status} · ${displayTime(game.scheduledAt)}`));
+        button.append(ui.h('span', 'sp-chat-title', game.title), ui.h('span', 'sp-chat-preview', `${gameStates[game.status] || game.status} · ${game.startMode === 'full' ? (game.matching ? '实时匹配' : '人满就开') : displayTime(game.scheduledAt ?? '')}`));
         button.addEventListener('click', () => {
           selectedGame = game.gameId; gameBefore = null; gamePage = null; gameMessages.clear();
           gameList.querySelectorAll('button').forEach(other => other.setAttribute('aria-pressed', String(other === button)));

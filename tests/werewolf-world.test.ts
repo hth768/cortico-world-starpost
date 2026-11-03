@@ -64,5 +64,16 @@ test('统一工具按 family 和 action 调用狼人杀，房间正文作为外�
       scheduledAt: '2026-10-30T18:12:00+08:00', sourceKind: 'private', sourceTarget: '10002' }, {} as never)));
     assert.equal(JSON.parse(String(await mystery.handler({ action: 'exit', gameId: scriptGame.gameId }, {} as never))).left, true);
     assert.equal(app.store.get('mysteryGames', scriptGame.gameId).status, 'cancelled');
+    const help = JSON.parse(String(await tools[0].handler({family:'help',action:'show',argsJson:'{"family":"werewolf"}'},{} as never)));
+    assert.ok(help.parameters.properties.action.enum.includes('match'));
+    assert.ok(help.parameters.properties.move.enum.includes('end_speech'));
+    assert.deepEqual(help.parameters.properties.startMode.enum,['scheduled','full']);
+    const matched = await call({action:'match',operation:'join',maxPlayers:6});
+    assert.equal(matched.state,'waiting');assert.equal(matched.game.maxPlayers,6);
+    assert.equal((await call({action:'match',operation:'leave'})).state,'idle');
+    const full = JSON.parse(String(await mystery.handler({action:'schedule',startMode:'full',public:true,sourceKind:'square',presetId:'laidian'},{} as never)));
+    assert.equal(full.startMode,'full');assert.equal(full.scheduledAt,null);
+    assert.equal(JSON.parse(String(await mystery.handler({action:'exit',gameId:full.gameId},{} as never))).left,true);
+
   } finally { await world.stop(); await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });

@@ -31,6 +31,7 @@ export class HumanAccess {
       const info=this.accounts.info(humanId);
       return { ...info, bots:info.bots.map(p=>this.withRemark(humanId,p)), botId, address: botId ? this.store.get('mobileProfile', botId)?.address ?? '' : '', legacy: !session.human };
     }
+    if (['capsule.create','capsule.list','capsule.read','capsule.delete','capsule.status'].includes(action)) return this.rpc(humanId, action, args);
     if (action === 'logout') { this.store.remove(session.human ? 'humanSessions' : 'mobileSessions', session.key); return { loggedOut: true }; }
     if (!session.human) {
       if (action.startsWith('social.') || action.startsWith('account.')) fail('请先绑定邮箱，完成账号升级');

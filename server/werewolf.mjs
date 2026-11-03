@@ -4,6 +4,8 @@ import { canStartGameAt as canStartAt, GAME_SCHEDULE_RULE, WEEKDAY_GAME_WINDOWS,
 const HOUR = 3600000;
 const DAY = 24 * HOUR;
 const DAILY_GAMES = 5;
+const MATCH_SIZES = [6, 8, 10, 12, 16, 20];
+const READY_TTL = 2 * 60000;
 const ROLES = ['wolf', 'seer', 'witch', 'guard', 'hunter', 'villager'];
 const ACTIVE = ['scheduled', 'assigning', 'night_wolf', 'night_gods', 'day', 'vote', 'hunter', 'finished'];
 const PRESETS = {
@@ -29,11 +31,12 @@ const RULEBOOK = {
   roles: { wolf: '狼人：夜晚共同选择一位非狼人袭击', seer: '预言家：每夜查验一位其他玩家是否为狼人',
     witch: '女巫：全局各一瓶解药和毒药，每夜至多用一瓶；首夜不能自救，之后的夜晚可以自救', guard: '守卫：每夜守护一人，不能连续两夜守同一人',
     hunter: '猎人：被袭击或公投出局后可开枪一次，被毒杀不能开枪', villager: '平民：白天讨论并参加公投' },
-  phases: '狼人行动 3 分钟 → 神职行动 2 分钟 → 天亮讨论 5 分钟 → 公投 2 分钟；猎人行动最多 1 分钟。超时不行动视为放弃本阶段行动，未投票视为弃票。',
+  phases: '狼人行动最多 3 分钟 → 神职行动最多 2 分钟 → 天亮讨论最多 5 分钟 → 公投最多 2 分钟；猎人行动最多 1 分钟。当前阶段所有应行动的存活玩家提交行动或明确跳过后立即推进，计时只作兜底；无可用技能的神职不阻塞推进。白天每位存活玩家用 act/end_speech 明确结束发言后立即进入投票。超时不行动视为放弃，未投票视为弃票。',
   votes: '狼人袭击与白天公投均按最高票决定，最高票并列或无人投票时无人出局；公投在公共频道公开，每人一票，提交后不可修改。',
   protection: '守护或解药任一生效即可挡住狼刀，二者同时生效仍存活；毒药不受守护和解药影响。',
   victory: '狼人全部出局则好人获胜；存活狼人数达到其余存活人数则狼人获胜。最多 12 天，连续 3 天无人出局则平局。',
   attendance: '开局前 3 分钟报到。缺席者不占人数、不扣次数；自动规则按实际报到人数分配，自定义规则只减少平民，无法形成合法配置则取消。',
+  immediate: '公开局可设 startMode=full：加入即准备，人满立即开局，不需要预约时间或另行报到。match 按 maxPlayers=6/8/10/12/16/20 与人类或 bot 实时匹配，使用程序法官和标准身份配置，operation=join/status/leave 加入/查看/退出匹配；一次只能等待一局。两种模式都保留每日 5 局和开局时段限制。保持客户端在线，断连超过 2 分钟自动释放等待席位；满员前退出不扣次数。匹配局公开可观战。',
   judge: 'bot 法官不作为玩家，负责主持，主持也计入每天 5 局；程序始终校验身份行动、结算和超时。法官缺席或次数用尽时改为程序法官，手工分发超时 2 分钟则随机分发。',
   room: '白天在公共频道讨论和公投，夜晚公共频道禁言；狼人夜间频道只向存活狼人开放。每人每分钟最多 6 条，单条 1000 字，不计普通消息额度。游戏结束后开放 2 分钟复盘，再关闭聊天室并保留只读记录。exit 离开房间：开局前退出预约，开局后弃权且不返还次数，不触发猎人开枪；法官离开由程序接管。离场向房内成员公告，停止后续房间事件，恢复普通聊天。',
 };
@@ -60,13 +63,14 @@ function shuffle(values) {
 }
 
 export class WerewolfGames {
-  constructor(store, { isKnown, friends, group, nickname = () => '', clock = Date.now, pauseChat = () => {}, resumeChat = () => {}, consume = () => {}, knownIds = () => [], ownsHuman = (bot, human) => human === `${bot}H` }) {
+  constructor(store, { isKnown, friends, group, nickname = () => '', clock = Date.now, pauseChat = () => {}, resumeChat = () => {}, consume = () => {}, knownIds = () => [], ownsHuman = (bot, human) => human === `${bot}H`, eligible = () => true }) {
     this.store = store; this.isKnown = isKnown; this.friends = friends; this.group = group; this.nickname = nickname; this.clock = clock;
     this.pauseChat = pauseChat; this.resumeChat = resumeChat; this.consume = consume; this.knownIds = knownIds; this.ownsHuman = ownsHuman;
+    this.eligible = eligible;
   }
   rules(who) {
     return { presets: PRESETS, customPlayers: '6–20 人，每种神职最多一位，狼人少于半数且至少一位平民',
-      rulebook: RULEBOOK, dailyLimit: DAILY_GAMES, usedToday: this.participation(who, this.clock()).length,
+      rulebook: RULEBOOK, matchSizes: MATCH_SIZES, dailyLimit: DAILY_GAMES, usedToday: this.participation(who, this.clock()).length,
       timezone: 'Asia/Shanghai', startWindows: WEEKDAY_GAME_WINDOWS, weekendStartWindows: WEEKEND_GAME_WINDOWS };
   }
   get(gameId) {
@@ -104,6 +108,7 @@ export class WerewolfGames {
   summary(game, who) {
     return { gameId: game.id, title: game.title, creator: game.creator, judgeMode: game.judgeMode,
       judgeBotId: game.judgeBotId, assignmentMode: game.assignmentMode, scheduledAt: game.scheduledAt,
+      startMode: game.startMode ?? 'scheduled', matching: Boolean(game.matching),
       status: game.status, maxPlayers: game.maxPlayers, joined: game.joined.length, checkedIn: game.checkedIn.length,
       checkedInSelf: who ? game.checkedIn.includes(who) : undefined,
       rules: game.rules, participant: who ? game.joined.includes(who) : undefined, canInvite: who ? this.canInvite(game, who) : false,
@@ -168,11 +173,110 @@ export class WerewolfGames {
     this.store.put('gameParticipation', key, { owner: who, day: day(now), games: [...games, gameId], at: iso(now) });
     return true;
   }
+  immediate(game) { return game.startMode === 'full'; }
+  busy(who, except) {
+    const lock = this.store.get('gameBusy', who);
+    if (lock && lock.gameId !== except) {
+      const game = this.store.get('games', lock.gameId) ?? this.store.get('mysteryGames', lock.gameId);
+      if (game && ['assigning', 'night_wolf', 'night_gods', 'day', 'vote', 'hunter', 'active'].includes(game.status)) return true;
+    }
+    if (who.endsWith('H')) {
+      const human = this.store.get('humanGameLock', who.slice(0, -1));
+      const game = human && this.store.get('games', human.gameId);
+      if (game && game.id !== except && ['assigning', 'night_wolf', 'night_gods', 'day', 'vote', 'hunter', 'finished'].includes(game.status)) return true;
+    }
+    return false;
+  }
+  waiting(who) {
+    const row = this.store.get('gameWaiting', who), game = row && this.store.get('games', row.gameId);
+    return game?.status === 'scheduled' && this.immediate(game) && (game.joined.includes(who) || game.judgeBotId === who) ? row : null;
+  }
+  assertReady(who, gameId) {
+    if (!this.eligible(who)) fail('当前账号不能参加游戏', 403);
+    if (!canStartAt(this.clock())) fail(GAME_SCHEDULE_RULE);
+    if (this.busy(who, gameId)) fail('请先完成当前对局');
+    if (this.participation(who, this.clock()).length >= DAILY_GAMES) fail('今日已参加 5 局');
+    if (this.waiting(who) && this.waiting(who).gameId !== gameId) fail('已在其他人满即开或匹配房间等待，请先退出');
+    const other = this.store.get('mysteryWaiting', who);
+    if (other && this.store.get('mysteryGames', other.gameId)?.status === 'scheduled') fail('已在剧本杀人满即开房间等待，请先退出');
+  }
+  ready(who, game) {
+    this.store.put('gameWaiting', who, { owner: who, gameId: game.id, expiresAt: this.clock() + READY_TTL });
+  }
+  touchWaiting(who) {
+    const row = this.waiting(who);
+    // Network polling renews readiness without waking a bot or adding prompt tokens.
+    if (row && row.expiresAt > this.clock() && row.expiresAt - this.clock() < READY_TTL / 2)
+      this.store.put('gameWaiting', who, { ...row, expiresAt: this.clock() + READY_TTL });
+  }
+  clearWaiting(who, gameId) {
+    if (this.store.get('gameWaiting', who)?.gameId === gameId) this.store.remove('gameWaiting', who);
+  }
+  tryFull(game, now = this.clock()) {
+    if (!this.immediate(game) || game.status !== 'scheduled') return;
+    const members = [...game.joined, ...(game.judgeBotId && game.judgeAccepted ? [game.judgeBotId] : [])];
+    for (const who of members) {
+      const ready = this.store.get('gameWaiting', who);
+      if (ready?.gameId !== game.id || ready.expiresAt <= now || !this.eligible(who) || this.busy(who, game.id) || this.participation(who, now).length >= DAILY_GAMES) {
+        this.exit(who, game.id);
+      }
+    }
+    // exit persists its own copy; never overwrite removed members with a stale game.
+    Object.assign(game, this.get(game.id));
+    if (!canStartAt(now)) {
+      this.cancelWaiting(game, '进入限制时段，等待已取消；未开局不计次数。'); return;
+    }
+    if (!game.joined.length && !game.judgeBotId) { this.cancelWaiting(game, '等待房间已无成员。'); return; }
+    if (game.joined.length < game.maxPlayers) return;
+    game.checkedIn = [...game.joined]; game.judgeCheckedIn = Boolean(game.judgeBotId && game.judgeAccepted);
+    this.save(game); this.beginAtAppointment(game, now);
+  }
+  cancelWaiting(game, reason) {
+    game.status = 'cancelled'; game.deadlineAt = null; this.save(game);
+    for (const who of [...game.joined, ...(game.judgeBotId ? [game.judgeBotId] : [])]) this.clearWaiting(who, game.id);
+    this.notify([...new Set([...game.joined, game.creator, ...(game.judgeBotId ? [game.judgeBotId] : [])])], 'game.cancelled', { gameId: game.id, reason });
+  }
+  match(who, args = {}) {
+    const operation = args.operation ?? 'status';
+    if (!['join', 'leave', 'status'].includes(operation)) fail('匹配操作须为 join/status/leave');
+    if (operation === 'leave') {
+      const waiting = this.waiting(who);
+      if (waiting && this.get(waiting.gameId).matching) this.exit(who, waiting.gameId);
+      return this.matchStatus(who);
+    }
+    if (operation === 'status') return this.matchStatus(who);
+    if (!MATCH_SIZES.includes(args.maxPlayers)) fail('匹配人数须为 6、8、10、12、16 或 20');
+    const old = this.waiting(who);
+    if (old) {
+      const game = this.get(old.gameId);
+      if (!game.matching || game.maxPlayers !== args.maxPlayers) fail('已在等待其他对局，请先退出后再选择人数');
+      this.assertReady(who, game.id); return this.matchStatus(who);
+    }
+    this.assertReady(who);
+    let game = this.store.list('games', "kind='scheduled'", [], { limit: -1 })
+      .find(g => g.matching && g.maxPlayers === args.maxPlayers && g.joined.length < g.maxPlayers && !g.kicked?.includes(who));
+    if (game) this.join(who, game.id);
+    else {
+      const created = this.schedule(who, { startMode: 'full', public: true, sourceKind: 'square', maxPlayers: args.maxPlayers,
+        title: `${args.maxPlayers} 人狼人杀 · 实时匹配` });
+      game = this.get(created.gameId); game.matching = true; this.save(game);
+    }
+    this.store.put('gameMatchLast', who, { owner: who, gameId: game.id });
+    return this.matchStatus(who);
+  }
+  matchStatus(who) {
+    const row = this.waiting(who) ?? this.store.get('gameMatchLast', who), game = row && this.store.get('games', row.gameId);
+    const current = game?.matching && !game.left?.includes(who) && game.joined.includes(who) ? game : null;
+    return { state: current?.status === 'scheduled' ? 'waiting' : current && !['cancelled', 'closed'].includes(current.status) ? 'matched' : 'idle',
+      sizes: MATCH_SIZES, ...(current ? { game: this.summary(current, who) } : {}) };
+  }
   schedule(who, args) {
-    const now = this.clock(), scheduled = Date.parse(args.scheduledAt);
-    if (typeof args.scheduledAt !== 'string' || !/(?:Z|[+-]\d{2}:\d{2})$/.test(args.scheduledAt)
-      || !Number.isFinite(scheduled) || scheduled < now + 3 * 60000 || scheduled > now + 7 * DAY) fail('请预约 3 分钟后至 7 天内的时间，使用带时区的 ISO 日期');
-    if (!canStartAt(scheduled)) fail(GAME_SCHEDULE_RULE);
+    const now = this.clock(), startMode = args.startMode ?? 'scheduled', immediate = startMode === 'full', scheduled = Date.parse(args.scheduledAt);
+    if (!['scheduled', 'full'].includes(startMode)) fail('开局模式须为 scheduled 或 full');
+    if (immediate) { if (args.public !== true) fail('人满就开只用于公开局'); this.assertReady(who); }
+    if (!immediate && (typeof args.scheduledAt !== 'string' || !/(?:Z|[+-]\d{2}:\d{2})$/.test(args.scheduledAt)
+      || !Number.isFinite(scheduled) || scheduled < now + 3 * 60000 || scheduled > now + 7 * DAY)) fail('请预约 3 分钟后至 7 天内的时间，使用带时区的 ISO 日期');
+    if (!immediate && !canStartAt(scheduled)) fail(GAME_SCHEDULE_RULE);
     const judgeMode = args.judgeMode === 'bot' ? 'bot' : args.judgeMode === 'program' || args.judgeMode == null ? 'program' : fail('法官模式不合法');
     const judgeBotId = judgeMode === 'bot' ? checkedId(args.judgeBotId ?? who) : null;
     if (judgeBotId?.endsWith('H')) fail('人类玩家不能担任 bot 法官，请使用程序或 bot 法官');
@@ -185,7 +289,7 @@ export class WerewolfGames {
     if (!Number.isInteger(maxPlayers) || maxPlayers < 6 || maxPlayers > 20) fail('预约人数须为 6 至 20');
     const title = text(args.title ?? '狼人杀', 60);
     if (this.store.count('games', "owner=? AND kind='scheduled'", [who]) >= 3) fail('最多同时保留 3 个待开局预约');
-    const sourceKind = args.sourceKind === 'group' ? 'group' : args.sourceKind === 'private' ? 'private' : args.sourceKind === 'square' && who.endsWith('H') && args.public === true ? 'square' : fail('请选择私聊、群聊邀请或公开预约');
+    const sourceKind = args.sourceKind === 'group' ? 'group' : args.sourceKind === 'private' ? 'private' : args.sourceKind === 'square' && args.public === true ? 'square' : fail('请选择私聊、群聊邀请或公开预约');
     const sourceTarget = String(args.sourceTarget ?? '');
     const targets = sourceKind === 'square' ? [] : sourceKind === 'private'
       ? [checkedId(sourceTarget)]
@@ -193,13 +297,14 @@ export class WerewolfGames {
     if (sourceKind === 'private' && !this.friends(who).includes(targets[0])) fail('只能通过私聊邀请好友', 403);
     const invited = [...new Set(targets.filter(botId => botId !== judgeBotId))];
     const game = { id: randomUUID(), title, creator: who, judgeMode, judgeBotId, assignmentMode,
-      public: args.public === true, spectators: [],
-      scheduledAt: iso(scheduled), createdAt: iso(now), status: 'scheduled', deadlineAt: iso(scheduled),
-      maxPlayers, customRoles: custom, rules: custom ?? { preset: '按实际报到人数自动匹配 6–20 人身份配置' },
-      invited, joined: judgeBotId === who ? [] : [who], checkedIn: [], judgeAccepted: judgeBotId === who,
-      judgeCheckedIn: false, participants: [], alive: [], roles: {}, day: 0, uses: {}, lastGuard: null,
+      public: args.public === true, published: immediate, spectators: [], startMode,
+      scheduledAt: immediate ? null : iso(scheduled), createdAt: iso(now), status: 'scheduled', deadlineAt: immediate ? null : iso(scheduled),
+      maxPlayers, customRoles: custom, rules: custom ?? (immediate ? presetRoles(maxPlayers) : { preset: '按实际报到人数自动匹配 6–20 人身份配置' }),
+      invited, joined: judgeBotId === who ? [] : [who], checkedIn: immediate && judgeBotId !== who ? [who] : [], judgeAccepted: judgeBotId === who,
+      judgeCheckedIn: immediate && judgeBotId === who, participants: [], alive: [], roles: {}, day: 0, uses: {}, lastGuard: null,
       night: {}, votes: {}, winner: null, reminded: false };
     this.save(game);
+    if (immediate) this.ready(who, game);
     this.store.put('gameAccess', `${who}:${game.id}`, { owner: who, gameId: game.id, at: game.createdAt });
     this.invited(game, invited, { sourceKind, sourceTarget, invitedBy: who });
     if (judgeBotId && judgeBotId !== who) {
@@ -227,24 +332,30 @@ export class WerewolfGames {
     const game = this.get(gameId);
     if (game.kicked?.includes(who)) fail('你已被移出本局', 403);
     if (game.status !== 'scheduled') fail('预约已结束');
+    if (this.immediate(game)) this.assertReady(who, gameId);
     if (who === game.judgeBotId) {
-      if (this.participation(who, Date.parse(game.scheduledAt)).length >= DAILY_GAMES) fail('预约当天已参加 5 局');
+      if (this.participation(who, this.immediate(game) ? this.clock() : Date.parse(game.scheduledAt)).length >= DAILY_GAMES) fail('预约当天已参加 5 局');
       game.left = (game.left ?? []).filter(id => id !== who);
-      game.judgeAccepted = true; this.save(game); return { gameId, judge: true };
+      game.judgeAccepted = true; if (this.immediate(game)) { game.judgeCheckedIn = true; this.ready(who, game); } this.save(game); return { gameId, judge: true };
     }
     if (!game.joined.includes(who) && !game.invited.includes(who) && who !== game.creator && !(game.public && game.published)) fail('此预约未公告到公开广场，须先收到邀请', 403);
     if (game.joined.includes(who)) return { gameId, joined: true };
     game.spectators = (game.spectators ?? []).filter(id => id !== who);
     if (game.joined.length >= game.maxPlayers) fail('名额已满');
-    if (this.participation(who, Date.parse(game.scheduledAt)).length >= DAILY_GAMES) fail('预约当天已参加 5 局');
+    if (this.participation(who, this.immediate(game) ? this.clock() : Date.parse(game.scheduledAt)).length >= DAILY_GAMES) fail('预约当天已参加 5 局');
     game.left = (game.left ?? []).filter(id => id !== who);
-    game.joined.push(who); this.save(game);
+    game.joined.push(who);
+    if (this.immediate(game)) { game.checkedIn.push(who); this.ready(who, game); }
+    this.save(game);
     this.store.put('gameAccess', `${who}:${game.id}`, { owner: who, gameId: game.id, at: iso(this.clock()) });
     this.notify([game.creator], 'game.joined', { gameId, botId: who, joined: game.joined.length });
-    return { gameId, joined: true };
+    if (game.matching) this.store.put('gameMatchLast', who, { owner: who, gameId });
+    this.tryFull(game);
+    return { gameId, joined: true, status: game.status, startMode: game.startMode ?? 'scheduled' };
   }
   checkin(who, gameId) {
     const game = this.get(gameId), now = this.clock(), start = Date.parse(game.scheduledAt);
+    if (this.immediate(game)) { if (!game.joined.includes(who) && game.judgeBotId !== who) fail('请先加入'); return { gameId, checkedIn: true, message: '加入即准备，人满立即开局。' }; }
     if (game.kicked?.includes(who)) fail('你已被移出本局', 403);
     if (game.status !== 'scheduled' || now < start - 3 * 60000 || now >= start) fail('请在开局前 3 分钟内报到');
     if (who === game.judgeBotId) {
@@ -291,6 +402,7 @@ export class WerewolfGames {
       if (wasAlive) game.roundDeaths = (game.roundDeaths ?? 0) + 1;
     }
     this.save(game);
+    this.clearWaiting(who, game.id);
     if (this.store.get('gameBusy', who)?.gameId === game.id) {
       this.store.remove('gameBusy', who); this.resumeChat(who);
     }
@@ -303,7 +415,7 @@ export class WerewolfGames {
     } else if (active && wasAlive) {
       const winner = game.status === 'hunter' ? null : this.winner(game);
       if (winner) this.finish(game, winner);
-      else if (game.status === 'vote' && game.alive.every(id => Object.hasOwn(game.votes, id))) this.resolveVote(game);
+      else this.advanceCompleted(game);
     }
     return { gameId, left: true, forfeited: active && player, status: this.get(gameId).status };
   }
@@ -319,6 +431,7 @@ export class WerewolfGames {
   }
   visibility(who, args) {
     const game = this.get(args.gameId);
+    if (this.immediate(game)) fail('人满即开和匹配房间须保持公开');
     if (game.creator !== who || game.status !== 'scheduled' || typeof args.public !== 'boolean') fail('仅发起人可在开局前设置公开性', 403);
     game.public = args.public; if (!game.public) { game.spectators = []; game.published = false; }
     this.save(game); return { gameId: game.id, public: game.public };
@@ -356,6 +469,8 @@ export class WerewolfGames {
     const page = allowed.slice(0, 50).reverse();
     return { game: { ...this.summary(game, who), rulebook: RULEBOOK, participants: game.participants, alive: game.alive, day: game.day,
       ownRole: game.roles[who] ?? null, uses: game.roles[who] ? game.uses[who] ?? {} : undefined,
+      speechEnded: game.status === 'day' && Boolean(game.dayDone?.includes(who)),
+      speechesDone: game.status === 'day' ? game.alive.filter(id => game.dayDone?.includes(id)).length : undefined,
       ...(who === game.judgeBotId ? { assignments: game.roles } : {}) },
       messages: page, nextBefore: allowed.length > 50 ? page[0].cursor : rows.length === 200 ? rows.at(-1).rowid : null };
   }
@@ -395,10 +510,7 @@ export class WerewolfGames {
     }
   }
   beginAtAppointment(game, now) {
-    const busy = who => {
-      const lock = this.store.get('gameBusy', who), other = lock ? this.store.get('games', lock.gameId) : null;
-      return other && other.id !== game.id && ['assigning', 'night_wolf', 'night_gods', 'day', 'vote', 'hunter'].includes(other.status);
-    };
+    const busy = who => this.busy(who, game.id);
     const present = game.checkedIn.filter(who => this.participation(who, now).length < DAILY_GAMES && !busy(who));
     const absent = game.joined.filter(who => !present.includes(who));
     const judgeReady = game.judgeMode === 'program' || game.judgeAccepted && game.judgeCheckedIn && !busy(game.judgeBotId)
@@ -417,6 +529,7 @@ export class WerewolfGames {
     }
     game.rules = roles; game.participants = present; game.startedAt = iso(now);
     for (const who of [...present, ...(game.judgeBotId ? [game.judgeBotId] : [])]) {
+      this.clearWaiting(who, game.id);
       this.charge(who, game.id, now); this.store.put('gameBusy', who, { gameId: game.id });
       if (who.endsWith('H')) this.store.put('humanGameLock', who.slice(0, -1), { gameId: game.id });
       this.pauseChat(who);
@@ -456,17 +569,27 @@ export class WerewolfGames {
   }
   act(who, args) {
     const game = this.get(args.gameId), role = game.roles[who], action = args.action;
+    this.checkPhase(game, args.expectedPhase);
     if (game.left?.includes(who)) fail('你已离开本局房间', 403);
     if (game.kicked?.includes(who)) fail('你已被移出本局', 403);
     if (!role || !game.alive.includes(who) && game.status !== 'hunter') fail('不是存活玩家', 403);
+    if (action === 'end_speech') {
+      if (game.status !== 'day' || !game.alive.includes(who)) fail('仅存活玩家可在白天结束发言', 403);
+      if (!game.dayDone?.includes(who)) {
+        game.dayDone = [...(game.dayDone ?? []), who]; this.save(game);
+      }
+      this.advanceCompleted(game);
+      return { gameId: game.id, action, status: game.status };
+    }
     if (['night_wolf', 'night_gods'].includes(game.status) && game.night.passed?.includes(who)) fail('本夜已跳过行动');
     if (action === 'skip' && (game.status === 'night_wolf' && role === 'wolf' || game.status === 'night_gods' && ['seer', 'guard', 'witch'].includes(role))) {
       if (game.night.wolfVotes?.[who] || role === 'seer' && game.night.seerTarget || role === 'guard' && game.night.guardTarget || role === 'witch' && game.night.witchActed) fail('本夜已经行动');
-      game.night.passed = [...(game.night.passed ?? []), who]; this.save(game); return { gameId: game.id, action };
+      game.night.passed = [...(game.night.passed ?? []), who]; this.save(game); this.advanceCompleted(game); return { gameId: game.id, action, status: game.status };
     }
     const target = args.target == null || args.target === '' ? null : checkedId(args.target);
     if (target && !game.alive.includes(target)) fail('目标不是存活玩家');
     if (game.status === 'night_wolf' && role === 'wolf' && action === 'attack') {
+      if (Object.hasOwn(game.night.wolfVotes ?? {}, who)) fail('本夜已经提交狼刀，不能修改');
       if (!target || game.roles[target] === 'wolf') fail('狼人须指定一位存活的非狼人');
       game.night.wolfVotes ??= {}; game.night.wolfVotes[who] = target;
       this.emit(game, 'wolf', game.alive.filter(id => game.roles[id] === 'wolf'), { kind: 'attack_vote', botId: who, target });
@@ -475,6 +598,7 @@ export class WerewolfGames {
       game.night.seerTarget = target;
       this.private(game, who, { kind: 'inspect_result', target, isWolf: game.roles[target] === 'wolf' });
     } else if (game.status === 'night_gods' && role === 'guard' && action === 'protect') {
+      if (game.night.guardTarget) fail('本夜已经守护');
       if (!target || target === game.lastGuard) fail('守卫不能连续两夜守护同一人');
       game.night.guardTarget = target;
     } else if (game.status === 'night_gods' && role === 'witch' && action === 'save') {
@@ -496,11 +620,37 @@ export class WerewolfGames {
       this.afterElimination(game, game.hunterResume === 'day' ? 'day' : 'night');
       return { gameId: game.id, action, target };
     } else fail('当前阶段或身份不能执行此操作', 403);
-    this.save(game);
-    return { gameId: game.id, action, target };
+    this.save(game); this.advanceCompleted(game);
+    return { gameId: game.id, action, target, status: game.status };
+  }
+  checkPhase(game, phase) {
+    if (phase !== undefined && (!phase || typeof phase !== 'object' || phase.status !== game.status || phase.day !== game.day || phase.deadlineAt !== game.deadlineAt)) fail('阶段已变化，请重新读取后行动', 409);
+  }
+  phaseComplete(game) {
+    const passed = id => game.night.passed?.includes(id);
+    if (game.status === 'night_wolf') return game.alive.filter(id => game.roles[id] === 'wolf')
+      .every(id => passed(id) || Object.hasOwn(game.night.wolfVotes ?? {}, id));
+    if (game.status === 'night_gods') return game.alive.every(id => {
+      if (passed(id)) return true;
+      if (game.roles[id] === 'seer') return Boolean(game.night.seerTarget) || game.alive.length < 2;
+      if (game.roles[id] === 'guard') return Boolean(game.night.guardTarget) || !game.alive.some(target => target !== game.lastGuard);
+      if (game.roles[id] === 'witch') return Boolean(game.night.witchActed)
+        || !(!game.uses[id].save && game.night.victim && (game.day > 1 || game.night.victim !== id))
+          && (game.uses[id].poison || !game.alive.some(target => target !== id));
+      return true;
+    });
+    if (game.status === 'day') return game.alive.length > 0 && game.alive.every(id => game.dayDone?.includes(id));
+    if (game.status === 'vote') return game.alive.length > 0 && game.alive.every(id => Object.hasOwn(game.votes, id));
+    return false;
+  }
+  advanceCompleted(game, now = this.clock()) {
+    // A phase with no eligible actions (e.g. all gods dead) must not hold the room.
+    // Bound the cascade; entering a new day always waits for explicit end_speech.
+    for (let i = 0; i < 6 && this.phaseComplete(game); i++) this.nextPhase(game, now);
   }
   vote(who, args) {
     const game = this.get(args.gameId);
+    this.checkPhase(game, args.expectedPhase);
     if (game.left?.includes(who)) fail('你已离开本局房间', 403);
     if (game.kicked?.includes(who)) fail('你已被移出本局', 403);
     if (game.status !== 'vote' || !game.alive.includes(who)) fail('当前不能投票', 403);
@@ -540,7 +690,7 @@ export class WerewolfGames {
     const winner = this.winner(game);
     if (winner) return this.finish(game, winner);
     if (resume === 'day') {
-      game.status = 'day'; game.deadlineAt = iso(this.clock() + 5 * 60000); this.save(game);
+      game.status = 'day'; game.dayDone = []; game.deadlineAt = iso(this.clock() + 5 * 60000); this.save(game);
       this.public(game, { kind: 'day', day: game.day, deadlineAt: game.deadlineAt });
       return;
     }
@@ -585,7 +735,7 @@ export class WerewolfGames {
       const hunter = deaths.find(id => game.roles[id] === 'hunter' && id !== game.night.poisonTarget && !game.uses[id].shot);
       if (hunter) return this.hunter(game, hunter, 'day');
       const winner = this.winner(game); if (winner) return this.finish(game, winner);
-      game.status = 'day'; game.deadlineAt = iso(now + 5 * 60000); this.save(game);
+      game.status = 'day'; game.dayDone = []; game.deadlineAt = iso(now + 5 * 60000); this.save(game);
       this.public(game, { kind: 'day', day: game.day, deadlineAt: game.deadlineAt });
       return;
     }
@@ -603,6 +753,7 @@ export class WerewolfGames {
   tick(now = this.clock()) {
     const games = this.store.list('games', `kind IN (${ACTIVE.map(() => '?').join(',')})`, ACTIVE, { limit: -1 });
     for (const game of games) {
+      if (game.status === 'scheduled' && this.immediate(game)) { this.tryFull(game, now); continue; }
       const start = Date.parse(game.scheduledAt);
       if (game.status === 'scheduled' && !game.reminded && now >= start - 3 * 60000 && now < start) {
         game.reminded = true; this.save(game);
@@ -611,17 +762,21 @@ export class WerewolfGames {
             checkinOpenAt: iso(start - 3 * 60000), message: '开局前 3 分钟，请进入本局报到；未报到将自动弃权，不计入本局人数和今日次数。' });
       }
       if (game.deadlineAt && now >= Date.parse(game.deadlineAt)) this.nextPhase(game, now);
+      this.advanceCompleted(game, now);
     }
   }
   cancel(who, gameId) {
     const game = this.get(gameId);
+    if (game.matching) fail('匹配房间不能由单个玩家取消，请退出自己的匹配');
     if (game.creator !== who || game.status !== 'scheduled') fail('只能由发起人在开局前取消', 403);
     game.status = 'cancelled'; game.deadlineAt = null; this.save(game);
+    for (const id of [...game.joined, ...(game.judgeBotId ? [game.judgeBotId] : [])]) this.clearWaiting(id, game.id);
     this.notify([...new Set([...game.invited, ...game.joined, ...(game.judgeBotId ? [game.judgeBotId] : [])])],
       'game.cancelled', { gameId: game.id, reason: '发起人取消预约' });
     return { gameId, cancelled: true };
   }
   suspend(who, keepReservations = false) {
+    this.store.remove('gameWaiting', who);
     for(const game of this.store.list('games',`kind IN (${ACTIVE.map(()=>'?').join(',')})`,ACTIVE,{limit:-1})){
       game.spectators=(game.spectators??[]).filter(id=>id!==who);
       if(game.status==='scheduled'){
@@ -642,6 +797,7 @@ export class WerewolfGames {
       }
       if(game.pendingHunter===who){game.pendingHunter=null;this.afterElimination(game,game.hunterResume==='day'?'day':'night');continue;}
       this.save(game);
+      this.advanceCompleted(game);
     }
     this.store.remove('gameBusy',who);this.resumeChat(who);
   }

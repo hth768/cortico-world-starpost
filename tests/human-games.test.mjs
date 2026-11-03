@@ -95,7 +95,6 @@ for (const role of ['wolf', 'witch', 'seer', 'guard', 'hunter']) test(`人类${r
       await f.ok(f.phone('human.move', { gameId, move: 'skip', target: '' }));
       assert.equal((await f.phone('human.move', { gameId, move: 'inspect', target: '10002' })).ok, false);
     }
-    if (role === 'wolf') f.advance(gameId);
     f.advance(gameId);
     assert.equal((await f.phone('human.move', { gameId, move: 'poison', target: '10002' })).ok, false);
     await f.ok(f.phone('human.message', { gameId, channel: 'public', text: '我认为狼人可能是二号，这只是推理。' }));
@@ -111,7 +110,7 @@ test('人类女巫首夜不提供自救，之后可自救，选择跳过后不�
   const f = await fixture();
   try {
     const gameId = await f.start('witch');
-    await f.ok(f.bot('10002', 'game.act', { gameId, action: 'attack', target: '10001H' })); f.advance(gameId);
+    await f.ok(f.bot('10002', 'game.act', { gameId, action: 'attack', target: '10001H' }));
     assert.equal((await f.ok(f.phone('human.room', { gameId }))).options.some(o => o.move === 'save'), false);
     await f.ok(f.bot('10004', 'game.act', { gameId, action: 'protect', target: '10001H' }));
     await f.ok(f.phone('human.move', { gameId, move: 'skip', target: '' }));
@@ -119,7 +118,7 @@ test('人类女巫首夜不提供自救，之后可自救，选择跳过后不�
     f.advance(gameId); f.advance(gameId);
     await f.ok(f.phone('human.move', { gameId, move: 'vote', target: 'abstain' }));
     for (const who of f.players.slice(1)) await f.ok(f.bot(who, 'game.vote', { gameId, target: 'abstain' }));
-    await f.ok(f.bot('10002', 'game.act', { gameId, action: 'attack', target: '10001H' })); f.advance(gameId);
+    await f.ok(f.bot('10002', 'game.act', { gameId, action: 'attack', target: '10001H' }));
     assert.ok((await f.ok(f.phone('human.room', { gameId }))).options.some(o => o.move === 'save'));
     await f.ok(f.phone('human.move', { gameId, move: 'save', target: '' })); f.advance(gameId);
     assert.ok(f.app.store.get('games', gameId).alive.includes('10001H'));
@@ -132,7 +131,7 @@ test('人类猎人选项开枪结算获胜，胜负和参赛次数不计入自�
   try {
     const gameId = await f.start('hunter');
     await f.ok(f.bot('10002', 'game.act', { gameId, action: 'attack', target: '10001H' }));
-    f.advance(gameId); f.advance(gameId);
+    f.advance(gameId);
     const room = await f.ok(f.phone('human.room', { gameId }));
     assert.equal(room.game.status, 'hunter'); assert.ok(room.options.some(o => o.move === 'shoot'));
     await f.ok(f.phone('human.move', { gameId, move: 'shoot', target: '10002' }));

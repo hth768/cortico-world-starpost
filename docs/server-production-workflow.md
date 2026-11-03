@@ -82,7 +82,7 @@ node /opt/starpost/releases/<当前版本目录>/server/backup.mjs \
 
 ### C. 对外发布和更新提醒
 
-网页端发布先运行 `npm run build:web`，为 `theme.js`、`background.js`、`game-ui.js`、`message-ui.js`、`community.js`、`avatars.js`、`app.js`、`style.css` 写入内容摘要查询参数；发布时必须同步复制这八个文件及 `index.html`（`background.js`、`game-ui.js`、`message-ui.js` 为 0.23.0 的背景、游戏界面和消息操作新增文件，`community.js` 为 0.24.0 新增的人类动态与漂流瓶页面）；`npm pack` 的 `prepack` 会自动运行这一步。复制静态文件时使用 `install -m 0644`，不要沿用 npm 包固定的 1985 年文件时间。Nginx 的静态页面入口应设置 `if_modified_since off` 和 `Cache-Control: no-cache`，让浏览器按 ETag 重新验证，避免旧脚本长期被复用；登录和 API 的缓存策略仍由原接口控制。
+网页端发布先运行 `npm run build:web`，为 `theme.js`、`background.js`、`game-ui.js`、`message-ui.js`、`community.js`、`capsules.js`、`avatars.js`、`app.js`、`style.css` 写入内容摘要查询参数；发布时必须同步复制这九个文件及 `index.html`（`background.js`、`game-ui.js`、`message-ui.js` 为 0.23.0 的背景、游戏界面和消息操作新增文件，`community.js` 为 0.24.0 新增的人类动态与漂流瓶页面，`capsules.js` 为 0.25.0 新增的时间胶囊页面）；`npm pack` 的 `prepack` 会自动运行这一步。复制静态文件时使用 `install -m 0644`，不要沿用 npm 包固定的 1985 年文件时间。Nginx 的静态页面入口应设置 `if_modified_since off` 和 `Cache-Control: no-cache`，让浏览器按 ETag 重新验证，避免旧脚本长期被复用；登录和 API 的缓存策略仍由原接口控制。
 
 1. 只有在目标构件验证完成后，才推送源码与 tag、发布 npm 包；Android APK 按 `.github/workflows/android-release.yml` 的签名文件校验与 GitHub Release 流程发布。发布脚本和权限由当次操作者核对。
 2. 确认供用户下载的实际版本已可用，再在**运行中的服务器发布目录**执行一次更新广播，中文说明从该版本的 JSON 文件读取。重复执行同版本不会再次广播：
@@ -98,6 +98,8 @@ runuser -u starpost -- node /opt/starpost/releases/<当前服务器版本目录>
 ### D. 回滚
 
 健康检查或兼容性验证失败时，停止新服务与维护 timer，恢复发布前保存的 systemd override、维护 service/timer、Nginx 配置和必要的静态网页，再 `daemon-reload`、启动旧服务、`nginx -t` 后重载 Nginx。用 `/health`、`/metrics` 和已知只读 API 复查。若新版本做了不兼容的数据库迁移，先停服，从发布前备份恢复到**新的数据目录**，把 DB 与图片路径一起切过去；不能只换旧二进制，也不能把快照直接覆盖到带旧 `-wal`/`-shm` 的目录。恢复备份会丢失备份时间之后的写入，须先留存故障现场并明确恢复点。
+
+时间胶囊上传最多三张 1 MiB 图片，Base64 后请求可达约 4 MiB；0.25.0 起需同步域名与 IP 的实际 Nginx 配置，将 `client_max_body_size` 设为 `5m`。
 
 ## 5. 日常维护与故障检查
 
