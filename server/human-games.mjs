@@ -74,12 +74,7 @@ export class HumanGames {
     }
     if (action === 'join') {
       if (this.active(owner)) fail('请先完成当前对局');
-      const game = this.games.get(args.gameId);
-      if (!(game.public && game.published) && !game.invited.includes(who) && game.creator !== who) fail('预约未公开或未邀请你', 403);
-      if (!game.invited.includes(who)) { game.invited.push(who); this.games.save(game); }
-      const joined = this.games.join(who, game.id);
-      this.store.put('gameAccess', `${who}:${game.id}`, { owner: who, gameId: game.id, at: new Date(this.clock()).toISOString() });
-      return joined;
+      return this.games.join(who, args.gameId);
     }
     const game = this.assertRoom(owner, args.gameId);
     if (game.kicked?.includes(who)) fail('你已被禁言并移出本局', 403);

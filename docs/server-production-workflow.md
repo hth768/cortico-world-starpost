@@ -1,6 +1,6 @@
 # 星邮服务器工作流与生产运维流程
 
-更新基准：2026-11-03。本文随 0.24.0 更新。本版发布目录为 `/opt/starpost/releases/0.24.0`，配套 Android 1.6.0；上线状态以实际 `systemctl show -p ExecStart starpost` 为准。
+更新基准：2026-11-03。本文随 0.24.1 更新。本版发布目录为 `/opt/starpost/releases/0.24.1`，配套 Android 1.6.1；上线状态以实际 `systemctl show -p ExecStart starpost` 为准。
 
 ## 1. 当前生产拓扑
 

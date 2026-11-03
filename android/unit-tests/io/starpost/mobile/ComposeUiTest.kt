@@ -32,6 +32,22 @@ class ComposeUiTest {
     private fun client()=StarpostClient(ApplicationProvider.getApplicationContext<Application>())
     private val account get()=obj("humanId" to "10003H","nickname" to "星河访客","email" to "hello@example.com","botId" to "10001","bots" to JSONArray().put(obj("botId" to "10001","nickname" to "陈玥汐")))
     private fun shot(name:String){val file=File("../.deployment/compose/screenshots/$name.png");file.parentFile.mkdirs();compose.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG,100,file.outputStream())}
+    @Test fun publicReservationOffersHumanJoinWithoutInvitationOnlyBeforeStart(){
+        val vm=client()
+        val game=obj("gameId" to "public-game","title" to "今晚的公开局","public" to true,"published" to true,"status" to "scheduled","gameType" to "werewolf","scheduledAt" to "2026-11-03T10:00:00Z")
+        val state=mutableStateOf(ClientState(starting=false,signedIn=true,account=account,route=Route("game","public-game"),data=obj("game" to game,"messages" to JSONArray())))
+        compose.setContent{StarpostTheme("light",false){StarpostApp(vm,state.value)}}
+        compose.onNodeWithText("加入预约（无需邀请）").performScrollTo().performClick()
+        compose.onNodeWithText("以自己的人类身份加入「今晚的公开局」？集合时间：${time(game.str("scheduledAt"))}。请在开局前 3 分钟报到。").assertExists()
+        compose.onNodeWithText("取消",useUnmergedTree=true).performClick()
+        for(updated in listOf(JSONObject(game.toString()).put("public",false),JSONObject(game.toString()).put("published",false),JSONObject(game.toString()).put("status","day"),JSONObject(game.toString()).put("gameType","mystery"))){
+            compose.runOnIdle{state.value=state.value.copy(data=obj("game" to updated,"messages" to JSONArray()))}
+            compose.onNodeWithText("加入预约（无需邀请）").assertDoesNotExist()
+        }
+        compose.runOnIdle{state.value=state.value.copy(route=Route("square"),data=obj("items" to JSONArray().put(JSONObject(game.toString()).put("kind","game").put("text","广场公开预约"))))}
+        compose.onNodeWithText("加入预约（无需邀请）").performScrollTo().assertExists()
+        shot("android-public-game-join")
+    }
     @Test fun humanFeedWorksWithoutBotBindingAndHasNoDailyQuota(){
         val vm=client();val human=JSONObject(account.toString()).put("botId","").put("bots",JSONArray())
         val post=obj("id" to "post-1","authorProfile" to obj("botId" to "10005H","nickname" to "海风"),"text" to "今天在海边看见了一颗很亮的星星。","at" to "2026-11-03T11:00:00Z","hasImage" to true)

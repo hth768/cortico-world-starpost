@@ -24,7 +24,7 @@ const iso = ms => new Date(ms).toISOString();
 const day = ms => new Date(ms + 8 * HOUR).toISOString().slice(0, 10);
 const RULEBOOK = {
   schedule: GAME_SCHEDULE_RULE,
-  invitations: '公开和私密预约均允许已加入、未退出的成员在开局前邀请自己的好友或所在群成员；仅受邀但尚未加入者不能转邀。受邀者自主加入和报到，不会自动入场。人类成员可从手机或网页预约详情发出邀请。',
+  invitations: '公开且已公告到广场的预约，bot 和人类均可直接 join，无需好友关系或邀请；bot 用 browse 或广场查看 gameId，人类在手机或网页点击加入预约。私密或尚未公告的预约仍需邀请。所有成员须自行加入并在开局前 3 分钟报到，已满或已开局不能加入。已加入、未退出的成员仍可邀请自己的好友或所在群成员；仅受邀但尚未加入者不能转邀。',
   spectators: '默认私密。公开对局允许未参与者全知观战所有房间消息；局外频道仅观众可见并计普通聊天额度，参赛者与法官的游戏发言仍免额度。参赛期间普通聊天暂存，结算后补投。',
   roles: { wolf: '狼人：夜晚共同选择一位非狼人袭击', seer: '预言家：每夜查验一位其他玩家是否为狼人',
     witch: '女巫：全局各一瓶解药和毒药，每夜至多用一瓶；首夜不能自救，之后的夜晚可以自救', guard: '守卫：每夜守护一人，不能连续两夜守同一人',
@@ -108,7 +108,7 @@ export class WerewolfGames {
       checkedInSelf: who ? game.checkedIn.includes(who) : undefined,
       rules: game.rules, participant: who ? game.joined.includes(who) : undefined, canInvite: who ? this.canInvite(game, who) : false,
       judge: who ? game.judgeBotId === who : undefined, phaseDeadlineAt: game.deadlineAt,
-      winner: game.winner ?? null, public: Boolean(game.public), spectators: (game.spectators ?? []).length };
+      winner: game.winner ?? null, public: Boolean(game.public), published: Boolean(game.published), spectators: (game.spectators ?? []).length };
   }
   canView(game, who) {
     if (!game.public && game.creator !== who && game.judgeBotId !== who && !game.formerJudgeBotIds?.includes(who) && !game.invited.includes(who) && !game.joined.includes(who)) fail('无权查看此局游戏', 403);
@@ -232,13 +232,14 @@ export class WerewolfGames {
       game.left = (game.left ?? []).filter(id => id !== who);
       game.judgeAccepted = true; this.save(game); return { gameId, judge: true };
     }
-    if (!game.invited.includes(who) && who !== game.creator) fail('没有收到这局邀请', 403);
+    if (!game.joined.includes(who) && !game.invited.includes(who) && who !== game.creator && !(game.public && game.published)) fail('此预约未公告到公开广场，须先收到邀请', 403);
     if (game.joined.includes(who)) return { gameId, joined: true };
     game.spectators = (game.spectators ?? []).filter(id => id !== who);
     if (game.joined.length >= game.maxPlayers) fail('名额已满');
     if (this.participation(who, Date.parse(game.scheduledAt)).length >= DAILY_GAMES) fail('预约当天已参加 5 局');
     game.left = (game.left ?? []).filter(id => id !== who);
     game.joined.push(who); this.save(game);
+    this.store.put('gameAccess', `${who}:${game.id}`, { owner: who, gameId: game.id, at: iso(this.clock()) });
     this.notify([game.creator], 'game.joined', { gameId, botId: who, joined: game.joined.length });
     return { gameId, joined: true };
   }

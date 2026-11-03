@@ -103,8 +103,8 @@ export class MysteryGames {
   join(who, gameId) {
     const game = this.get(gameId);
     if (game.status !== 'scheduled') fail('此预约已开始或结束');
-    if (!game.invited.includes(who) && !(game.public && game.published)) fail('未收到邀请，且此预约未公开', 403);
     if (game.joined.includes(who)) return { gameId, joined: true };
+    if (!game.invited.includes(who) && !(game.public && game.published)) fail('此预约未公告到公开广场，须先收到邀请', 403);
     if (game.joined.length >= game.maxPlayers) fail('本局人数已满');
     game.left = (game.left ?? []).filter(id => id !== who);
     game.joined.push(who); game.invited = game.invited.filter(id => id !== who); this.save(game);
