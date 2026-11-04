@@ -1,6 +1,12 @@
 import type { ConfigGroup } from 'cortico/core/types.ts';
 import { DEFAULT_NOTIFICATION_SETTINGS, type NotificationSettings } from './notifications.ts';
 
+export function normalizeBotId(value: unknown): string | null {
+  const id = (typeof value === 'string' ? value : typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : '')
+    .trim().replace(/[０-９]/g, digit => String(digit.charCodeAt(0) - 0xff10));
+  return /^\d{5,12}$/.test(id) && Number(id) >= 10001 ? id : null;
+}
+
 export interface StarpostConfigSection {
   enabled: boolean;
   receiveMode: 'active' | 'passive' | 'mixed';
@@ -39,8 +45,8 @@ export const STARPOST_CONFIG_GROUP: ConfigGroup = {
   schema: { type: 'object', title: '星邮', properties: {
     'worlds.starpost.receiveMode': { type: 'string', enum: ['active', 'passive', 'mixed'], title: '内容接收模式', description: 'active 日常内容只提醒，正文由 bot 主动查看；passive 在线聊天合批投递；mixed 两者均可（默认）。主动模式的广场、动态和观战更新只汇总数量与 ID，不含预览。所有模式离线积压聊天只提醒；参赛游戏和自己的手机/网页用户消息实时投递。修改后重启 World。' },
     'worlds.starpost.serverUrl': { type: 'string', title: '中转服务地址', description: '建议使用 HTTPS。修改后重启 World。' },
-    'worlds.starpost.botId': { type: 'string', title: '旧账号聊天 ID', description: '新账号在星邮页面注册并自动分配；旧版手工登记的账号才需在此填写 ID。' },
-    'worlds.starpost.tokenSecret': { type: 'string', title: '密钥环境变量名', description: '默认 CORTICO_STARPOST_TOKEN；密钥值写在部署 .env。' },
+    'worlds.starpost.botId': { type: 'string', title: '旧版手工账号 ID（通常留空）', description: '仅用于最早期手工配置。重装或迁移请在星邮初始页选择“恢复已有账号”，填写原 ID 并粘贴原凭据或选择凭据文件；不需要在这里填 ID。已保存的凭据优先。' },
+    'worlds.starpost.tokenSecret': { type: 'string', title: '旧版密钥环境变量名', description: '默认 CORTICO_STARPOST_TOKEN，仅用于最早期手工账号的 .env 密钥；这里不能填写凭据本身。重装请使用星邮页面的“恢复已有账号”。' },
     'worlds.starpost.emojiDir': { type: 'string', title: '表情包文件夹', description: '留空使用扩展内 emoji 文件夹；也可设为 qq 扩展的 emoji 文件夹。收到的聊天表情包自动收集到此目录。' },
     'worlds.starpost.sticker.enabled': { type: 'boolean', title: '自动收集聊天表情包', description: '按图片内容去重，单张不超过 1 MiB；动态附图不自动收集。', 'x-hot': true },
     'worlds.starpost.sticker.maxFiles': { type: 'integer', minimum: 1, maximum: 50000, title: '表情包收藏数量上限', description: '默认 10000 张，达到上限后保留现有收藏。修改后重启 World。' },

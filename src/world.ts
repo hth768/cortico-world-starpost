@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { World, WorldHost, WorldWebUiDecl, ToolDef } from 'cortico/core/types.ts';
 import type { StarpostConfigSection } from './config.ts';
-import { STARPOST_CONFIG_GROUP } from './config.ts';
+import { STARPOST_CONFIG_GROUP, normalizeBotId } from './config.ts';
 import { StarpostStickerStore, readStickerImage } from './stickers.ts';
 import { NotificationDigest, notificationSettings } from './notifications.ts';
 import { activeNotice, isLiveGameEvent } from './active-notices.ts';
@@ -198,22 +198,24 @@ export class StarpostWorld implements World {
   private storedIdentity(): Identity | null {
     if (!existsSync(this.identityFile)) return null;
     const value = JSON.parse(readFileSync(this.identityFile, 'utf8')) as Identity;
-    if (!value || typeof value.installationId !== 'string' || !/^[a-f0-9]{64}$/i.test(value.token)) throw new Error('本机星邮身份文件损坏');
+    if (!value || typeof value.installationId !== 'string' || typeof value.token !== 'string' || value.token.length < 24 || value.token.length > 128 || (value.botId !== undefined && !normalizeBotId(value.botId))) throw new Error('本机星邮身份文件损坏');
     return value;
   }
   private activeIdentity(): { botId: string; token: string } | null {
     if (existsSync(this.credentialFile)) {
       const saved = JSON.parse(readFileSync(this.credentialFile, 'utf8')) as Credential;
-      if (saved?.version !== 1 || !/^\d{5,12}$/.test(saved.botId) || typeof saved.token !== 'string' || saved.token.length < 24 || saved.token.length > 128) throw new Error('本机星邮凭据文件损坏');
-      return { botId: saved.botId, token: saved.token };
+      const botId = normalizeBotId(saved?.botId);
+      if (saved?.version !== 1 || !botId || typeof saved.token !== 'string' || saved.token.length < 24 || saved.token.length > 128) throw new Error('本机星邮凭据文件损坏');
+      return { botId, token: saved.token };
     }
     let identity: { botId: string; token: string } | null = null;
-    if (this.cfg.botId) {
+    const value = this.storedIdentity();
+    const savedId = normalizeBotId(value?.botId), legacyId = normalizeBotId(this.cfg.botId);
+    if (value && savedId) {
+      identity = { botId: savedId, token: value.token };
+    } else if (legacyId) {
       const token = this.secret(this.cfg.tokenSecret);
-      identity = token ? { botId: this.cfg.botId, token } : null;
-    } else {
-      const value = this.storedIdentity();
-      identity = value?.botId ? { botId: value.botId, token: value.token } : null;
+      identity = token ? { botId: legacyId, token } : null;
     }
     if (identity) this.saveCredential(identity);
     return identity;
@@ -268,20 +270,28 @@ export class StarpostWorld implements World {
   }
   private async login(identifier: unknown, credentialText: unknown): Promise<{ botId: string }> {
     if (this.activeIdentity()) throw new Error('此 bot 已登录');
-    if (typeof identifier !== 'string' || !identifier.trim() || identifier.length > 40 || typeof credentialText !== 'string' || credentialText.length > 4096) throw new Error('请输入账号并选择凭据文件');
-    let credential: Credential;
-    try { credential = JSON.parse(credentialText); } catch { throw new Error('凭据文件格式不正确'); }
-    if (credential?.version !== 1 || !/^\d{5,12}$/.test(credential.botId) || typeof credential.token !== 'string' || credential.token.length < 24 || credential.token.length > 128) throw new Error('凭据文件格式不正确');
-    const response = await postJson(new URL('/login', this.serverBase()), { identifier: identifier.trim(), token: credential.token });
+    if (typeof identifier !== 'string' || !identifier.trim() || identifier.trim().length > 40 || typeof credentialText !== 'string' || credentialText.length > 4096) throw new Error('请输入原 ID 或昵称，并粘贴原凭据或选择凭据文件');
+    const account = normalizeBotId(identifier) ?? identifier.trim(), text = credentialText.trim();
+    let expectedId: string | null = null, token: string;
+    if (text.startsWith('{')) {
+      let credential: Credential;
+      try { credential = JSON.parse(text); } catch { throw new Error('凭据文件格式不正确'); }
+      expectedId = normalizeBotId(credential?.botId);
+      if (credential?.version !== 1 || !expectedId || typeof credential.token !== 'string') throw new Error('凭据文件格式不正确');
+      token = credential.token;
+    } else token = text;
+    if (token.length < 24 || token.length > 128) throw new Error('凭据格式不正确，请粘贴完整的原凭据或选择原 JSON 凭据文件');
+    const response = await postJson(new URL('/login', this.serverBase()), { identifier: account, token });
     const body = response.body as { ok: boolean; result?: { botId: string }; error?: string };
-    if (!body.ok || body.result?.botId !== credential.botId) throw new Error(body.error ?? '账号与凭据不匹配');
-    const identity: Identity = { installationId: randomUUID(), botId: credential.botId, token: credential.token };
+    const botId = normalizeBotId(body.result?.botId);
+    if (!body.ok || !botId || (expectedId && botId !== expectedId)) throw new Error(body.error ?? '账号与凭据不匹配');
+    const identity: Identity = { installationId: randomUUID(), botId, token };
     mkdirSync(this.dataDir, { recursive: true });
     const temp = `${this.identityFile}.${process.pid}.tmp`;
     writeFileSync(temp, JSON.stringify(identity), { mode: 0o600 }); renameSync(temp, this.identityFile);
-    this.saveCredential(credential);
+    this.saveCredential({ botId, token });
     void this.poll();
-    return { botId: credential.botId };
+    return { botId };
   }
   private async rpc(action: string, args: Record<string, unknown> = {}, options: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<any> {
     const identity = this.activeIdentity();
@@ -664,7 +674,12 @@ export class StarpostWorld implements World {
     const config = { ...STARPOST_CONFIG_GROUP, schema: { ...STARPOST_CONFIG_GROUP.schema, description: (identity ? `绑定 bot 使用的 ID：${identity.botId}　凭据：${identity.token}　请勿转发凭据。` : '注册后在此显示绑定 bot 所需的 ID 与凭据。')+' 官网：https://starpost.com.cn 。手机和网页端使用邮箱登录，在设置中用 ID 与凭据绑定 bot。青少年模式开关和审批位于星邮页面顶部“设置 · 青少年模式”，与手机和网页端同步。' } };
     return { label: '星邮', lamps: [{ label: '中转服务', state: this.connected ? 'online' : this.lastError ? 'error' : 'loading', hint: this.lastError || (this.connected ? '已连接' : '等待首次连接') }], config: [config], panels: [{ id: 'viewer', title: '星邮', description: '首次注册账号；注册后按好友或群聊查看只读聊天记录及动态。' }], invoke: async (panel, method, args) => {
       if (panel !== 'viewer') throw new Error('未知面板');
-      if (method === 'status') return { registered: Boolean(this.activeIdentity()), botId: this.activeIdentity()?.botId ?? null };
+      if (method === 'status') {
+        const current = this.activeIdentity();
+        return { registered: Boolean(current), botId: current?.botId ?? null, ...(!current && this.cfg.botId ? {
+          recoveryHint: normalizeBotId(this.cfg.botId) ? '旧版手工账号缺少 .env 密钥。重装用户请在下方使用原 ID 和原凭据恢复账号。' : '旧版手工账号 ID 格式无效。Bot ID 应为不小于 10001 的 5–12 位数字；重装用户请在下方恢复已有账号。',
+        } : {}) };
+      }
       if (method === 'mobileLoginInfo') { const current = this.activeIdentity(); return { botId: current?.botId ?? '', credential: current?.token ?? '', apkUrl: 'https://github.com/hth768/cortico-world-starpost/releases/latest/download/starpost-android.apk' }; }
       if(method==='teenControl'){
         const current=this.activeIdentity();if(!current)throw new Error('请先注册');

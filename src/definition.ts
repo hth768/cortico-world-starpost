@@ -6,11 +6,10 @@ export const STARPOST: WorldDefinition<StarpostConfigSection> = {
   id: 'starpost', label: '星邮', defaults: () => structuredClone(STARPOST_DEFAULTS),
   preflight: (ctx) => {
     if (ctx.cfg.receiveMode !== undefined && !['active', 'passive', 'mixed'].includes(ctx.cfg.receiveMode)) throw new Error('星邮聊天接收模式不合法');
-    if (ctx.cfg.botId && (!/^\d{5,12}$/.test(ctx.cfg.botId) || Number(ctx.cfg.botId) < 10001)) throw new Error('星邮聊天 ID 须是从 10001 起的数字');
     let url: URL;
     try { url = new URL(ctx.cfg.serverUrl); } catch { throw new Error('请设置星邮服务地址'); }
     if (!(url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))) throw new Error('星邮公网服务地址须使用 HTTPS');
-    if (ctx.cfg.botId && !ctx.secret(ctx.cfg.tokenSecret)) throw new Error('旧账号须在部署 .env 设置星邮密钥');
+    // 旧账号配置不完整时仍需开放初始页，供用户导入原凭据恢复账号。
   },
   create: (ctx) => new StarpostWorld(ctx.cfg, ctx.botDir, ctx.packageDir, ctx.dataDir, ctx.timezone, ctx.secret),
   describe: { tools: describeTools(STARPOST_TOOL_DECLS, Object.fromEntries(STARPOST_TOOL_DECLS.map(t => [t.name, { zh: t.description, en: t.description }]))), events: [

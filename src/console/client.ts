@@ -363,19 +363,24 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
       }).catch((error: unknown) => { result.textContent = String(error); }).finally(() => { button.disabled = false; });
     } });
     const row = ui.rowbar(); row.append(button); account.append(row, result);
-    const loginLabel = ui.h('div'); loginLabel.textContent = '已有账号：输入聊天 ID 或昵称，并选择原实例保存的凭据文件登录。';
+    const loginLabel = ui.h('div'); loginLabel.textContent = '恢复已有账号：填写原聊天 ID 或昵称，粘贴原凭据或选择 starpost-credential.json 文件。不需要填写设置中的“旧版手工账号 ID”，恢复后沿用原 ID。';
     const identifier = ui.input({ placeholder: '聊天 ID 或昵称' }); identifier.maxLength = 40;
+    const pasted = ui.input({ placeholder: '粘贴原凭据（或在旁边选择 JSON 文件）' }); pasted.type = 'password'; pasted.maxLength = 128; pasted.autocomplete = 'off';
     const file = ui.h('input') as HTMLInputElement; file.type = 'file'; file.accept = '.json,application/json';
     const loginButton = ui.button('凭据登录', { onClick: () => {
       loginButton.disabled = true;
       void (async () => {
-        if (!file.files?.[0] || file.files[0].size > 4096) throw new Error('请选择有效的凭据文件');
-        const credential = await file.files[0].text();
+        const selectedFile = file.files?.[0];
+        if (selectedFile && pasted.value.trim()) throw new Error('粘贴凭据与选择文件只需使用一种，请清空另一项');
+        if (selectedFile && selectedFile.size > 4096) throw new Error('请选择有效的凭据文件');
+        const credential = selectedFile ? await selectedFile.text() : pasted.value;
+        if (!credential.trim()) throw new Error('请粘贴原凭据或选择原 JSON 凭据文件');
         const r = await ctx.invoke<{ botId: string }>('login', [identifier.value, credential]);
+        pasted.value = ''; file.value = '';
         result.textContent = `已登录，聊天 ID：${r.botId}`; shown = ''; await refresh();
       })().catch(error => { result.textContent = String(error); }).finally(() => { loginButton.disabled = false; });
     } });
-    const loginRow = ui.rowbar(); loginRow.append(identifier, file, loginButton); account.append(loginLabel, loginRow);
+    const loginRow = ui.rowbar(); loginRow.append(identifier, pasted, file, loginButton); account.append(loginLabel, loginRow);
   }
   function showSearch() {
     if (shown === 'registered') return;
@@ -571,13 +576,13 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
     if (refreshBusy || ctx.signal.aborted) return;
     refreshBusy = true;
     try {
-      const identity = await ctx.invoke<{ registered: boolean; botId: string | null }>('status');
+      const identity = await ctx.invoke<{ registered: boolean; botId: string | null; recoveryHint?: string }>('status');
       try {
         const info = await ctx.invoke<{ botId: string; credential: string }>('mobileLoginInfo');
         credentials.textContent = info.botId ? `绑定 Bot ID：${info.botId}\n凭据：${info.credential}\n手机和网页端使用邮箱登录，再在设置中绑定此 bot。` : '注册后在此显示绑定 bot 所需的 ID 和凭据';
         credentials.style.whiteSpace = 'pre-wrap';
       } catch { credentials.textContent = ''; }
-      if (!identity.registered) { showRegistration(); status.textContent = '待注册'; return; }
+      if (!identity.registered) { showRegistration(); status.textContent = identity.recoveryHint || '可注册新账号或恢复已有账号'; return; }
       await refreshSafety();
       showSearch();
       const data = await ctx.invoke<Snapshot>('overview');
