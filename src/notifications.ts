@@ -64,7 +64,7 @@ export class NotificationDigest {
   enqueue(event: RelayNotification, settings: NotificationSettings, now: number, active = false): boolean {
     const category = categoryOf(event.type);
     if (!category) return false;
-    if (!active && (category === 'watch' || ['square.game', 'mystery.published'].includes(event.type))) return false;
+    if (!active && category === 'watch') return false;
     const mode = category === 'feed' ? settings.feedMode : settings.squareMode;
     if (mode === 'realtime') return false;
     if (mode === 'manual') return true;
@@ -75,11 +75,11 @@ export class NotificationDigest {
     if (!previous && this.items.size >= MAX_PENDING_ITEMS) { this.overflowEvents[category]++; return true; }
     const body = active ? '' : event.type === 'post.comment' ? data.comment?.text : event.type === 'post.deleted' ? '' : data.text;
     const item: DigestItem = { category, id, type: event.type, at: event.at,
-      author: text(event.type === 'post.comment' ? data.comment?.author : data.author, 100),
+      author: text(event.type === 'post.comment' ? data.comment?.author : data.author ?? data.creator, 100),
       counts: { ...(previous?.counts ?? {}), [event.type]: (previous?.counts[event.type] ?? 0) + 1 },
       preview: text(body, 160), truncated: typeof body === 'string' && body.length > 160 };
     if (category === 'square') {
-      item.kind = text(data.kind, 20); item.target = text(data.target, 100);
+      item.kind = text(data.kind ?? (event.type === 'mystery.published' ? 'mystery' : event.type === 'square.game' ? 'game' : ''), 20); item.target = text(data.target ?? data.gameId, 100);
       item.nickname = text(data.nickname, 100); item.groupName = text(data.groupName, 100);
     }
     if (event.type === 'post.comment') item.commentId = text(data.comment?.id, 100);

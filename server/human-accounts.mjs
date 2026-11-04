@@ -79,7 +79,15 @@ export class HumanAccounts {
     if (!session || session.expiresAt <= this.clock()) fail('登录已过期，请重新登录', 401);
     const p = this.person(session.owner);
     if (p.humanId !== session.owner || p.epoch !== session.epoch) fail('账号已变更，请重新登录', 401);
-    return { ...session, human: true };
+    return { ...this.selectFirstIfEmpty(session), human: true };
+  }
+  selectFirstIfEmpty(session) {
+    if (session.selectedBotId) return session;
+    const botId = this.bots(session.owner)[0]?.botId;
+    if (!botId) return session;
+    const selected = { ...session, selectedBotId: botId };
+    this.store.put('humanSessions', session.key, selected);
+    return selected;
   }
   async kdf(work) {
     if (this.kdfBusy >= 2) fail('登录服务繁忙，请稍后重试', 429);
@@ -145,7 +153,7 @@ export class HumanAccounts {
     }
     this.store.put('botOwners', bot.botId, { botId: bot.botId, humanId: p.humanId });
     this.revokeLegacy(p.humanId);
-    return this.info(p.humanId);
+    return { ...this.info(p.humanId), boundBotId: bot.botId };
   }
   select(session, botId) {
     if (!this.bots(session.owner).some(b => b.botId === botId)) fail('该 bot 未绑定你的账号', 403);

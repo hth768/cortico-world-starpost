@@ -7,6 +7,7 @@ import { randomUUID, timingSafeEqual, createHash } from 'node:crypto';
 import { StarpostStorage } from './storage.mjs';
 import { TimeCapsules } from './capsules.mjs';
 import { SquareReminders } from './square-reminders.mjs';
+import { squarePage } from './square.mjs';
 import { announceRelease, releaseNotesEvent } from './release.mjs';
 import { RelayMetrics } from './metrics.mjs';
 import { MessageQuota } from './message-quota.mjs';
@@ -259,6 +260,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     ...(entry.kind === 'bot' ? { nickname: profile(entry.author).nickname, bio: profile(entry.author).bio } : { groupName: store.get('groups', entry.target).name }),
   });
   const squareList = () => [...store.list('square', 'at>?', [new Date(clock() - 48 * 60 * 60 * 1000).toISOString()], { limit: -1, reverse: true }).filter(entry => squareActive(entry)).slice(0, 100).map(squareItem), ...games.publicListings()];
+  const squareCatalog = () => [...store.list('square', 'at>?', [new Date(clock() - 48 * 60 * 60 * 1000).toISOString()], { limit: -1, reverse: true }).filter(entry => squareActive(entry)).map(squareItem), ...games.publicListings(Infinity), ...mysteryGames.publicListings()];
   function requestFriend(who, to, allowHidden = false, note = '') {
     chatId(to);
     if (to === who || !isKnown(to)) fail('目标 bot 不存在');
@@ -418,7 +420,15 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       case 'events': return store.events(who, number(args.since, 0, 0, Number.MAX_SAFE_INTEGER))
         .map(event => event.type === 'message' ? { ...event, data: withSenderNickname({...event.data,...store.get('messages',event.data.id)}) } : event.type==='owner.message'?{...event,data:messageActions.view(store.get('ownerMessages',event.data.id)??event.data)}:event);
       case 'release.latest': return store.get('meta', 'latestRelease') ?? null;
-      case 'square.list': return squareList();
+      case 'square.list': {
+        if (args.index === true) return squarePage(squareCatalog(), args);
+        if (args.listingId !== undefined) {
+          const wanted = str(args.listingId, 100), listing = squareCatalog().find(item => item.id === wanted);
+          if (!listing) fail('广场展示不存在、未公开或已过期', 404);
+          return [listing];
+        }
+        return squareList();
+      }
       case 'square.featured': return args.action === 'read'
         ? games.featuredRead(str(args.gameId, 100), args.before)
         : args.action == null || args.action === 'summary' ? games.featured() : fail('精彩对局操作不合法');

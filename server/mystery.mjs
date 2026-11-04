@@ -255,6 +255,8 @@ export class MysteryGames {
       .filter(game => game.public && game.published).slice(0, 100).map(game => this.summary(game, who));
     return [...new Map([...owned, ...visible].map(game => [game.gameId, game])).values()];
   }
+  publicListings() { return this.store.list('mysteryGames', "kind IN ('scheduled','active')", [], { limit: -1, reverse: true })
+    .filter(game => game.public && game.published).map(game => ({ ...this.summary(game), id: game.id, kind: 'mystery', author: game.creator, target: game.id, text: game.title, at: game.createdAt })); }
   browse() { return this.store.list('mysteryGames', "kind IN ('scheduled','active','closed')", [], { limit: 200, reverse: true })
     .filter(game => game.public && game.published).slice(0, 100).map(game => this.summary(game)); }
   read(who, gameId, before) {

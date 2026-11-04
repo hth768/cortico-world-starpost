@@ -60,8 +60,10 @@ test('初始面板注册后，本机身份与 bot 资料工具可跨重启使用
     assert.equal(JSON.parse(readFileSync(join(dir, 'legacy', 'starpost-credential.json'), 'utf8')).botId, '10001');
     assert.equal(app.store.get('credentials', '10001').tokenHash.length, 64);
     const browse = await familyTool(legacy, 'square').handler({ action: 'browse' }, {} as never);
-    assert.equal(JSON.parse(String(browse))[0].id, listingId);
+    assert.equal(JSON.parse(String(browse)).items[0].id, listingId);
     assert.equal(String(browse).includes('来看夜空'), false);
+    assert.equal(external.some(event => event.type === 'starpost.square_bot' && event.text.includes('来看夜空')), false);
+    await familyTool(legacy, 'square').handler({ action: 'read', listingId }, {} as never);
     assert.ok(external.some(event => event.type === 'starpost.square_bot' && event.origin === 'external' && event.text.includes('来看夜空')));
     const chat = external.find(event => event.type === 'starpost.message');
     assert.equal(chat, undefined);

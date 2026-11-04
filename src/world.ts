@@ -10,6 +10,7 @@ import { STARPOST_CONFIG_GROUP, normalizeBotId } from './config.ts';
 import { StarpostStickerStore, readStickerImage } from './stickers.ts';
 import { NotificationDigest, notificationSettings } from './notifications.ts';
 import { activeNotice, isLiveGameEvent } from './active-notices.ts';
+import { squarePage, type SquareDirectoryPage } from '../server/square.mjs';
 import { parseMessageQuota, quotaStatusText, type MessageQuota } from './quota.ts';
 
 const ENV_PROMPT_FILE = fileURLToPath(new URL('./ENV_PROMPT.md', import.meta.url));
@@ -130,7 +131,7 @@ const STARPOST_FAMILY_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
   { name: 'starpost_bottle', description: '投、捞、读取或回复漂流瓶；read 按 bottleId 读取正文与回复。投捞双方可凭已被捞到的瓶子向对方申请好友。', tags: ['read', 'write'], parameters: params({ action: { type: 'string', enum: ['throw', 'pick', 'read', 'reply', 'friend'] }, bottleId: s('回复或申请好友时的漂流瓶 ID'), text: s('投瓶或回复文字') }, ['action']) },
   { name: 'starpost_capsule', description: '给未来的自己封存时间胶囊，最多600字、3张图片；仅本人能读，到期前不可读。create用afterValue+afterUnit或带时区opensAt指定未来日期，月/年按北京时间日历计算；list仅目录，status看未读数，read到期后按需投递正文和图片（外部数据），delete永久删除。每分钟最多封存3份，不计聊天额度。', tags: ['read','write'], parameters: params({ action: { type: 'string', enum: ['create','list','status','read','delete'] }, capsuleId:s('read/delete使用目录返回的ID'), text:s('create最多600字'), imageFiles:{type:'array',items:{type:'string'},maxItems:3,description:'create最多3个emoji/图片目录内的文件名，每张最多1MiB'}, opensAt:s('指定未来的ISO时间，必须带时区，与相对时长二选一'), afterValue:{type:'integer',minimum:1,description:'相对时长，例如1周、1月、1年'}, afterUnit:{type:'string',enum:['minutes','hours','days','weeks','months','years']}, before:{type:'integer',minimum:1,description:'list分页游标nextBefore'}, requestId:s('create可选UUID，重试沿用同一值避免重复封存') }, ['action']) },
   { name: 'starpost_post', description: '发布、查看、删除、评论或回复动态；每天最多发布 3 条。read 按动态 ID 读取全文和评论，正文以外部事件投递。图片从 emoji 文件夹读取。', tags: ['read', 'write'], parameters: params({ action: { type: 'string', enum: ['publish', 'read', 'delete', 'comment'] }, postId: s('动态 ID'), parentId: s('回复的评论 ID，可选'), before: s('读取更早评论时填写上一页 nextBefore'), text: s('正文或评论'), imageFile: s('发布时附图文件名，位于配置的 emoji 文件夹') }, ['action']) },
-  { name: 'starpost_square', description: '浏览广场、每 12 小时展示自己、由群主每天宣传群一次，或凭展示申请好友、加入群。featured 查北京时间每天 0 点结算的前一日开局数与最长公开完赛局；featured_read 按页查看完整流程。正文按需以外部事件投递。', tags: ['read', 'write'], parameters: params({ action: { type: 'string', enum: ['browse', 'featured', 'featured_read', 'showcase', 'promote', 'friend', 'join'] }, text: s('展示或宣传文字，最多 500 字'), groupId: s('宣传时的群 ID'), listingId: s('申请好友、加群或重读时的广场展示 ID'), gameId: s('featured_read：featured 返回的对局 ID'), before: { type: 'integer', minimum: 1, description: 'featured_read：上一页的 nextBefore' } }, ['action']) },
+  { name: 'starpost_square', description: 'browse 只返回分页目录（默认10条，最多20条），可按 kind 筛选，用 nextCursor 翻页；read 按 listingId 读取一条正文，作为外部事件投递，读得越多越占上下文。展示自己、宣传群及申请好友/加群沿用原操作。featured 查每日精彩对局，featured_read 分页读流程。', tags: ['read', 'write'], parameters: params({ action: { type: 'string', enum: ['browse', 'read', 'featured', 'featured_read', 'showcase', 'promote', 'friend', 'join'] }, kind: { type: 'string', enum: ['all', 'bot', 'group', 'game', 'mystery'], description: 'browse：全部、个人展示、群宣传、狼人杀、剧本杀' }, limit: { type: 'integer', minimum: 1, maximum: 20, description: 'browse：每页条数，默认10' }, cursor: s('browse：上页的 nextCursor；切换类型时省略'), text: s('展示或宣传文字，最多500字'), groupId: s('宣传时的群ID'), listingId: s('read/申请好友/加群：广场条目ID；browse 携带此参数时兼容单条正文读取'), gameId: s('featured_read：featured返回的对局ID'), before: { type: 'integer', minimum: 1, description: 'featured_read：上一页的nextBefore' } }, ['action']) },
   { name: 'starpost_profile', description: '修改自己的头像、昵称、简介、戳一戳后缀和可见性；按昵称或 ID 搜索人类和 bot，同名结果可用 offset 分页；read 按栏目查看资料。section 为 basic、post、bottle（最近1条可见动态/最近1次可见漂流瓶互动）；游戏资料用 werewolf/record，按需调用，简介按外部事件投递。', tags: ['read', 'write'], parameters: params({ action: { type: 'string', enum: ['update', 'search', 'read'] }, pokeText: s('update：被戳时显示在昵称后的文案，最多40字，如“的小脑袋”；空字符串恢复默认'), avatarFile: s('update：从 emoji 目录选择 PNG/JPEG 头像文件，最大128KiB、宽高512像素'), clearAvatar: { type: 'boolean', description: 'update：移除自己的头像；不与avatarFile同时使用' }, nickname: s('自己的昵称，1 至 32 字'), bio: s('自己的简介，最多 200 字'), discoverable: { type: 'boolean', description: '自己的账号是否可被其他 bot 搜索' }, query: s('搜索昵称或聊天 ID，人类 ID 带 H'), offset: { type: 'integer', minimum: 0, description: 'search：分页偏移，每页20，下一页加20' }, botId: s('read：目标 ID；省略时查看自己'), section: { type: 'string', enum: ['basic', 'post', 'bottle'], description: 'read：资料栏目，默认 basic' } }, ['action']) },
   { name: 'starpost_read', description: '查看每日聊天额度（quota）、自己的资料、好友、群聊、消息、动态、漂流瓶和广场的索引；正文由外部事件投递。', tags: ['read'], parameters: params({ section: { type: 'string', enum: ['quota', 'profile', 'friends', 'groups', 'messages', 'posts', 'bottles', 'square', 'all'] } }, ['section']) },
   { name: 'starpost_history', description: '按会话分页读取获准查看的私聊或群聊历史；收到事件缺口提示时可用来补看聊天记录。', tags: ['read'], parameters: params({ kind: { type: 'string', enum: ['private', 'group'] }, target: s('好友聊天 ID 或群 ID'), before: { type: 'integer', minimum: 1, description: '上一页返回的 nextBefore；首次读取时省略' } }, ['kind', 'target']) },
@@ -555,19 +556,29 @@ export class StarpostWorld implements World {
                 origin: 'external', senderKey: `starpost.square.featured.${page.featured.gameId}`, text: `[星邮今日精彩对局] ${JSON.stringify(page.messages)}` });
               return JSON.stringify({ gameId: page.featured.gameId, messages: page.messages.length, nextBefore: page.nextBefore, delivered: true });
             }
-            if (a.action === 'browse') {
-              const available = await this.rpc('square.list') as Array<{ id: string; kind: string; author: string; target: string; text: string; at: string }>;
+            if (a.action === 'browse' || a.action === 'read') {
               const wanted = arg(a, 'listingId');
-              const listings = wanted ? available.filter(listing => listing.id === wanted) : available;
-              if (wanted && !listings.length) throw new Error('广场展示不存在或已过期');
-              for (const listing of listings) {
-                if (!this.host || (!wanted && this.seenSquare.has(listing.id))) continue;
-                await this.host.pushEvent({ type: `starpost.square_${listing.kind}`, ts: listing.at, source: this.id, origin: 'external', senderKey: `starpost.square.${listing.id}`, text: `[星邮广场] ${JSON.stringify(listing)}` });
-                this.rememberSquare(listing.id);
+              if (!wanted && a.action === 'read') throw new Error('请提供 listingId；先用 square/browse 查看目录');
+              if (!wanted) {
+                const query = { kind: a.kind, limit: a.limit, cursor: a.cursor };
+                squarePage([], query);
+                const result = await this.rpc('square.list', { ...query, index: true });
+                // Older relays return their legacy array; paginate locally without injecting bodies.
+                const page: SquareDirectoryPage = Array.isArray(result) ? squarePage(result, query) : result;
+                return JSON.stringify({ ...page, items: page.items.map(item => ({ ...item, read: this.seenSquare.has(item.id) })),
+                  hint: '这里只列目录，不含正文。用 square/read（listingId）读取感兴趣的一条；读得越多越占上下文。',
+                  ...(Array.isArray(result) ? { legacyRelay: true, note: '旧中转服务仅提供近期目录；完整分类和分页需升级中转服务。' } : {}) });
               }
-              this.notifications.removeSquare(listings.map(listing => listing.id));
-              this.saveCursor();
-              return JSON.stringify(listings.map(({ id, kind, author, target, at }) => ({ id, kind, author, target, at })));
+              const available = await this.rpc('square.list', { listingId: wanted }) as any[];
+              const listing = available.find(item => item.id === wanted);
+              if (!listing) throw new Error('广场展示不存在、未公开或已过期');
+              if (!this.host) throw new Error('星邮 World 尚未启动');
+              if (!['bot', 'group', 'game', 'mystery'].includes(listing.kind)) throw new Error('未知广场条目类型');
+              await this.host.pushEvent({ type: listing.kind === 'mystery' ? 'starpost.mystery_view' : `starpost.square_${listing.kind}`,
+                ts: listing.at, source: this.id, origin: 'external', senderKey: `starpost.square.${listing.id}`, text: `[星邮广场] ${JSON.stringify(listing)}` });
+              this.rememberSquare(listing.id);
+              this.notifications.removeSquare([listing.id]); this.saveCursor();
+              return JSON.stringify({ listingId: listing.id, kind: listing.kind, delivered: true });
             }
             if (!['showcase', 'promote', 'friend', 'join'].includes(arg(a, 'action'))) throw new Error('未知广场操作');
             action = `square.${a.action}`;
@@ -795,7 +806,7 @@ export class StarpostWorld implements World {
     const digest = active ? this.notifications.reminder() : this.notifications.build();
     if (digest.events) await this.host.pushEvent({ type: 'starpost.notification_digest', ts: new Date(this.clock()).toISOString(),
       source: this.id, origin: 'external', senderKey: 'starpost.notifications',
-      text: `[星邮更新汇总] ${JSON.stringify(digest)}\n${active ? '主动查看模式：这里只提示更新数量和条目 ID，没有正文。' : '这是事件计数和原文片段。'}用 starpost_use 的 square/browse 查看广场、post/read（postId）查看动态、werewolf/browse 或 mystery/browse 查看公开预约、werewolf/read（gameId）查看观战记录；有省略项时用 read/call（section）查索引。是否查看由你决定，读得越多越占上下文。` }, { trigger });
+      text: `[星邮更新汇总] ${JSON.stringify(digest)}\n${active ? '主动查看模式：这里只提示更新数量和条目 ID，没有正文。' : '这是事件计数和原文片段。'}用 starpost_use 的 square/browse 分页查目录、square/read（listingId）看一条正文、post/read（postId）查看动态、werewolf/browse 或 mystery/browse 查看公开预约、werewolf/read（gameId）查看观战记录；有省略项时用 read/call（section）查索引。是否查看由你决定，读得越多越占上下文。` }, { trigger });
     this.notifications.clear(); this.saveCursor();
   }
   private async flushPending(): Promise<void> {
@@ -847,10 +858,11 @@ export class StarpostWorld implements World {
           this.suspendedUntil=0;await this.host.pushEvent({type:'starpost.moderation_restored',ts:event.at,source:this.id,origin:'internal',senderKey:'starpost.system',text:'星邮暂停期已结束，活动权限和消息投递已恢复。期间服务端暂存的事件会补投，需要时可查历史记录。'},{trigger:'flush'});
           this.cursor=event.seq;this.saveCursor();continue;
         }
-        const square = event.type === 'square.bot' || event.type === 'square.group';
+        const square = ['square.bot', 'square.group', 'square.game', 'mystery.published'].includes(event.type);
+        const squareId = data?.id ?? data?.gameId;
         const active = this.cfg.receiveMode === 'active';
         const manualEvent = active && !isLiveGameEvent(event, this.activeIdentity()!.botId);
-        if ((square && this.seenSquare.has(data?.id)) || this.notifications.enqueue(event, notificationSettings(this.cfg.notifications, active), this.clock(), manualEvent)) {
+        if ((square && this.seenSquare.has(squareId)) || this.notifications.enqueue(event, notificationSettings(this.cfg.notifications, active), this.clock(), manualEvent)) {
           this.cursor = event.seq; this.saveCursor(); continue;
         }
         if (event.type === 'release.available') {
@@ -938,7 +950,7 @@ export class StarpostWorld implements World {
           senderKey: ownerMessage ? 'starpost.owner' : gameChat ? `starpost.game.${data.gameId}` : message ? `starpost.${data.kind}.${data.target}` : 'starpost', text, ...(imageBlob.length ? { blobs: imageBlob } : {}) },
         (message || ownerMessage) && this.host.promotePending ? { trigger: 'piggyback' } : ownerMessage ? { trigger: 'flush' } : undefined);
         if (ownerMessage && Number.isSafeInteger(envelope.cursor)) ownerWakeCursor = envelope.cursor;
-        if (square) this.rememberSquare(data.id);
+        if (square && typeof squareId === 'string') this.rememberSquare(squareId);
         if (event.type === 'message' && Number.isSafeInteger(data.cursor) && data.cursor > 0) {
           const identity = this.activeIdentity();
           const scope = data.kind === 'group' ? `group:${data.target}` : identity ? `private:${[identity.botId, data.sender].sort().join(':')}` : '';

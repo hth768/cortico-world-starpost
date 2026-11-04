@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createStarpostServer } from '../server/server.mjs';
-import { passwordHash, passwordMatches } from '../server/email-auth.mjs';
+import { hashToken, passwordHash, passwordMatches } from '../server/email-auth.mjs';
 import { smtpMailer } from '../server/mail.mjs';
 
 async function fixture() {
@@ -37,6 +37,36 @@ async function fixture() {
   };
   return { directory, app, mails, keys, post, rpc, bot, sendCode, register, claim, base, advance(ms) { now += ms; }, async close() { await app.close(); rmSync(directory, { recursive: true, force: true }); } };
 }
+
+test('首次绑定自动选中，旧空选择会话自愈，追加绑定不替换当前 bot，手机网页同步且隔离账号', async () => {
+  const f=await fixture();try{
+    const a=await f.register('binding-a@example.com'),other=await f.register('binding-other@example.com');
+    const second=await f.post('/web/auth',{action:'login',method:'password',email:'binding-a@example.com',password:'example-pass-123'},'','',{origin:f.base});
+    assert.equal(second.ok,true,second.error);
+    const cookie=second.headers.get('set-cookie').split(';')[0];
+    const web=(action,args={})=>f.post('/web/rpc',{action,args},'','',{origin:f.base,cookie});
+    assert.equal((await f.rpc(a.accessToken,'account.info')).result.botId,'');
+    const bound=await f.rpc(a.accessToken,'account.bind',{botId:'10001',credential:f.keys[10001]});
+    assert.equal(bound.ok,true,bound.error);assert.equal(bound.result.botId,'10001');assert.equal(bound.result.boundBotId,'10001');
+    assert.equal((await f.rpc(a.accessToken,'account.info')).result.botId,'10001');
+    assert.equal((await web('account.info')).result.botId,'10001');
+    assert.equal((await f.rpc(a.accessToken,'overview')).ok,true);assert.equal((await web('overview')).ok,true);
+    assert.equal((await f.rpc(other.accessToken,'account.info')).result.botId,'');
+    assert.equal((await f.rpc(other.accessToken,'account.select',{botId:'10001'})).status,403);
+    const added=await f.rpc(a.accessToken,'account.bind',{botId:'10002',credential:f.keys[10002]});
+    assert.equal(added.result.boundBotId,'10002');assert.equal(added.result.botId,'10001');
+    assert.equal((await web('account.info')).result.botId,'10001');
+    await web('account.select',{botId:'10002'});
+    assert.equal((await web('account.info')).result.botId,'10002');
+    assert.equal((await f.rpc(a.accessToken,'account.info')).result.botId,'10001','其他设备保持自己的当前选择');
+    const key=hashToken(a.accessToken),old=f.app.store.get('humanSessions',key);
+    f.app.store.put('humanSessions',key,{...old,selectedBotId:''});
+    assert.equal((await f.rpc(a.accessToken,'account.info')).result.botId,'10001');
+    assert.equal(f.app.store.get('humanSessions',key).expiresAt,old.expiresAt,'补全选择不延长14天会话');
+    assert.equal((await f.rpc(other.accessToken,'account.bind',{botId:'10001',credential:f.keys[10001]})).status,409);
+    assert.deepEqual((await f.rpc(other.accessToken,'account.info')).result.bots,[]);
+  }finally{await f.close()}
+});
 
 test('人类动态：无绑定也可图文发布、不设每日上限、防刷、只能删除自己的动态', async () => {
   const f = await fixture(); try {

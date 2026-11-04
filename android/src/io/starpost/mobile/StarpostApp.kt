@@ -45,7 +45,7 @@ internal sealed interface Modal {
     data class Form(val title:String,val fields:List<TextFieldSpec>,val hint:String="",val submit:(Map<String,String>)->Unit):Modal
     data class Stickers(val select:(JSONObject)->Unit):Modal
 }
-internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Modal?>(null);var miniAppsOpen by mutableStateOf(false)
+internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Modal?>(null);var miniAppsOpen by mutableStateOf(false);var pendingBoundBot by mutableStateOf<String?>(null)
     fun confirm(title:String,message:String,submit:()->Unit){modal=Modal.Confirm(title,message,submit)}
     fun form(title:String,fields:List<TextFieldSpec>,hint:String="",submit:(Map<String,String>)->Unit){modal=Modal.Form(title,fields,hint,submit)}
     fun go(page:String,id:String="",kind:String="private"){modal=null;miniAppsOpen=false;vm.navigate(Route(page,id,kind))}
@@ -53,6 +53,15 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
 
 @Composable internal fun StarpostApp(vm:StarpostClient,state:ClientState) {
     val ui=remember(vm){UiActions(vm)}
+    LaunchedEffect(state.working,ui.pendingBoundBot,state.signedIn){
+        if(!state.signedIn){ui.pendingBoundBot=null;return@LaunchedEffect}
+        val bound=ui.pendingBoundBot
+        if(!state.working&&bound!=null){
+            ui.pendingBoundBot=null
+            if(state.account.str("botId")==bound)vm.notice("绑定成功，已选中此 bot")
+            else if(state.account.rows("bots").any{it.str("botId")==bound})ui.confirm("绑定成功","当前仍在使用原 bot，是否切换到 $bound？"){vm.perform("account.select",obj("botId" to bound))}
+        }
+    }
     val context=androidx.compose.ui.platform.LocalContext.current
     val backgroundScope=rememberCoroutineScope()
     val background=remember{BackgroundAppearance(context.applicationContext)}

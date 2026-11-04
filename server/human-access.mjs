@@ -47,7 +47,11 @@ export class HumanAccess {
       if(remark)this.store.put('contactRemarks',key,{owner:humanId,target,remark});else this.store.remove('contactRemarks',key);
       return {botId:target,remark};
     }
-    if (action === 'account.bind') return this.accounts.bind(humanId, args);
+    if (action === 'account.bind') {
+      const bound = this.accounts.bind(humanId, args);
+      const selected = this.accounts.selectFirstIfEmpty(session);
+      return { ...bound, botId: selected.selectedBotId };
+    }
     if (action === 'account.select') return this.accounts.select(session, args.botId);
     if (action === 'account.botAvatar' || action === 'account.botPokeText') {
       const botId = args.botId;

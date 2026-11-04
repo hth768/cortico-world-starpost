@@ -59,6 +59,37 @@ async function setup(clock: () => number) {
   return { dir, app, rpc, cfg, events, host, world, close: async () => { await app.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
+test('公开游戏公告遵守混合及被动模式的广场设置，邀请和参赛事件保持及时投递', async () => {
+  for (const receiveMode of ['mixed', 'passive'] as const) for (const squareMode of ['manual', 'digest', 'realtime'] as const) {
+    let now = Date.parse('2026-11-01T18:00:00+08:00'); const h = await setup(() => now);
+    h.cfg.receiveMode = receiveMode; h.cfg.notifications.squareMode = squareMode;
+    let receiver = h.world();
+    try {
+      for (const [type, data] of [
+        ['square.game', { id: 'public-wolf', gameId: 'public-wolf', text: '公开狼人杀公告正文' }],
+        ['mystery.published', { gameId: 'public-mystery', creator: '10002', title: '公开剧本杀公告正文' }],
+        ['game.invited', { gameId: 'private-wolf', creator: '10002' }],
+        ['mystery.invited', { gameId: 'private-mystery', creator: '10002' }],
+        ['game.reminder', { gameId: 'private-wolf' }],
+        ['game.private', { gameId: 'playing', recipients: ['10001'], kind: 'role', role: 'seer' }],
+        ['game.public', { gameId: 'playing', recipients: ['10001'], kind: 'day' }],
+      ] as const) h.app.store.emit(['10001'], type, data);
+      await receiver.start(h.host);
+      for (const type of ['game_invited', 'mystery_invited', 'game_reminder', 'game_private', 'game_public']) assert.ok(h.events.some(e => e.type === `starpost.${type}`), type);
+      assert.equal(h.events.filter(e => ['starpost.square_game', 'starpost.mystery_published'].includes(e.type)).length, squareMode === 'realtime' ? 2 : 0);
+      assert.equal(h.events.some(e => e.type === 'starpost.notification_digest'), false);
+      await receiver.stop(); receiver = h.world(); now += h.cfg.notifications.digestIntervalMs; await receiver.start(h.host);
+      const notices = h.events.filter(e => e.type === 'starpost.notification_digest');
+      assert.equal(notices.length, squareMode === 'digest' ? 1 : 0);
+      if (squareMode === 'digest') {
+        const body = digestBody(notices[0]); assert.equal(body.events, 2);
+        assert.deepEqual(body.items.map((i: any) => i.id).sort(), ['public-mystery', 'public-wolf']);
+        assert.equal(body.items.find((i: any) => i.id === 'public-mystery').kind, 'mystery');
+      }
+    } finally { await receiver.stop(); await h.close(); }
+  }
+});
+
 test('主动模式覆盖实时设置，只提示日常更新，正文可按需读取，保留邀请、冷却和主人/参赛消息', async () => {
   let now = Date.parse('2026-11-01T18:00:00+08:00');
   const h = await setup(() => now); h.cfg.receiveMode = 'active';
@@ -167,7 +198,10 @@ test('主动浏览模式不自动通知，完整广场仍可查看；浏览会�
     assert.equal(h.events.length, 0);
     const browse = familyTool(receiver, 'square');
     const receipt = String(await browse.handler({ action: 'browse' }, {} as never));
-    assert.equal(receipt.includes('这段正文'), false); assert.ok(h.events[0].text.includes('这段正文')); assert.equal(h.events[0].origin, 'external');
+    assert.equal(receipt.includes('这段正文'), false); assert.equal(h.events.length, 0);
+    assert.equal(JSON.parse(receipt).items.length, 1);
+    await browse.handler({ action: 'read', listingId: result.result.listingId }, {} as never);
+    assert.ok(h.events[0].text.includes('这段正文')); assert.equal(h.events[0].origin, 'external');
     await receiver.stop();
     h.app.store.emit(['10001'], 'square.bot', { id: result.result.listingId, kind: 'bot', author: '10002', target: '10002', text: '只有主动浏览时读取这段正文' });
     receiver = h.world(); await receiver.start(h.host);
@@ -177,7 +211,7 @@ test('主动浏览模式不自动通知，完整广场仍可查看；浏览会�
     h.cfg.notifications.squareMode = 'digest';
     const queued = await h.rpc('10003', 'square.showcase', { text: '先到汇总缓冲，再被主动浏览' }); await poll(receiver);
     assert.ok(JSON.parse(readFileSync(join(h.dir, 'starpost-cursor.json'), 'utf8')).notifications.items.some((item: any) => item.id === queued.result.listingId));
-    await familyTool(receiver, 'square').handler({ action: 'browse' }, {} as never);
+    await familyTool(receiver, 'square').handler({ action: 'read', listingId: queued.result.listingId }, {} as never);
     now += h.cfg.notifications.digestIntervalMs; await poll(receiver);
     assert.equal(h.events.filter(e => e.type === 'starpost.notification_digest').length, 0);
   } finally { await receiver.stop(); await h.close(); }

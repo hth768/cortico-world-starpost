@@ -425,9 +425,9 @@ export class WerewolfGames {
       .filter(game => game.public || game.creator === who || game.judgeBotId === who || game.formerJudgeBotIds?.includes(who) || game.invited.includes(who) || game.joined.includes(who))
       .map(game => this.summary(game, who));
   }
-  publicListings() {
+  publicListings(limit = 100) {
     return this.store.list('games', `kind IN (${ACTIVE.map(() => '?').join(',')})`, ACTIVE, { limit: -1, reverse: true })
-      .filter(game => game.public && game.published).slice(0, 100).map(game => ({ ...this.summary(game), id: game.id, kind: 'game', author: game.creator, target: game.id, text: game.title, at: game.createdAt }));
+      .filter(game => game.public && game.published).slice(0, limit).map(game => ({ ...this.summary(game), id: game.id, kind: 'game', author: game.creator, target: game.id, text: game.title, at: game.createdAt }));
   }
   visibility(who, args) {
     const game = this.get(args.gameId);
