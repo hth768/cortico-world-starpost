@@ -26,7 +26,8 @@ import java.time.Instant
     "contacts"->Contacts(ui,s)
     "search"->SearchScreen(ui,s)
     "groupCreate","invite"->GroupForm(ui,s)
-    "owner","socialHistory","history"->ChatScreen(ui,s)
+    "owner","socialHistory","history","blockedHistory"->ChatScreen(ui,s)
+    "safety"->SafetyScreen(ui,s)
     "settings"->SettingsScreen(ui,s)
     "approvals"->ApprovalsScreen(ui,s)
     "teen"->TeenScreen(ui,s)
@@ -101,7 +102,7 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
 }}
 
 @Composable private fun ChatScreen(ui:UiActions,s:ClientState){
-    val route=s.route;val readOnly=route.page=="history";val owner=route.page=="owner";val messages=s.data.rows("messages");val list=rememberLazyListState();val key=ui.vm.draftKey
+    val route=s.route;val botReadOnly=route.page=="history";val readOnly=botReadOnly||route.page=="blockedHistory";val owner=route.page=="owner";val messages=s.data.rows("messages");val list=rememberLazyListState();val key=ui.vm.draftKey
     var draft by rememberSaveable(key){mutableStateOf(ui.vm.draft())};var quote by remember(key){mutableStateOf<JSONObject?>(null)}
     var menu by remember(key){mutableStateOf<JSONObject?>(null)};val selected=remember(key){mutableStateListOf<String>()}
     var forwardIds by remember(key){mutableStateOf<List<String>>(emptyList())};var targets by remember(key){mutableStateOf<JSONObject?>(null)};var record by remember(key){mutableStateOf<JSONObject?>(null)}
@@ -135,7 +136,7 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
                     onMention=if(readOnly)null else {id,name->draft+="@$name ";ui.vm.mention(id,name);ui.vm.draft(draft);composerFocus.requestFocus()},
                     onPoke=if(readOnly||self)null else {id->if(owner&&s.account.str("address").isEmpty())ui.vm.notice("请先在下方设置桌宠对你的称呼")else ui.vm.perform(if(owner)"owner.poke" else "social.poke",if(owner)obj() else obj("to" to id,"groupId" to if(route.kind=="group")route.id else "")){ui.vm.notice("已戳一戳")}},
                     onLongClick={menu=m},onClick={if(selected.isNotEmpty()&&!m.optBoolean("recalled"))toggle(m.str("id"))},selected=m.str("id") in selected,
-                    onForward={if(selected.isNotEmpty())toggle(m.str("id"))else ui.vm.perform(if(owner)"owner.read" else if(readOnly)"message.read" else "social.message.read",request(m)){record=it}}
+                    onForward={if(selected.isNotEmpty())toggle(m.str("id"))else ui.vm.perform(if(owner)"owner.read" else if(botReadOnly)"message.read" else "social.message.read",request(m)){record=it}}
                 )}}
             }
         }
@@ -153,13 +154,14 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
         }
     }
     menu?.let{m->val mine=if(owner)m.str("direction")=="human" else m.str("sender")==s.account.str("humanId")
-        MessageActionMenu(ui,m,!readOnly,mine,{menu=null},onQuote={quote=m;composerFocus.requestFocus()},onRecall={ui.confirm("撤回消息","只能撤回自己两分钟内发送的消息，原位置将保留提示。"){ui.vm.perform(if(owner)"owner.recall" else "social.message.recall",request(m))}},onForward={chooseForward(listOf(m.str("id")))},onSelect={toggle(m.str("id"))})
+        MessageActionMenu(ui,m,!readOnly,mine,{menu=null},onQuote={quote=m;composerFocus.requestFocus()},onRecall={ui.confirm("撤回消息","只能撤回自己两分钟内发送的消息，原位置将保留提示。"){ui.vm.perform(if(owner)"owner.recall" else "social.message.recall",request(m))}},onForward={chooseForward(listOf(m.str("id")))},onSelect={toggle(m.str("id"))},onReport=if(m.str("sender").isNotEmpty()&&m.str("sender")!=s.account.str("humanId"))({ui.modal=Modal.Report(m.str("sender"),source().put("type","message").put("id",m.str("id")).apply{if(botReadOnly)put("viewerBotId",s.account.str("botId"))})})else null)
     }
     targets?.let{contacts->ForwardTargetDialog(ui,s,contacts,forwardIds.size,{targets=null}){destination->val payload=obj("text" to "","forward" to obj("source" to source(),"messageIds" to JSONArray(forwardIds)));targets=null;send(destination,payload){selected.clear();ui.vm.notice("聊天记录已转发")}}}
     record?.let{ForwardRecordDialog(ui,it){record=null}}
 }
 
 @Composable private fun SettingsScreen(ui:UiActions,s:ClientState){ContentList(ui){
+    Entry("举报进度与黑名单","查看人工审核结果、管理员通知与拉黑账号"){ui.go("safety",kind="blocks")}
     val account=s.account
     Surface(shape=RoundedCornerShape(32.dp),color=MaterialTheme.colorScheme.primaryContainer,modifier=Modifier.fillMaxWidth()){Column(Modifier.padding(24.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){Avatar(account.str("nickname"),avatarId=account.str("humanId"),avatarVersion=account.str("avatarVersion"));Text(account.str("nickname"),style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold);Text(account.str("humanId"));Text(account.str("email"),style=MaterialTheme.typography.bodyMedium)}}
     AvatarEditor(ui,account.str("avatarVersion"))
@@ -192,6 +194,7 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
     }
 }}
 @Composable private fun ProfileScreen(ui:UiActions,s:ClientState){ContentList(ui){ChoiceTabs(listOf("basic" to "资料","post" to "最近动态","bottle" to "漂流瓶互动"),s.route.section){ui.vm.navigate(s.route.copy(section=it),false)}
+    if(s.route.section=="basic")SafetyProfileActions(ui,s,s.data.str("botId",s.route.id))
     val p=s.data;when(s.route.section){"basic"->{if(p.optBoolean("canRemark")){if(p.str("remark").isNotEmpty())Text("备注：${p.str("remark")}");RemarkButton(ui,p.str("botId"),p.str("remark"),p.str("nickname"))};Avatar(p.str("nickname",s.route.id),modifier=Modifier.size(76.dp),avatarId=p.str("botId"),avatarVersion=p.str("avatarVersion"));SectionTitle(p.str("nickname","未设置昵称").ifBlank{"未设置昵称"},"ID ${p.str("botId",s.route.id)}");Panel{Text(p.str("bio","还没有写简介").ifBlank{"还没有写简介"})}}
         "post"->{val post=p.optJSONObject("post");if(post==null)EmptyState("暂无可见动态")else Panel{SectionTitle("最近动态",time(post.str("at")));Text(post.str("text"));MessageImage(post.optJSONObject("image"),ui)}}
         "bottle"->{val bottle=p.optJSONObject("bottle");if(bottle==null)EmptyState("暂无你可见的漂流瓶互动")else Panel{SectionTitle("最近漂流瓶互动",time(bottle.str("replyAt",bottle.str("pickedAt",bottle.str("at")))));Text("投瓶 ${bottle.str("author")} → 捞瓶 ${bottle.str("pickedBy")}");Text(bottle.str("text"));Text("回复：${bottle.str("reply","尚未回复")}")}}

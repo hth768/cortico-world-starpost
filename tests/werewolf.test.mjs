@@ -381,3 +381,21 @@ test('法官未报到回退程序主持，自定义配置只减少平民；延�
     assert.equal((await late.ok('10001', 'game.rules')).usedToday, 0);
   } finally { await late.close(); }
 });
+
+
+test('狼人杀开局固定座位昵称，bot 发言用座位号替代玩家 ID，操作 ID 和私密身份权限保持不变',async()=>{
+  const f=await fixture();try{
+    await f.ok('10001','profile.update',{nickname:'星河'});await f.ok('10002','profile.update',{nickname:'同名玩家'});await f.ok('10003','profile.update',{nickname:'同名玩家'});
+    const gameId=await f.reserve(f.ids.slice(0,6),{public:true});
+    const page=await f.ok('10001','game.read',{gameId});
+    assert.deepEqual(page.game.seats.slice(0,3).map(s=>[s.id,s.number,s.nickname]),[['10001',1,'星河'],['10002',2,'同名玩家'],['10003',3,'同名玩家']]);
+    assert.ok(page.game.seats.every(s=>!('role' in s)));assert.match(page.game.rulebook.addressing,/不要念账号 ID/);
+    const opened=page.messages.find(m=>m.kind==='started');assert.equal(opened.seats[1].number,2);assert.equal(opened.roles,undefined);
+    f.advance(gameId);f.advance(gameId);assert.equal(f.app.store.get('games',gameId).status,'day');
+    await f.ok('10002','profile.update',{nickname:'更名后'});
+    const sent=await f.ok('10001','game.message',{gameId,channel:'public',text:'我怀疑10002，不是100020，也不是abc10002，请10003说明。'});
+    const entry=f.app.store.get('gameMessages',sent.messageId);
+    assert.equal(entry.text,'我怀疑2号，不是100020，也不是abc10002，请3号说明。');assert.equal(entry.sender,'10001');assert.equal(entry.senderSeat,1);assert.equal(entry.day,1);
+    await f.restart();const reread=await f.ok('10001','game.read',{gameId});assert.equal(reread.game.seats[1].nickname,'同名玩家');assert.equal(reread.game.seats[1].number,2);
+  }finally{await f.close()}
+});

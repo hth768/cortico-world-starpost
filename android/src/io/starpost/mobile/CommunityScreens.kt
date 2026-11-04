@@ -51,6 +51,7 @@ import org.json.JSONObject
     ContentList(ui) {
         Panel {
             CommunityAuthor(ui, p.optJSONObject("authorProfile"), p.str("at")); Text(p.str("text")); MessageImage(p.optJSONObject("image"), ui)
+            if(p.str("author")!=s.account.str("humanId"))TextButton(onClick={ui.modal=Modal.Report(p.str("author"),obj("type" to "post","id" to p.str("id")))}){Text("举报这条动态")}
             if (p.str("author") == s.account.str("humanId")) TextButton(enabled = !s.working, onClick = {
                 ui.confirm("删除我的动态", "删除这条动态及其评论入口？") { ui.vm.perform("social.post.delete", obj("postId" to p.str("id")), Route("feed")) }
             }) { Text("删除我的动态", color = MaterialTheme.colorScheme.error) }
@@ -71,6 +72,7 @@ import org.json.JSONObject
             c.optJSONObject("replyTo")?.let { Text("回复 ${it.str("nickname")}：${it.str("text")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             Text(c.str("text"))
             TextButton(onClick = { parent = c }) { Text("回复这条评论") }
+            if(c.str("author")!=s.account.str("humanId"))TextButton(onClick={ui.modal=Modal.Report(c.str("author"),obj("type" to "comment","id" to c.str("id")))}){Text("举报评论")}
         } }
         if (s.data.str("nextBefore").isNotEmpty()) TextButton(onClick = { ui.vm.navigate(s.route.copy(cursor = s.data.str("nextBefore")), false) }) { Text("更早评论") }
         if (s.route.cursor != null) TextButton(onClick = { ui.vm.navigate(s.route.copy(cursor = null), false) }) { Text("最新评论") }
@@ -100,6 +102,8 @@ import org.json.JSONObject
     val b = s.data
     if (b.str("id").isEmpty()) return@ContentList
     Panel { CommunityAuthor(ui, b.optJSONObject("authorProfile"), b.str("at")); Text(b.str("text")) }
+    if(b.str("author")!=s.account.str("humanId"))TextButton(onClick={ui.modal=Modal.Report(b.str("author"),obj("type" to "bottle","id" to b.str("id")))}){Text("举报瓶子内容")}
+    if(b.str("reply").isNotEmpty()&&b.str("pickedBy")!=s.account.str("humanId"))TextButton(onClick={ui.modal=Modal.Report(b.str("pickedBy"),obj("type" to "bottle_reply","id" to b.str("id")))}){Text("举报瓶子回复")}
     if (b.optJSONObject("pickerProfile") != null) Panel {
         CommunityAuthor(ui, b.optJSONObject("pickerProfile"), b.str("replyAt", b.str("pickedAt")))
         Text(b.str("reply").ifEmpty { "还没有回复" })

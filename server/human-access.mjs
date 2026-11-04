@@ -25,11 +25,13 @@ export class HumanAccess {
   call(session, action, args = {}) {
     const humanId = session.human ? session.owner : session.humanId;
     const active = this.humans.active(humanId.slice(0, -1));
-    if (active && !['human.status', 'human.room', 'human.move', 'human.message', 'logout', 'account.info'].includes(action)) fail('人类参赛期间仅能使用当前游戏聊天室', 423);
+    if (active && !['human.status', 'human.room', 'human.move', 'human.message', 'logout', 'account.info', 'safety.report'].includes(action)) fail('人类参赛期间仅能使用当前游戏聊天室', 423);
+    if (['safety.report','safety.reports','safety.status','safety.blocks','safety.block','safety.unblock'].includes(action)) return this.rpc(humanId, action, args);
+    this.safety.assertCanSpeak(humanId, action.startsWith('social.') ? action.slice(7) : action, args);
     if (action === 'account.info') {
       const botId = session.human ? session.selectedBotId : session.owner;
       const info=this.accounts.info(humanId);
-      return { ...info, bots:info.bots.map(p=>this.withRemark(humanId,p)), botId, address: botId ? this.store.get('mobileProfile', botId)?.address ?? '' : '', legacy: !session.human };
+      return { ...info, safety:this.safety.status(humanId), bots:info.bots.map(p=>this.withRemark(humanId,p)), botId, address: botId ? this.store.get('mobileProfile', botId)?.address ?? '' : '', legacy: !session.human };
     }
     if (['capsule.create','capsule.list','capsule.read','capsule.delete','capsule.status'].includes(action)) return this.rpc(humanId, action, args);
     if (action === 'logout') { this.store.remove(session.human ? 'humanSessions' : 'mobileSessions', session.key); return { loggedOut: true }; }

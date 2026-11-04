@@ -44,13 +44,14 @@
     const v = await call('post.read', { postId: id }); if (!root.isConnected) return;
     const p = v.post, n = el('article', 'post-card'); n.append(author(p.authorProfile, p.at), el('p', '', p.text)); const img = picture(p.image); if (img) n.append(img);
     if (p.author === state.account.humanId) n.append(button('删除我的动态', run(async () => { if (!confirm('删除这条动态及其评论入口？')) return; await call('post.delete', { postId: id }); await feed(); }), 'small-action danger'));
+    else n.append(button('举报这条动态',()=>SafetyUI.report(p.author,{type:'post',id:p.id})));
     root.append(n, el('h2', '', '评论与回复'));
     const d = draft(`comment:${id}`), composer = el('div', 'post-card community-compose'), label = el('p', 'muted'), input = el('textarea'), comments = el('div', 'stack'); let parent = null, busy = false;
     input.maxLength = 1000; input.placeholder = '写评论…'; input.setAttribute('aria-label', '评论内容'); input.value = d.text; input.oninput = () => d.text = input.value;
     const cancel = button('取消回复', () => { parent = null; label.textContent = '评论这条动态'; cancel.hidden = true; }); cancel.hidden = true; label.textContent = '评论这条动态';
     const send = button('发表评论', async () => { if (busy || !input.value.trim()) return; busy = true; send.disabled = true; try { await call('post.comment', { postId: id, parentId: parent, text: input.value.trim() }); d.text = ''; await post(id); } catch (e) { notify(e.message); } finally { busy = false; send.disabled = false; } }, 'primary');
     composer.append(label, cancel, input, send); root.append(composer, comments);
-    function append(rows) { for (const c of rows) { const card = el('article', 'post-card'); card.append(author(c.authorProfile, c.at)); if (c.replyTo) card.append(el('blockquote', 'community-quote', `回复 ${c.replyTo.nickname}：${c.replyTo.text}`)); card.append(el('p', '', c.text), button('回复这条评论', () => { parent = c.id; label.textContent = `回复 ${c.authorProfile.nickname || c.author}`; cancel.hidden = false; input.focus(); })); comments.append(card); } }
+    function append(rows) { for (const c of rows) { const card = el('article', 'post-card'); card.append(author(c.authorProfile, c.at)); if (c.replyTo) card.append(el('blockquote', 'community-quote', `回复 ${c.replyTo.nickname}：${c.replyTo.text}`)); card.append(el('p', '', c.text), button('回复这条评论', () => { parent = c.id; label.textContent = `回复 ${c.authorProfile.nickname || c.author}`; cancel.hidden = false; input.focus(); }));if(c.author!==state.account.humanId)card.append(button('举报评论',()=>SafetyUI.report(c.author,{type:'comment',id:c.id}))); comments.append(card); } }
     append(v.comments); let before = v.nextBefore;
     const more = button('更早评论', async () => { more.disabled = true; try { const next = await call('post.read', { postId: id, before }); if (!root.isConnected) return; append(next.comments); before = next.nextBefore; more.hidden = !before; } catch (e) { notify(e.message); } finally { more.disabled = false; } }); more.hidden = !before; root.append(more);
   }
@@ -71,6 +72,8 @@
     const root = page('漂流瓶'); root.append(button('← 返回漂流瓶', run(() => bottles(scope))));
     const b = await call('bottle.read', { bottleId: id }); if (!root.isConnected) return;
     const n = el('article', 'post-card'); n.append(author(b.authorProfile, b.at), el('p', '', b.text)); root.append(n);
+    if(b.author!==state.account.humanId)n.append(button('举报瓶子内容',()=>SafetyUI.report(b.author,{type:'bottle',id:b.id})));
+    if(b.reply&&b.pickedBy!==state.account.humanId)root.append(button('举报瓶子回复',()=>SafetyUI.report(b.pickedBy,{type:'bottle_reply',id:b.id})));
     if (b.pickerProfile) { const reply = el('article', 'post-card'); reply.append(author(b.pickerProfile, b.replyAt || b.pickedAt), el('p', '', b.reply || '还没有回复')); root.append(reply); } else root.append(el('p', 'muted', '瓶子仍在漂流，等待被捞起。'));
     if (b.pickedBy === state.account.humanId && !b.reply) root.append(button('回复这个瓶子', () => compose({ title: '回复漂流瓶', key: `bottle:${id}`, hint: '每个瓶子只能回复一次，最多 2000 字。', max: 2000, submit: args => call('bottle.reply', { ...args, bottleId: id }), after: () => bottle(id, scope) }), 'primary'));
     if (b.pickedBy && !b.isFriend) { let busy = false; const friend = button('申请加对方为好友', async () => { if (busy) return; busy = true; friend.disabled = true; try { const v = await call('bottle.friend', { bottleId: id }); notify(v.pendingApproval ? '已提交，等待相关用户审批' : '好友申请已发送，等待对方同意'); friend.textContent = '申请已提交'; } catch (e) { busy = false; friend.disabled = false; notify(e.message); } }); root.append(friend, el('p', 'muted', '加好友仍需对方同意；涉及 bot 时沿用其用户审批。')); }

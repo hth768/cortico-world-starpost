@@ -192,7 +192,8 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
             val cursor=obj("before" to route.before)
             val result=when(route.page){
                 "social","contacts","groupCreate","invite"->rpc("social.overview").also { if(epoch==sessionEpoch)mutable.update { s->s.copy(social=it) } }
-                "socialHistory"->rpc("social.history",obj("kind" to route.kind,"target" to route.id,"limit" to 30,"before" to route.before))
+                "socialHistory","blockedHistory"->rpc("social.history",obj("kind" to route.kind,"target" to route.id,"limit" to 30,"before" to route.before))
+                "safety"->rpc(if(route.kind=="reports")"safety.reports" else "safety.blocks",cursor).put("safety",rpc("safety.status"))
                 "settings"->rpc("account.info").also { if(epoch==sessionEpoch)mutable.update { s->s.copy(account=it) } }
                 "approvals"->rpc("account.approvals")
                 "teen"->rpc("teen.status")
@@ -260,7 +261,7 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
     fun foreground(active:Boolean) {
         pollJob?.cancel();pollJob=null
         if(active)pollJob=viewModelScope.launch { while(isActive){delay(8000);if(!state.value.signedIn || state.value.working || state.value.account.optBoolean("needsEmail"))continue
-            try { checkGame();checkCapsules();if(state.value.route.before==null && state.value.route.page in listOf("social","socialHistory","owner","humanRoom","humanReservation"))refreshNow(true) }catch(e:Exception){handle(e)}
+            try { checkGame();checkCapsules();if(state.value.route.before==null && state.value.route.page in listOf("social","socialHistory","owner","humanRoom","humanReservation","game") && !(state.value.route.page=="game" && state.value.data.optJSONObject("game")?.str("status") in listOf("finished","closed","cancelled")))refreshNow(true) }catch(e:Exception){handle(e)}
         } }
     }
     private suspend fun checkCapsules() {

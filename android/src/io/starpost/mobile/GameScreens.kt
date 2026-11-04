@@ -22,7 +22,7 @@ import java.time.format.DateTimeFormatter
 internal val roleNames=mapOf("wolf" to "狼人","witch" to "女巫","seer" to "预言家","guard" to "守卫","hunter" to "猎人","villager" to "平民")
 internal val gameStates=mapOf("scheduled" to "预约中","assigning" to "分发身份","night_wolf" to "狼人行动","night_gods" to "神职行动","day" to "白天讨论","vote" to "公共投票","hunter" to "猎人行动","finished" to "结束 · 复盘","closed" to "已关闭","cancelled" to "已取消")
 private fun roleSummary(roles:JSONObject?):String=roles?.keys()?.asSequence()?.map{key->val v=roles.opt(key);if(v is Number)"${roleNames[key]?:key} $v" else "$key · ${roleNames[v.toString()]?:v}"}?.joinToString("\n")?:""
-private fun gameText(m:JSONObject):String {val kind=m.str("kind");if(m.str("gameType")=="mystery")return m.str("text",kind);return when(kind){
+internal fun gameText(m:JSONObject):String {m.optJSONObject("display")?.let{d->return d.str("body")+d.rows("votes").joinToString("",prefix=if(d.rows("votes").isEmpty())"" else "\n"){"${it.str("player")} → ${it.str("target")}\n"}+d.rows("reveals").joinToString("",prefix=if(d.rows("reveals").isEmpty())"" else "\n"){"${it.str("player")} · ${it.str("role")}\n"}};val kind=m.str("kind");if(m.str("gameType")=="mystery")return m.str("text",kind);return when(kind){
     "chat","left"->m.str("text")
     "role"->"身份：${roleNames[m.str("role")]?:m.str("role")}\n狼人队友：${m.strings("teammates").joinToString("、").ifBlank{"无"}}"
     "finished","assignments"->(if(kind=="finished")"游戏结束 · ${when(m.str("winner")){"wolves"->"狼人获胜";"village"->"好人获胜";else->"平局"}}" else "身份表")+"\n"+roleSummary(m.optJSONObject("roles"))
@@ -49,6 +49,7 @@ internal fun gameStartLabel(g:JSONObject)=if(g.str("startMode")=="full")(if(g.op
 
 @Composable internal fun GameScreen(ui:UiActions,s:ClientState){when(s.route.page){
     "humanRoom"->HumanRoom(ui,s)
+    "game","featured"->WatchGame(ui,s)
     "schedule"->ScheduleGame(ui,s)
     "gameInvite"->GameInvites(ui,s)
     else->ContentList(ui){when(s.route.page){
@@ -148,7 +149,7 @@ internal fun gameStartLabel(g:JSONObject)=if(g.str("startMode")=="full")(if(g.op
     val lane=mapOf("public" to "公共","private" to "私密","wolf" to "狼人","judge" to "法官","outside" to "局外")[m.str("channel")]?:m.str("channel")
     if(m.str("sender")=="system")Surface(shape=androidx.compose.foundation.shape.RoundedCornerShape(20.dp),color=MaterialTheme.colorScheme.secondaryContainer,modifier=Modifier.fillMaxWidth()){
         Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){Text("✦ 星邮法官 · $lane · ${time(m.str("at"))}",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSecondaryContainer);Text(gameText(m),style=MaterialTheme.typography.bodyMedium)}
-    }else Bubble(ui,m,mine,text=gameText(m),label="${m.str("senderNickname",m.str("sender"))} · $lane")
+    }else Column{Bubble(ui,m,mine,text=gameText(m),label="${m.optJSONObject("display")?.str("speaker")?:m.str("senderNickname","玩家")} · $lane");if(!mine&&m.str("gameId").isNotEmpty())TextButton(onClick={ui.modal=Modal.Report(m.str("sender"),obj("type" to "game","id" to m.str("id"),"gameId" to m.str("gameId")))}){Text("举报这条发言")}}
 }
 @Composable internal fun Matchmaking(ui:UiActions,s:ClientState,banned:Boolean=false){
     var count by rememberSaveable{mutableStateOf("6")}

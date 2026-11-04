@@ -44,6 +44,7 @@ internal sealed interface Modal {
     data class Confirm(val title:String,val message:String,val submit:()->Unit):Modal
     data class Form(val title:String,val fields:List<TextFieldSpec>,val hint:String="",val submit:(Map<String,String>)->Unit):Modal
     data class Stickers(val select:(JSONObject)->Unit):Modal
+    data class Report(val botId:String,val evidence:JSONObject?=null):Modal
 }
 internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Modal?>(null);var miniAppsOpen by mutableStateOf(false);var pendingBoundBot by mutableStateOf<String?>(null)
     fun confirm(title:String,message:String,submit:()->Unit){modal=Modal.Confirm(title,message,submit)}
@@ -68,6 +69,8 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
     LaunchedEffect(background){background.load()}
     LaunchedEffect(state.signedIn){if(!state.signedIn)ui.miniAppsOpen=false}
     val pageTitle=when(state.route.page){
+        "safety"->"举报与黑名单"
+        "blockedHistory"->"保留的私聊记录"
         "owner"->contactName(state.account.rows("bots").find{it.str("botId")==state.account.str("botId")},"我的 bot")
         "socialHistory"->conversationName(state.social,state.route.id,state.route.kind)
         "history"->conversationName(state.overview,state.route.id,state.route.kind)
@@ -130,10 +133,13 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
         OutlinedTextField(email,{email=it},Modifier.fillMaxWidth(),label={Text(if(actual=="legacy")"Bot ID" else "邮箱地址")},leadingIcon={Glyph(if(actual=="legacy")"person" else "mail")},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=if(actual=="legacy")KeyboardType.Number else KeyboardType.Email))
         if(actual!="code")OutlinedTextField(password,{password=it},Modifier.fillMaxWidth(),label={Text(if(actual=="legacy")"本机凭据" else "密码（8–128 字符）")},singleLine=true,visualTransformation=if(visible)VisualTransformation.None else PasswordVisualTransformation(),keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Password),trailingIcon={TextButton(onClick={visible=!visible}){Text(if(visible)"隐藏" else "显示")}})
         if(actual in listOf("register","claim"))OutlinedTextField(nickname,{nickname=it},Modifier.fillMaxWidth(),label={Text("你的昵称")},singleLine=true)
-        if(actual in listOf("code","register","claim"))Row(horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=Alignment.CenterVertically){OutlinedTextField(code,{code=it.filter(Char::isDigit).take(4)},Modifier.weight(1f),label={Text("四位验证码")},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number));FilledTonalButton(enabled=retry==0&&!state.working&&email.isNotBlank(),onClick={vm.sendCode(actual,email){id,seconds->challenge=id;challengeEmail=email.trim();retry=seconds}}){Text(if(retry>0)"${retry}s" else "获取验证码")}}
+        if(actual in listOf("code","register","claim")){
+            Row(horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=Alignment.CenterVertically){OutlinedTextField(code,{code=it.filter(Char::isDigit).take(4)},Modifier.weight(1f),label={Text("四位验证码")},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number));FilledTonalButton(enabled=retry==0&&!state.working&&email.isNotBlank(),onClick={val requestedEmail=email.trim();vm.sendCode(actual,requestedEmail){id,seconds->challenge=id;challengeEmail=requestedEmail;retry=seconds}}){Text(if(retry>0)"${retry}s" else "获取验证码")}}
+            Text("只填写邮件中单独显示的四位数字，五分钟内有效。未收到请检查邮箱拼写与垃圾邮件，稍候再重发；重发成功后以最新邮件为准。已有账号可切换密码登录。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         if(state.error.isNotEmpty())Text(state.error,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodyMedium)
         Button(onClick={if(challenge.isNotEmpty()&&challengeEmail!=email.trim())vm.notice("邮箱已修改，请重新获取验证码")else vm.login(actual,email,password,nickname,challenge,code,customServer){password=""}},shapes=ButtonDefaults.shapes(),enabled=!state.working&&email.isNotBlank(),modifier=Modifier.fillMaxWidth().heightIn(min=56.dp)){if(state.working)CircularProgressIndicator(Modifier.size(20.dp),strokeWidth=2.dp)else{Text(when(actual){"claim"->"验证并绑定邮箱";"register"->"创建我的账号";"legacy"->"验证旧账号";else->"进入星邮"},style=MaterialTheme.typography.titleMedium);Spacer(Modifier.width(12.dp));Glyph("chevron")}}
-        Text("登录状态保留 14 天 · 验证码 5 分钟内有效",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("登录状态保留 14 天",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
         if(actual!="claim")TextButton(onClick={mode=if(actual=="legacy")"password" else "legacy"}){Text(if(actual=="legacy")"返回邮箱登录" else "已有 bot 凭据？升级旧账号")}
         Spacer(Modifier.height(24.dp))
     }}
@@ -183,6 +189,7 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
 }
 @Composable private fun ModalContent(ui:UiActions,state:ClientState){when(val modal=ui.modal){
     null->Unit
+    is Modal.Report->ReportDialog(ui,state,modal)
     is Modal.Confirm->AlertDialog(onDismissRequest={ui.modal=null},title={Text(modal.title)},text={Text(modal.message)},confirmButton={TextButton(onClick={ui.modal=null;modal.submit()}){Text("确认")}},dismissButton={TextButton(onClick={ui.modal=null}){Text("取消")}})
     is Modal.Form->{val values=remember(modal){mutableStateMapOf<String,String>().apply{modal.fields.forEach{put(it.key,it.initial)}}};AlertDialog(onDismissRequest={ui.modal=null},title={Text(modal.title)},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){if(modal.hint.isNotEmpty())Text(modal.hint);modal.fields.forEach{f->OutlinedTextField(values[f.key]?:"",{values[f.key]=it},Modifier.fillMaxWidth(),label={Text(f.label)},visualTransformation=if(f.secret)PasswordVisualTransformation()else VisualTransformation.None,singleLine=true)}}},confirmButton={TextButton(onClick={ui.modal=null;modal.submit(values.toMap())}){Text("确定")}},dismissButton={TextButton(onClick={ui.modal=null}){Text("取消")}})}
     Modal.More->ModalBottomSheet(onDismissRequest={ui.modal=null}){Column(Modifier.navigationBarsPadding().verticalScroll(rememberScrollState()).padding(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){

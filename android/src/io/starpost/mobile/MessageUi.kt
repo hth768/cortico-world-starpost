@@ -64,7 +64,7 @@ internal fun copyMessage(context:Context,m:JSONObject){
     }else clipboard.setPrimaryClip(ClipData.newPlainText("星邮消息",m.str("text")+m.str("emoji")+(m.optJSONObject("forward")?.let{"\n[聊天记录 · ${it.optInt("count")} 条]\n${it.strings("preview").joinToString("\n")}"}?:"")))
 }
 
-@Composable internal fun MessageActionMenu(ui:UiActions,m:JSONObject,canWrite:Boolean,mine:Boolean,onDismiss:()->Unit,onQuote:()->Unit={},onRecall:()->Unit={},onForward:()->Unit={},onSelect:()->Unit={}){
+@Composable internal fun MessageActionMenu(ui:UiActions,m:JSONObject,canWrite:Boolean,mine:Boolean,onDismiss:()->Unit,onQuote:()->Unit={},onRecall:()->Unit={},onForward:()->Unit={},onSelect:()->Unit={},onReport:(()->Unit)?=null){
     val context=LocalContext.current
     ModalBottomSheet(onDismissRequest=onDismiss){Column(Modifier.padding(24.dp).navigationBarsPadding(),verticalArrangement=Arrangement.spacedBy(12.dp)){
         Text("消息操作",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
@@ -76,6 +76,7 @@ internal fun copyMessage(context:Context,m:JSONObject){
             actions+="转发" to onForward;actions+="多选" to onSelect
         }
         if(m.optJSONObject("image")!=null&&!m.optBoolean("recalled"))actions+="保存表情" to {ui.vm.collect(m.getJSONObject("image"))}
+        if(onReport!=null&&!m.optBoolean("recalled"))actions+="举报" to onReport
         actions.chunked(3).forEach{row->Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){row.forEach{(label,fn)->FilledTonalButton(modifier=Modifier.weight(1f).heightIn(min=56.dp),onClick={fn();onDismiss()}){Text(label)}};repeat(3-row.size){Spacer(Modifier.weight(1f))}}}
         TextButton(onClick=onDismiss,modifier=Modifier.fillMaxWidth()){Text("取消")}
     }}

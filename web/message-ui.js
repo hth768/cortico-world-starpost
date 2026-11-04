@@ -21,6 +21,7 @@
       action('转发',()=>forward(c,[m.id]));action('多选',()=>{selected.add(m.id);selection(c)});
     }
     if(m.image&&!m.recalled)action('保存表情',async()=>{await saveSticker(m.image);notify('已保存到表情包栏')});
+    if(!c.detached&&!m.recalled&&m.sender&&m.sender!==state.account?.humanId)action('举报',()=>SafetyUI.report(m.sender,{type:'message',id:m.id,...request(c),...(c.mode==='readonly'?{viewerBotId:state.botId}:{})}));
     box.append(grid,button('取消',()=>overlay.remove()));overlay.append(box);mountDialog(overlay);
   }
   async function copy(m){

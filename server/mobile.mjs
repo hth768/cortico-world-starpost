@@ -1,3 +1,4 @@
+import { presentGamePage } from './game-presentation.mjs';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 const digest = value => createHash('sha256').update(value).digest('hex');
 const fail = (message, status = 400) => { const e = new Error(message); e.status = status; throw e; };
@@ -105,12 +106,12 @@ export class MobileAccess {
       case 'post': return this.rpc(who, 'post.read', args);
       case 'square': return this.rpc(who, 'square.list');
       case 'featured': return this.rpc(who, 'square.featured', { action: 'summary' });
-      case 'featured.read': return this.rpc(who, 'square.featured', { action: 'read', gameId: args.gameId, before: args.before });
+      case 'featured.read': { const page=this.rpc(who,'square.featured',{action:'read',gameId:args.gameId,before:args.before});const game={checkedIn:[],joined:[],...this.games.get(args.gameId)};return presentGamePage(game,{...page,game:{...this.games.summary(game,who),day:game.day,alive:game.alive},serverNow:new Date(this.clock()).toISOString()},this.games.nickname,{omniscient:true,label:'今日精彩对局 · 全知回放'}); }
       case 'game.record': return this.rpc(who,'game.record',args);
       case 'profile': return this.rpc(who, 'profile.read', { botId: args.botId, section: args.section });
       case 'games': return this.gamesPage(who, args);
       case 'game': {
-        if (this.store.get('mysteryGames', args.gameId)) { const page=this.mysteryGames.read(who,args.gameId,args.before);const source=this.store.get('mysteryGames',args.gameId);return {...page,serverNow:new Date(this.clock()).toISOString(),game:{...page.game,seats:source.joined.map((id,index)=>({id,number:index+1,nickname:this.mysteryGames.nickname(id)||id,alive:!source.left?.includes(id),checkedIn:source.checkedIn.includes(id)}))}}; }
+        if (this.store.get('mysteryGames', args.gameId)) { const page=this.mysteryGames.read(who,args.gameId,args.before);const source=this.store.get('mysteryGames',args.gameId);return presentGamePage(source,{...page,serverNow:new Date(this.clock()).toISOString()},this.mysteryGames.nickname,{label:'剧本杀 · 获准视角'}); }
         const game = this.games.get(args.gameId);
         const own = this.ownsGame(game, who);
         if (!own && !(game.public && game.published)) fail('对局无权查看', 403);
@@ -118,7 +119,7 @@ export class MobileAccess {
         if (!Number.isSafeInteger(before) || before < 1) fail('游标无效');
         const rows = this.store.statement("SELECT rowid,data FROM documents WHERE collection='gameMessages' AND scope=? AND rowid<? ORDER BY rowid DESC LIMIT 51").all(game.id, before);
         const page = rows.slice(0, 50).reverse();
-        return { serverNow:new Date(this.clock()).toISOString(),game: { ...this.games.summary(game, who), seats:(game.status==='scheduled'?game.joined:game.participants).map((id,index)=>({id,number:index+1,nickname:this.games.nickname(id)||id,alive:game.status==='scheduled'||game.alive.includes(id),checkedIn:game.checkedIn.includes(id)})), alive: game.alive, day: game.day }, messages: page.map(row => ({ ...JSON.parse(row.data), cursor: row.rowid })), nextBefore: rows.length > 50 ? page[0].rowid : null };
+        return presentGamePage(game,{serverNow:new Date(this.clock()).toISOString(),game:{...this.games.summary(game,who),alive:game.alive,day:game.day},messages:page.map(row=>({...JSON.parse(row.data),cursor:row.rowid})),nextBefore:rows.length>50?page[0].rowid:null},this.games.nickname,{omniscient:true,label:own?'我的 bot 对局 · 全知视角':'公开对局 · 全知观战'});
       }
       case 'owner.history': return this.ownerHistory(who, args.before);
       case 'owner.address': {

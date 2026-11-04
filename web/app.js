@@ -43,7 +43,20 @@ function renderEmailLogin(mode='password'){
   identity.input.autocomplete='username';secret.input.autocomplete=mode==='register'||claim?'new-password':'current-password';secret.input.minLength=mode==='legacy'?24:8;secret.input.maxLength=128;otp.input.inputMode='numeric';otp.input.pattern='[0-9]{4}';otp.input.maxLength=4;nickname.input.maxLength=32;
   for(const f of [identity,...(mode==='code'?[]:[secret]),...(mode==='register'||claim?[nickname]:[])]){f.input.required=true;form.append(f.wrap)}
   let challengeId='',challengeEmail='';
-  if(mode==='register'||mode==='code'||claim){otp.input.required=true;form.append(otp.wrap);const send=button('获取验证码',async()=>{if(!identity.input.reportValidity())return;send.disabled=true;try{const value=await api('/web/auth',{action:'code',purpose:claim?'claim':mode==='register'?'register':'login',email:identity.input.value});challengeId=value.challengeId;challengeEmail=identity.input.value;notify(value.message);let n=value.retryAfter;send.textContent=`${n} 秒后重发`;const timer=setInterval(()=>{if(!send.isConnected){clearInterval(timer);return}n--;send.textContent=n>0?`${n} 秒后重发`:'获取验证码';if(n<=0){clearInterval(timer);send.disabled=false}},1000)}catch(e){error.textContent=e.message;send.disabled=false}});form.append(send)}
+  if(mode==='register'||mode==='code'||claim){
+    otp.input.required=true;otp.input.autocomplete='one-time-code';form.append(otp.wrap);
+    const status=el('p','muted');status.setAttribute('role','status');
+    const send=button('获取验证码',async()=>{
+      if(!identity.input.reportValidity())return;
+      const requestedEmail=identity.input.value;send.disabled=true;send.textContent='正在发送…';error.textContent='';status.textContent='正在联系邮件服务，请稍候。';
+      try{
+        const value=await api('/web/auth',{action:'code',purpose:claim?'claim':mode==='register'?'register':'login',email:requestedEmail});
+        challengeId=value.challengeId;challengeEmail=requestedEmail;status.textContent=value.message;
+        let n=value.retryAfter;send.textContent=`${n} 秒后重发`;const timer=setInterval(()=>{if(!send.isConnected){clearInterval(timer);return}n--;send.textContent=n>0?`${n} 秒后重发`:'获取验证码';if(n<=0){clearInterval(timer);send.disabled=false}},1000);
+      }catch(e){status.textContent='';error.textContent=e.message;send.disabled=false;send.textContent='获取验证码'}
+    });
+    form.append(send,status,el('p','muted','只填写邮件中单独显示的四位数字，五分钟内有效。未收到请检查邮箱拼写与垃圾邮件，稍候再重发；重发成功后以最新邮件为准。已有账号可切换密码登录。'));
+  }
   const submit=el('button','primary',claim?'验证并绑定邮箱':mode==='register'?'注册并登录':'登录星邮 →');submit.type='submit';add(form,submit,error);panel.append(form);
   form.onsubmit=async event=>{event.preventDefault();error.textContent='';submit.disabled=true;try{if(challengeId&&challengeEmail!==identity.input.value)throw Error('邮箱已修改，请重新获取验证码');const value=mode==='legacy'?await api('/web/login',{botId:identity.input.value.trim(),credential:secret.input.value.trim()}):await api('/web/auth',{action:claim?'claim':mode==='register'?'register':'login',method:mode==='code'?'code':'password',email:identity.input.value,password:secret.input.value,nickname:nickname.input.value,challengeId,code:otp.input.value});secret.input.value='';state.botId=value.botId||'';state.view='social';await openApp()}catch(e){error.textContent=e.message}finally{submit.disabled=false}};
   add(panel,el('small','muted','登录有效期 14 天。未绑定 bot 也可以使用社交与狼人杀。'));
@@ -102,6 +115,8 @@ async function socialChatHistory(force=false){const c=state.socialChat,log=$('#s
 async function accountSettings(){
   const root=clear($('#app-content'));state.account=await rpc('account.info');const p=state.account;state.address=p.address||'';state.botId=p.botId||'';
   root.append(avatarEditor(p),pokeTextEditor(p),appearanceControls());
+  root.append(button('举报进度与黑名单',()=>SafetyUI.center().catch(e=>notify(e.message))));
+  if(p.safety?.notices?.length)root.append(el('p','muted','有管理员审核通知，请进入「举报进度与黑名单」查看。'));
   const support=el('div','setting-row'),supportLink=el('a','text-button','支持星邮开发');supportLink.href='https://afdian.com/a/starpost';supportLink.target='_blank';supportLink.rel='noopener noreferrer';add(support,el('span','','通过爱发电自愿支持开发与服务器运行，不影响功能使用'),supportLink);root.append(support);
   add(root,el('h2','pane-title',`${p.nickname} · ${p.humanId}`),el('p','muted',p.email),setting('个人资料','修改昵称',async()=>{const nickname=prompt('新昵称',p.nickname);if(nickname){await rpc('social.profile.update',{nickname});await accountSettings()}}),el('h2','pane-title','我的 bot'));
   for(const b of p.bots){const block=el('section','bot-avatar-setting');add(block,setting(`${contactLabel(b,'未设置昵称')} · ${b.botId}${p.botId===b.botId?' · 当前':''}`,'切换',async()=>{await rpc('account.select',{botId:b.botId});state.botId=b.botId;state.overview=null;await accountSettings()}),avatarEditor(b,true),pokeTextEditor(b,true),button(b.remark?'修改备注名':'设置备注名',()=>editContactRemark(b.botId,b.remark,accountSettings)));root.append(block)}
@@ -141,7 +156,7 @@ async function profile(id,action='profile',section='basic'){
   const root=el('div');clear($('#app-content')).append(root);$('#view-title').textContent='个人主页';root.append(button('← 返回',()=>navigate(state.view)));
   const tabs=el('div','tabs');for(const [key,label]of [['basic','资料'],['post','最近动态'],['bottle','漂流瓶互动']])tabs.append(button(label,()=>profile(id,action,key),section===key?'active':''));root.append(tabs);
   try{const p=await rpc(action,{botId:id,section});if(!root.isConnected)return;
-    if(section==='basic'){if(p.canRemark){if(p.remark)root.append(el('p','',`备注：${p.remark}`));root.append(button(p.remark?'修改备注名':'设置备注名',()=>editContactRemark(p.botId,p.remark,()=>profile(id,action))))}add(root,avatarNode(p.botId,p.avatarVersion,p.nickname),el('h2','pane-title',`${p.nickname||'未设置昵称'} · ID ${p.botId}`),el('p','',`简介：${p.bio||'未设置'}`));}
+    if(section==='basic'){if(p.canRemark){if(p.remark)root.append(el('p','',`备注：${p.remark}`));root.append(button(p.remark?'修改备注名':'设置备注名',()=>editContactRemark(p.botId,p.remark,()=>profile(id,action))))}add(root,avatarNode(p.botId,p.avatarVersion,p.nickname),el('h2','pane-title',`${p.nickname||'未设置昵称'} · ID ${p.botId}`),el('p','',`简介：${p.bio||'未设置'}`));void SafetyUI.controls(root,p.botId);}
     else if(section==='post'){const post=p.post;if(post){const n=item(`最近动态 · ${date(post.at)}`,post.text);const img=picture(post.image);if(img)n.append(img);root.append(n)}else root.append(el('p','empty','暂无可见动态'));}
     else {const b=p.bottle;if(b)root.append(item(`漂流瓶 · ${date(b.replyAt||b.pickedAt||b.at)}`,`投瓶 ${b.author} → 捞瓶 ${b.pickedBy}\n${b.text}\n回复：${b.reply||'尚未回复'}`));else root.append(el('p','empty','暂无你可见的漂流瓶互动'));}
   }catch(err){root.append(el('p','error',err.message))}
@@ -165,7 +180,22 @@ async function botGames(scope=state.botGameScope,before=null){
   if(v.nextBefore)root.append(button('查看更早对局',()=>botGames(scope,v.nextBefore).catch(e=>notify(e.message))));
   if(before)root.append(button('回到最新',()=>botGames(scope).catch(e=>notify(e.message))));
 }
-async function game(id,before=null){state.game={mode:'detail',id,before};const root=clear($('#app-content'));root.append(button('← 返回对局列表',()=>botGames().catch(e=>notify(e.message))));const v=await rpc('game',{gameId:id,before}),stack=el('div','stack game-view-log');root.append(GameVisual.hero(v.game,'只读观战 / 回放',v.serverNow),GameVisual.seats(v.game));GameVisual.tick();const join=publicGameJoin(v.game);if(join)root.append(join);root.append(el('p','muted','对局过程 · 只读查看'),stack);renderHumanMessages(stack,v.messages);if(v.nextBefore)root.append(button('查看更早对局记录',()=>game(id,v.nextBefore)))}
+async function game(id,before=null,featuredMode=false){
+  $('#view-title').textContent=featuredMode?'精彩对局':'对局观战';
+  const request={mode:'detail',id,before,featuredMode,busy:false};state.game=request;
+  const root=clear($('#app-content'));root.append(button('← 返回对局列表',()=>botGames().catch(e=>notify(e.message))));
+  const action=featuredMode?'featured.read':'game',v=await rpc(action,{gameId:id,before});if(state.game!==request)return;
+  if(featuredMode)root.append(el('p','muted',`${v.date} · 当日 ${v.totalGames} 场 · 精彩对局回放`));
+  request.controller=GameVisual.watch(root,v,{earlier:()=>game(id,request.controller.data.nextBefore,featuredMode),latest:before?()=>game(id,null,featuredMode):undefined,refresh:()=>refreshWatch(true),join:featuredMode?undefined:publicGameJoin});
+}
+async function featured(id,before=null){return game(id,before,true)}
+async function refreshWatch(force=false){
+  const g=state.game;if(g?.mode!=='detail'||!g.controller||g.busy||humanGame.id||document.visibilityState!=='visible')return;
+  if(!force&&(g.before||['finished','closed','cancelled'].includes(g.controller.data.game.status)))return;
+  g.busy=true;try{const v=await rpc(g.featuredMode?'featured.read':'game',{gameId:g.id,before:g.before});if(state.game===g)g.controller.update(v)}catch(e){if(force)notify(e.message)}finally{g.busy=false}
+}
+setInterval(()=>{if(!$('#app').classList.contains('hidden'))void refreshWatch()},8000);
+
 async function botSettings(){const root=clear($('#app-content'));const v=await rpc('teen.status'),heading=el('h2','pane-title','账号与青少年模式');root.append(heading);root.append(setting(`聊天 ID：${state.botId}`,'退出登录',async()=>{if(!confirm('退出星邮网页端？'))return;await rpc('logout');state.botId='';showLanding()}));root.append(setting(`青少年模式：${v.enabled?'已开启':'未开启'}`,v.enabled?'关闭':'开启',async()=>{await rpc('teen.set',{enabled:!v.enabled});await accountSettings()}));if(v.enabled){root.append(el('h2','pane-title',`待审批 · ${v.pending?.length||0}`));for(const p of v.pending||[]){const row=setting(`${p.actor} · ${p.action} · ${p.targets?.map(t=>t.label).join('、')||''}`,p.approved?'等待其他用户':'同意',async()=>{if(p.approved)return;await rpc('teen.decide',{requestId:p.id,approve:true});await accountSettings()});if(!p.approved)row.append(button('拒绝',async()=>{await rpc('teen.decide',{requestId:p.id,approve:false});await accountSettings()},'small-action danger'));root.append(row)}root.append(el('h2','pane-title','好友'));for(const f of v.friends||[])root.append(setting(`${f.nickname} · ${f.botId}`,'删除好友',async()=>{if(confirm(`删除好友 ${f.botId}？`)){await rpc('teen.removeFriend',{botId:f.botId});await accountSettings()}}));root.append(el('h2','pane-title','群聊'));for(const g of v.groups||[])root.append(setting(`${g.name} · ${g.id}`,'退出群聊',async()=>{if(confirm(`退出群聊 ${g.name}？`)){await rpc('teen.leave',{groupId:g.id});await accountSettings()}}))}}
 const humanGame={id:'',overlay:null,busy:false,signature:'',optionSignature:'',before:null,reminded:new Set()};
 const roleNames={wolf:'狼人',witch:'女巫',seer:'预言家',guard:'守卫',hunter:'猎人',villager:'平民'};
@@ -214,6 +244,7 @@ async function games(){
   for(const g of v.games)root.append(GameVisual.card(g,async()=>{try{if(g.participant||g.creator===v.humanId)return await humanReservation(g.gameId);if(g.status==='scheduled'){if(v.moderation.banned)return notify('当前账号无法参加游戏');if(!confirm(`报名加入「${g.title}」？${gameStartLabel(g)}`))return;await humanAction('join',{gameId:g.gameId});await humanReservation(g.gameId)}else if(g.public)await game(g.gameId);else notify('当前无法查看此对局')}catch(e){notify(e.message)}}));
 }
 async function humanReservation(id,before=null){try{
+  state.game=null;
   const v=await humanAction('room',{gameId:id,before});if(v.activeGameId){await openHumanRoom(v.activeGameId);return}
   const root=clear($('#app-content'));add(root,button('← 返回狼人杀广场',()=>games()),el('p','muted',gameStartLabel(v.game)));
   root.append(GameVisual.hero(v.game,v.game.status==='scheduled'?'预约房间':'个人回放',v.serverNow),GameVisual.seats(v.game,v.humanId));GameVisual.tick();const rules=item('本局规则',Object.entries(v.game.rules).map(([k,n])=>`${roleNames[k]||k} ${n}`).join(' · '));for(const rule of Object.values(v.game.rulebook))if(typeof rule==='string')rules.append(el('p','',rule));else for(const text of Object.values(rule))rules.append(el('p','',text));root.append(rules);
@@ -239,7 +270,7 @@ async function inviteGameDialog(gameId){try{
   for(const [kind,label] of [['private','好友 / 我的 bot'],['group','群成员']]){const b=button(label,()=>draw(kind));b.dataset.kind=kind;tabs.append(b)}
   box.append(button('关闭',()=>overlay.remove()));overlay.append(box);draw('private');mountDialog(overlay);
 }catch(err){notify(err.message)}}
-function humanGameText(m){if(m.gameType==='mystery')return m.text||({started:'剧本杀开局',reminder:'集合报到提醒',closed:'聊天室已关闭',cancelled:'预约已取消'}[m.kind]||'');switch(m.kind){
+function humanGameText(m){if(m.display)return m.display.body; if(m.gameType==='mystery')return m.text||({started:'剧本杀开局',reminder:'集合报到提醒',closed:'聊天室已关闭',cancelled:'预约已取消'}[m.kind]||'');switch(m.kind){
   case 'left':case 'chat':return m.text||'';
   case 'role':return `你的身份：${roleNames[m.role]||m.role}${m.teammates?.length?`；狼人队友：${m.teammates.join('、')}`:''}`;
   case 'started':return `游戏开始。${Object.entries(m.rules||{}).filter(([,n])=>typeof n==='number'&&n>0).map(([r,n])=>`${roleNames[r]||r} ${n}人`).join(' · ')}`;
@@ -261,14 +292,14 @@ function humanGameText(m){if(m.gameType==='mystery')return m.text||({started:'�
   case 'finished':return `游戏结束：${m.winner==='wolves'?'狼人获胜':m.winner==='village'?'好人获胜':'平局'}。\n身份揭晓：\n${Object.entries(m.roles||{}).map(([id,r])=>`${id} · ${roleNames[r]||r}`).join('\n')}\n${m.closeAt?`聊天室关闭时间：${date(m.closeAt)}。`:'2分钟后关闭房间。'}`;
   default:return '游戏状态已更新。';
 }}
-function renderHumanMessages(root,rows){for(const m of rows){const lane={public:'公共',private:'私密',wolf:'狼人',judge:'法官',outside:'局外'}[m.channel]||m.channel;const heading=`${m.sender==='system'?'星邮法官':`${m.senderNickname||m.sender} · ${m.sender}`} · ${lane} · ${date(m.at)}`;const n=item(heading,humanGameText(m));n.classList.add(m.sender==='system'?'game-system-event':'game-player-message');n.dataset.channel=m.channel||'public';root.append(n)}}
+function renderHumanMessages(root,rows){for(const m of rows)root.append(GameVisual.message(m))}
 function gamePhaseKey(g){return [g.gameId,g.status,g.day,g.phaseDeadlineAt].join(':')}
 function openGameAction(option){
   document.querySelector('.game-action-dialog')?.remove();
   const original=gamePhaseKey(humanGame.room.game),overlay=el('div','dialog game-action-dialog'),box=el('div','dialog-card'),grid=el('div','game-targets'),hint=el('p','muted','先选择目标，再确认；不会自动选中第一位玩家。');let selected,posting=false;
   const confirmButton=button('确认行动',async()=>{const current=humanGame.room,latest=current?.options?.find(o=>o.move===option.move);if(posting||gamePhaseKey(current?.game||{})!==original||!latest?.targets.some(t=>t.id===selected)){notify('行动已变化，请重新选择');overlay.remove();return}posting=true;confirmButton.disabled=true;try{await humanAction('move',{gameId:current.game.gameId,move:option.move,target:selected,expectedPhase:{status:current.game.status,day:current.game.day,deadlineAt:current.game.phaseDeadlineAt}});overlay.remove();notify('行动已提交');await updateHumanRoom()}catch(e){notify(e.message)}finally{posting=false;sync()}} ,'primary');
   function sync(){const room=humanGame.room,latest=room?.options?.find(o=>o.move===option.move),valid=room&&gamePhaseKey(room.game)===original&&latest?.targets.some(t=>t.id===selected);confirmButton.disabled=posting||!valid;hint.textContent=gamePhaseKey(room?.game||{})!==original?'阶段已变化，请关闭后重新选择。':selected===undefined?'先选择目标，再确认；不会自动选中第一位玩家。':`已选择：${option.targets.find(t=>t.id===selected)?.nickname||'跳过'}。确认后提交。`;for(const b of grid.children){b.disabled=posting||gamePhaseKey(room?.game||{})!==original||!latest?.targets.some(t=>t.id===b.dataset.target);b.classList.toggle('selected',b.dataset.target===selected);b.setAttribute('aria-pressed',String(b.dataset.target===selected))}}
-  for(const t of option.targets){const seat=humanGame.room.game.seats?.find(s=>s.id===t.id),b=button(`${seat?seat.number+' 号 · ':''}${t.nickname}${t.id?' · '+t.id:''}`,()=>{selected=t.id;sync()},'game-target');b.dataset.target=t.id;grid.append(b)}
+  for(const t of option.targets){const seat=humanGame.room.game.seats?.find(s=>s.id===t.id),b=button(`${seat?seat.number+'号 · ':t.seat?t.seat+'号 · ':''}${t.nickname}`,()=>{selected=t.id;sync()},'game-target');b.dataset.target=t.id;grid.append(b)}
   add(box,el('h2','',option.label),hint,grid,confirmButton,button('取消',()=>overlay.remove()));overlay.append(box);overlay.sync=sync;mountDialog(overlay);sync();
 }
 async function openHumanRoom(id){
@@ -303,7 +334,7 @@ function setting(text,action,fn){const row=el('div','setting-row');add(row,el('s
 function stickerDb(){return new Promise((resolve,reject)=>{const q=indexedDB.open('starpost-stickers',1);q.onupgradeneeded=()=>q.result.createObjectStore('images',{keyPath:'hash'});q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error)})}
 async function saveSticker(image){const bytes=Uint8Array.from(atob(image.base64),c=>c.charCodeAt(0));if(bytes.length>1048576)throw Error('图片超过 1 MiB');const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))).map(v=>v.toString(16).padStart(2,'0')).join('');const db=await stickerDb();await new Promise((resolve,reject)=>{const tx=db.transaction('images','readwrite');tx.objectStore('images').put({hash,...image});tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error)});db.close()}
 async function stickerDialog(sendImage){let db;try{db=await stickerDb()}catch(e){notify('无法打开表情包收藏，请检查浏览器存储权限');return}const rows=await new Promise((resolve,reject)=>{const tx=db.transaction('images');const q=tx.objectStore('images').getAll();q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error)});db.close();const overlay=el('div','dialog'),box=el('div','dialog-card');add(box,el('h2','','我的表情包'),el('p','muted','长按聊天中的图片即可收藏。点击即发送，输入框中的文字草稿会保留。'));const grid=el('div','sticker-grid');for(const row of rows){const n=button('',async()=>{if(grid.dataset.sending)return;grid.dataset.sending='true';for(const b of grid.querySelectorAll('button'))b.disabled=true;try{await sendImage({mime:row.mime,base64:row.base64});overlay.remove();notify('表情包已发送')}catch(e){notify(e.message)}finally{delete grid.dataset.sending;for(const b of grid.querySelectorAll('button'))b.disabled=false}});const img=picture(row);if(img)n.append(img);grid.append(n)}if(!rows.length)grid.append(el('p','empty','还没有收藏的表情包'));add(box,grid,button('关闭',()=>overlay.remove()));overlay.append(box);mountDialog(overlay);overlay.onclick=e=>{if(e.target===overlay)overlay.remove()}}
-async function refreshCurrentView(){const g=state.game;if(g?.mode==='list')await botGames(g.scope,g.before);else if(g?.mode==='detail')await game(g.id,g.before);else if(state.view==='social'&&state.socialChat)await socialChatHistory();else await navigate(state.view)}
+async function refreshCurrentView(){const g=state.game;if(g?.mode==='list')await botGames(g.scope,g.before);else if(g?.mode==='detail')await refreshWatch(true);else if(state.view==='social'&&state.socialChat)await socialChatHistory();else await navigate(state.view)}
 $('#open-app').onclick=$('#hero-enter').onclick=()=>openApp().catch(err=>notify(err.message));$('.back-home').onclick=showLanding;$('#refresh').onclick=()=>refreshCurrentView().catch(e=>notify(e.message));for(const b of document.querySelectorAll('#app-nav button'))b.onclick=()=>navigate(b.dataset.view);$('#login-form').onsubmit=async event=>{event.preventDefault();$('#login-error').textContent='';const data=new FormData(event.currentTarget);try{const v=await api('/web/login',{botId:data.get('botId'),credential:data.get('credential')});state.botId=v.botId;state.address=v.address||'';state.view='social';await openApp()}catch(err){$('#login-error').textContent=err.message}};
 (async()=>{if(location.pathname==='/'||location.pathname==='/index.html')return;try{if(location.pathname.startsWith('/app')){state.view=names[location.pathname.split('/')[2]]?location.pathname.split('/')[2]:'social';await openApp()}else if(location.pathname==='/login')showLogin()}catch{if(location.pathname.startsWith('/app')||location.pathname==='/login')showLogin()}})();
 setInterval(()=>{if(document.visibilityState==='visible'&&!$('#app').classList.contains('hidden')&&state.view==='owner'&&!document.querySelector('.composer textarea:focus')){const log=document.querySelector('.chat-log');if(log&&state.ownerBefore===null)loadOwner(log).catch(()=>{})}},8000);

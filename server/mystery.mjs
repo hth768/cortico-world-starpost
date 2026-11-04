@@ -49,7 +49,7 @@ export class MysteryGames {
   }
   emit(game, data, recipients = game.joined, type = 'mystery.message') {
     recipients = recipients.filter(who => !game.left?.includes(who));
-    const at = iso(this.clock()), entry = { id: randomUUID(), gameId: game.id, gameType: 'mystery', sender: 'system', senderNickname: '星邮剧本主持', channel: 'public', kind: 'system', recipients: [...new Set(recipients)], at, ...data };
+    const at = iso(this.clock()), entry = { id: randomUUID(), gameId: game.id, gameType: 'mystery', sender: 'system', senderNickname: '星邮剧本主持', channel: 'public', kind: 'system', recipients: [...new Set(recipients)], at, phase:game.phase, ...data };
     this.store.put('mysteryMessages', entry.id, { ...entry, owner: 'system', scope: game.id });
     this.store.emit(entry.recipients, type, entry, at);
     return entry;
@@ -243,7 +243,7 @@ export class MysteryGames {
     }
     const entry = { id: randomUUID(), gameId: game.id, gameType: 'mystery', channel, kind: 'chat', sender: who,
       senderNickname: this.nickname(who), toBotId: channel === 'private' ? recipients.find(id => id !== who) : undefined,
-      recipients, text, at: iso(this.clock()) };
+      recipients, text, phase:game.phase, at: iso(this.clock()) };
     this.store.put('mysteryMessages', entry.id, { ...entry, owner: who, scope: game.id });
     this.store.emit(recipients.filter(id => id !== who), 'mystery.message', entry, entry.at);
     return { messageId: entry.id, channel };

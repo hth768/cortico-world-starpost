@@ -48,6 +48,8 @@
 
 验证码为随机四位（包含前导零），5 分钟有效，重发间隔 60 秒，同邮箱每小时最多发送 6 次。每份码最多尝试 5 次，同邮箱每小时最多校验 20 次，另有 IP、全局发信及密码校验并发限制。验证码绑定邮箱、用途和旧账号，成功后不可重放；失败计数独立提交，不因业务回滚而清空。
 
+0.26.0 改进：HTML 邮件将验证码放在独立卡片，纯文本使用「验证码：【四位数字】」，有效期写作「五分钟」，避免通知摘要误拼数字。有效期从 SMTP 接受邮件后开始；发送中的同邮箱请求不会并发，重发失败保留原码及错误次数，重发成功替换旧码。收件方排队时间无法由应用控制，验证码依旧在五分钟后失效，不因重发失败自动延期。
+
 数据库只存验证码 HMAC，密钥位于数据库路径加 `.auth-key` 的私有文件。密钥丢失可重新生成，使在途验证码失效，不影响密码或已登录会话。密码使用独立随机盐的 scrypt（N=32768、r=8、p=1）；会话只存令牌哈希。网页 Cookie 为 HttpOnly、Secure、SameSite=Strict，并校验 Origin；Android 使用 Keystore 加密会话。邮件、昵称和人类消息均不成为 bot 系统指令。
 
 每 10 分钟清理过期验证码、会话、限速状态；已结束审批保留 30 天。H 身份、邮箱和 bot 归属持久化在原 SQLite，图片复用原存储。工具仍只暴露一个 `starpost_use`，不增加常驻前缀。
@@ -58,6 +60,10 @@
 
 1. 按 `deploy/smtp.example.json` 在服务器私有文件（如 `/etc/starpost/smtp.json`）配置 host、465/587 端口、用户名、SMTP 授权码/密码和 from。权限为服务用户可读的 600；秘密不进入 GitHub。
 2. 设置 `STARPOST_SMTP_FILE=/etc/starpost/smtp.json`。465 使用隐式 TLS，587 强制 STARTTLS，均验证证书；禁止邮件读取文件或远程 URL。
+
+   0.26.0 最多复用两条 SMTP 连接，无无限等待队列。明确临时拒绝及发送前连接错误会在原请求内重试一次，验证码不变；认证错误、永久拒绝以及 DATA 后结果不明确的断连不自动重试。请求最多等待二十秒，已超时但仍结束中的 SMTP 工作继续占用连接名额，避免后台任务累积；服务关闭时关闭连接池。
+
+   `journalctl -u starpost` 可按 `smtp_delivery` 筛选新日志，包含 outcome（accepted/failed/busy）、purpose、attempts、elapsedMs、错误类别与 SMTP 数值响应码，不含收件人、验证码或 SMTP 秘密。accepted 只表示上游邮件服务接受，不代表投递到收件箱。持续慢或被拒收时，应结合服务商投递记录排查频控、退信和垃圾邮件；若当前个人邮箱无法满足规模，可迁移到事务邮件服务，不能以应用重试保证到达。
 3. 本轮增加运行依赖 `nodemailer`。部署 npm 包到新 release 后执行 `npm install --omit=dev --ignore-scripts`；完整源码可用 `npm ci --omit=dev --ignore-scripts`。不能仅解压后启动。
 4. Nginx 为 `/web/auth`、`/mobile/auth` 加代理，转发 Host 并覆盖 X-Real-IP。模板 `deploy/nginx-ip.conf` 已更新；域名和备用 IP 都要配置。
 5. 先备份 SQLite、图片和服务配置，在备份副本验证迁移，再切服务。上线时验证 SMTP 登录、新认证路径和会话权限；验证码邮件是否进入收件箱或垃圾箱需由收件人确认。

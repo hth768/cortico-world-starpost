@@ -42,14 +42,14 @@ internal fun gamePhaseLabel(g:JSONObject)=if(g.str("gameType")=="mystery")myster
                 if(deadline>0&&g.str("status") !in listOf("closed","cancelled"))Surface(shape=CircleShape,color=colors.surface.copy(alpha=.85f)){Text(if(remaining>0)"%02d:%02d".format(remaining/60,remaining%60)else "等待结算",Modifier.padding(horizontal=12.dp,vertical=8.dp),style=MaterialTheme.typography.labelLarge)}
             }
             if(!compact)Text(if(mode=="游戏大厅")"选择定时预约、人满就开，或实时匹配。" else if(script)"跟随主持人推进剧情，按获准视角查看线索与消息。" else when(g.str("status")){"scheduled"->if(g.str("startMode")=="full")"加入即准备，人满立即开局。保持在线，断连超过 2 分钟释放席位。" else "开局前 3 分钟报到，准时入座。";"day"->"讨论完毕请选择结束发言，全员结束立即投票，计时只作兜底。";"vote"->"点选目标后确认投票，也可以弃票。";"finished","closed"->"故事暂告一段落，一起回顾这场推理。";else->"轮到你行动时，使用牌桌下方的技能按钮。"},style=MaterialTheme.typography.bodyMedium,color=foreground)
-            if(script){val current=mysterySteps.indexOfFirst{it.first==g.str("phase")};mysterySteps.chunked(3).forEachIndexed{row,steps->Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){steps.forEachIndexed{col,step->Surface(Modifier.weight(1f),shape=RoundedCornerShape(10.dp),color=if(row*3+col<=current)colors.primaryContainer else colors.surface.copy(alpha=.65f)){Text("${row*3+col+1} ${step.second}",Modifier.padding(8.dp),style=MaterialTheme.typography.labelSmall)}}}}}
+            if(script&&!compact){val current=mysterySteps.indexOfFirst{it.first==g.str("phase")};mysterySteps.chunked(3).forEachIndexed{row,steps->Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){steps.forEachIndexed{col,step->Surface(Modifier.weight(1f),shape=RoundedCornerShape(10.dp),color=if(row*3+col<=current)colors.primaryContainer else colors.surface.copy(alpha=.65f)){Text("${row*3+col+1} ${step.second}",Modifier.padding(8.dp),style=MaterialTheme.typography.labelSmall)}}}}}
             if(g.str("status")=="day"&&g.has("speechesDone"))Text((if(g.optBoolean("speechEnded"))"你已结束本轮发言 · " else "")+"${g.optInt("speechesDone")}/${g.strings("alive").size} 人已结束发言",style=MaterialTheme.typography.labelMedium,color=foreground)
             if(g.str("winner").isNotEmpty())Text(when(g.str("winner")){"wolves"->"狼人阵营获胜";"village"->"好人阵营获胜";else->"本局平局"},style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,color=foreground)
         }
     }
 }
 
-@Composable internal fun GameSeatBoard(g:JSONObject,self:String=""){
+@Composable internal fun GameSeatBoard(g:JSONObject,self:String="",showRoles:Boolean=false){
     val seats=g.rows("seats");val scheduled=g.str("status")=="scheduled";val colors=MaterialTheme.colorScheme
     Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
         Text(if(scheduled)"集合席位 · ${g.optInt("checkedIn")} 人已报到" else "${if(g.str("gameType")=="mystery")"在场" else "存活"} ${seats.count{it.optBoolean("alive")}} / ${seats.size}",style=MaterialTheme.typography.titleSmall)
@@ -57,9 +57,10 @@ internal fun gamePhaseLabel(g:JSONObject)=if(g.str("gameType")=="mystery")myster
         seats.chunked(4).forEach{row->Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
             row.forEach{seat->val me=seat.str("id")==self;val active=seat.optBoolean("alive");Surface(Modifier.weight(1f).alpha(if(active)1f else .55f),shape=RoundedCornerShape(18.dp),color=if(me)colors.primaryContainer else colors.surfaceContainerHigh,border=if(me)BorderStroke(1.dp,colors.primary)else null){
                 Column(Modifier.padding(horizontal=5.dp,vertical=10.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(5.dp)){
-                    Text("%02d".format(seat.optInt("number")),style=MaterialTheme.typography.labelSmall,color=colors.onSurfaceVariant)
+                    Text("${seat.optInt("number")}号",style=MaterialTheme.typography.labelSmall,color=colors.onSurfaceVariant)
                     Surface(shape=CircleShape,color=if(me)colors.primary else colors.secondaryContainer,modifier=Modifier.size(36.dp)){Box(contentAlignment=Alignment.Center){Text(seat.str("nickname",seat.str("id")).take(1),fontWeight=FontWeight.Bold)}}
                     Text(seat.str("nickname",seat.str("id")),style=MaterialTheme.typography.labelMedium,maxLines=1,overflow=TextOverflow.Ellipsis)
+                    if(showRoles&&seat.has("role"))Text(roleNames[seat.str("role")]?:"未知",style=MaterialTheme.typography.labelSmall,color=colors.primary)
                     Text(if(me)"我" else if(seat.str("id").endsWith("H"))"人类" else "Bot",style=MaterialTheme.typography.labelSmall,color=colors.onSurfaceVariant)
                     Text(if(scheduled){if(seat.optBoolean("checkedIn"))"已报到" else "待报到"}else if(active)"在场" else "已离场",style=MaterialTheme.typography.labelSmall)
                 }
@@ -100,7 +101,7 @@ internal fun gamePhaseLabel(g:JSONObject)=if(g.str("gameType")=="mystery")myster
         Text(if(validPhase&&current!=null)"先选择目标，再确认行动。" else "阶段或可用行动已变化，请关闭后重新选择。",color=if(validPhase&&current!=null)MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error)
         Column(Modifier.heightIn(max=340.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)){
             targets.chunked(2).forEach{row->Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){row.forEach{target->val id=target.str("id");val enabled=validPhase&&!working&&current?.rows("targets")?.any{it.str("id")==id}==true;OutlinedCard(onClick={selected=id},enabled=enabled,modifier=Modifier.weight(1f),shape=RoundedCornerShape(18.dp),border=BorderStroke(if(selected==id)2.dp else 1.dp,if(selected==id)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),colors=CardDefaults.outlinedCardColors(containerColor=if(selected==id)MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface)){
-                Column(Modifier.padding(14.dp)){Text(target.str("nickname",id.ifBlank{"跳过"}),fontWeight=FontWeight.Bold);Text(if(id.isBlank())"不选择玩家" else id,style=MaterialTheme.typography.bodySmall)}
+                Column(Modifier.padding(14.dp)){Text(target.str("nickname",id.ifBlank{"跳过"}),fontWeight=FontWeight.Bold);Text(if(id.isBlank())"不选择玩家" else if(target.optInt("seat")>0)"${target.optInt("seat")}号" else "玩家",style=MaterialTheme.typography.bodySmall)}
             }};if(row.size==1)Spacer(Modifier.weight(1f))}}
         }
         if(selected!=null)Text("已选择：${targets.find{it.str("id")==selected}?.str("nickname")?:selected}",style=MaterialTheme.typography.labelLarge)

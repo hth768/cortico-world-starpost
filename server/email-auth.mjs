@@ -66,6 +66,7 @@ export class EmailVerification {
     if (!Buffer.isBuffer(secret) || secret.length < 32) throw new Error('邮箱验证密钥至少需要 32 字节');
     Object.assign(this, { store, secret, sendMail, clock });
     this.throttle = new AuthThrottle(store, clock);
+    this.pending = new Set();
   }
   digest(value) { return createHmac('sha256', this.secret).update(JSON.stringify(value)).digest('hex'); }
   async send({ email: input, purpose, subject = '', remote }) {
@@ -73,26 +74,28 @@ export class EmailVerification {
     if (!['register', 'login', 'claim'].includes(purpose) || purpose === 'claim' && !/^\d{5,12}H$/.test(subject)) fail('验证码用途不合法');
     if (purpose !== 'claim') subject = '';
     if (typeof this.sendMail !== 'function') fail('邮箱服务尚未配置，请稍后重试', 503);
+    if (this.pending.has(email)) fail('验证码正在发送，请稍候', 429);
     this.throttle.take([[`mail:cooldown:${email}`, 1, 60000], [`mail:email:${email}`, 6, 3600000], [`mail:ip:${remote}`, 30, 3600000], ['mail:global', 1000, 3600000]]);
-    const id = randomUUID(), code = String(randomInt(10000)).padStart(4, '0'), now = this.clock();
+    const id = randomUUID(), code = String(randomInt(10000)).padStart(4, '0');
     const slot = this.digest(['slot', email, purpose, subject]);
-    const row = { id, slot, email, purpose, subject, codeHash: this.digest([id, email, purpose, subject, code]),
-      expiresAt: now + 300000, attempts: 0, ready: false, at: new Date(now + 300000).toISOString() };
-    this.store.transaction(() => {
-      this.store.statement("DELETE FROM documents WHERE collection='emailChallenges' AND (key=? OR at<=?)").run(slot, new Date(now).toISOString());
-      this.store.put('emailChallenges', slot, row);
-    });
-    try { await this.sendMail({ to: email, code, purpose, expiresMinutes: 5 }); }
-    catch {
-      this.store.transaction(() => { if (this.store.get('emailChallenges', slot)?.id === id) this.store.remove('emailChallenges', slot); });
-      fail('验证码邮件发送失败，请稍后重试', 503);
-    }
-    this.store.transaction(() => {
-      const current = this.store.get('emailChallenges', slot);
-      if (current?.id === id) this.store.put('emailChallenges', slot, { ...current, ready: true });
-    });
+    this.pending.add(email);
+    try {
+      try { await this.sendMail({ to: email, code, purpose, expiresMinutes: 5 }); }
+      catch (error) {
+        fail(error?.code === 'EBUSY' ? '邮件服务繁忙，请一分钟后重试；已有账号可用密码登录' : '验证码邮件发送失败或超时，请一分钟后重试；已有账号可用密码登录', 503);
+      }
+      // Start the usable lifetime after SMTP accepts delivery. A failed resend never
+      // deletes the previous valid challenge or resets its failed-guess count.
+      const acceptedAt = this.clock(), expiresAt = acceptedAt + 300000;
+      this.store.transaction(() => {
+        this.store.statement("DELETE FROM documents WHERE collection='emailChallenges' AND at<=?").run(new Date(acceptedAt).toISOString());
+        this.store.put('emailChallenges', slot, { id, slot, email, purpose, subject,
+          codeHash: this.digest([id, email, purpose, subject, code]), expiresAt,
+          attempts: 0, ready: true, at: new Date(expiresAt).toISOString() });
+      });
+    } finally { this.pending.delete(email); }
     // Never include the code, its digest, or SMTP credentials in responses/logs.
-    return { challengeId: id, expiresIn: 300, retryAfter: 60, message: '验证码已发送，5 分钟内有效' };
+    return { challengeId: id, expiresIn: 300, retryAfter: 60, message: '验证码邮件已交给邮件服务，五分钟内有效。未收到请检查垃圾邮件；已有账号可用密码登录。' };
   }
   consume({ email: input, purpose, subject = '', challengeId, code, remote }, action) {
     const email = emailAddress(input);

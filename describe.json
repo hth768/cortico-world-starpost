@@ -504,6 +504,13 @@
         "zh": "星邮 mystery_view 事件。",
         "en": "Starpost mystery_view event."
       }
+    },
+    {
+      "type": "starpost.safety_notice",
+      "description": {
+        "zh": "星邮 safety.notice 事件。",
+        "en": "Starpost safety.notice event."
+      }
     }
   ],
   "prompts": [

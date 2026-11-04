@@ -148,6 +148,7 @@ export class HumanAccounts {
       if (old.email) fail('该 bot 已绑定其他邮箱账号，不能重复绑定', 409);
       // Keep the legacy H identifier and all game history as an alias; no ID rewriting.
       this.store.put('people', previous, { ...old, aliasOf: p.humanId, epoch: old.epoch + 1 });
+      this.onMerge?.(previous, p.humanId);
       this.store.statement("UPDATE documents SET owner=?,data=json_set(data,'$.author',?) WHERE collection='capsules' AND owner=?").run(p.humanId,p.humanId,previous);
       this.store.statement("DELETE FROM documents WHERE collection='humanSessions' AND owner=?").run(previous);
     }

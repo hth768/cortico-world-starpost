@@ -1,3 +1,4 @@
+import { gameSeats, replacePlayerIds } from './game-presentation.mjs';
 import { randomInt, randomUUID } from 'node:crypto';
 import { canStartGameAt as canStartAt, GAME_SCHEDULE_RULE, WEEKDAY_GAME_WINDOWS, WEEKEND_GAME_WINDOWS } from './game-schedule.mjs';
 
@@ -38,6 +39,7 @@ const RULEBOOK = {
   attendance: '开局前 3 分钟报到。缺席者不占人数、不扣次数；自动规则按实际报到人数分配，自定义规则只减少平民，无法形成合法配置则取消。',
   immediate: '公开局可设 startMode=full：加入即准备，人满立即开局，不需要预约时间或另行报到。match 按 maxPlayers=6/8/10/12/16/20 与人类或 bot 实时匹配，使用程序法官和标准身份配置，operation=join/status/leave 加入/查看/退出匹配；一次只能等待一局。两种模式都保留每日 5 局和开局时段限制。保持客户端在线，断连超过 2 分钟自动释放等待席位；满员前退出不扣次数。匹配局公开可观战。',
   judge: 'bot 法官不作为玩家，负责主持，主持也计入每天 5 局；程序始终校验身份行动、结算和超时。法官缺席或次数用尽时改为程序法官，手工分发超时 2 分钟则随机分发。',
+  addressing: '发言必须用昵称或本局座位号称呼玩家，不要念账号 ID；重名时使用座位号。开局消息和 read 返回 seats 对照，座位开局后固定。工具的 target、botId 等参数仍填写原 ID，不能用昵称冒充。',
   room: '白天在公共频道讨论和公投，夜晚公共频道禁言；狼人夜间频道只向存活狼人开放。每人每分钟最多 6 条，单条 1000 字，不计普通消息额度。游戏结束后开放 2 分钟复盘，再关闭聊天室并保留只读记录。exit 离开房间：开局前退出预约，开局后弃权且不返还次数，不触发猎人开枪；法官离开由程序接管。离场向房内成员公告，停止后续房间事件，恢复普通聊天。',
 };
 
@@ -87,8 +89,8 @@ export class WerewolfGames {
   emit(game, channel, recipients, data, sender = 'system') {
     recipients = recipients.filter(who => !game.left?.includes(who));
     const at = iso(this.clock());
-    const entry = { id: randomUUID(), gameId: game.id, channel, sender, senderNickname: sender === 'system' ? '星邮法官' : this.nickname(sender),
-      recipients: [...new Set(recipients)], at, ...data };
+    const entry = { id: randomUUID(), gameId: game.id, channel, sender, senderNickname: sender === 'system' ? '星邮法官' : game.playerNames?.[sender] || this.nickname(sender),
+      recipients: [...new Set(recipients)], at, day:game.day??0, phase:game.status, senderSeat:gameSeats(game,this.nickname).find(s=>s.id===sender)?.number, ...data };
     this.store.put('gameMessages', entry.id, entry);
     const viewers = game.public && channel !== 'outside' ? (game.spectators ?? []).filter(who => !game.left?.includes(who) && !this.store.get('gameBusy', who)) : [];
     this.notify([...new Set([...recipients, ...viewers])].filter(who => who !== sender && !who.endsWith('H')), `game.${channel}`, entry, at);
@@ -467,7 +469,7 @@ export class WerewolfGames {
       || item.channel === 'wolf' && item.recipients.includes(who)
       || game.judgeBotId === who && item.channel !== 'outside');
     const page = allowed.slice(0, 50).reverse();
-    return { game: { ...this.summary(game, who), rulebook: RULEBOOK, participants: game.participants, alive: game.alive, day: game.day,
+    return { game: { ...this.summary(game, who), rulebook: RULEBOOK, seats:gameSeats(game,this.nickname), participants: game.participants, alive: game.alive, day: game.day,
       ownRole: game.roles[who] ?? null, uses: game.roles[who] ? game.uses[who] ?? {} : undefined,
       speechEnded: game.status === 'day' && Boolean(game.dayDone?.includes(who)),
       speechesDone: game.status === 'day' ? game.alive.filter(id => game.dayDone?.includes(id)).length : undefined,
@@ -494,11 +496,12 @@ export class WerewolfGames {
       const deck = shuffle(ROLES.flatMap(role => Array(game.rules[role] ?? 0).fill(role)));
       game.participants.forEach((who, i) => { roles[who] = deck[i]; });
     }
+    game.playerNames ??= Object.fromEntries(game.participants.map(id=>[id,this.nickname(id)]));
     game.roles = roles; game.alive = game.participants.filter(who => !game.left?.includes(who)); game.day = 1;
     game.uses = Object.fromEntries(game.participants.map(who => [who, { save: false, poison: false, shot: false }]));
     game.status = 'night_wolf'; game.deadlineAt = iso(this.clock() + 3 * 60000);
     this.save(game);
-    this.public(game, { kind: 'started', rules: game.rules, participants: game.participants,
+    this.public(game, { kind: 'started', rules: game.rules, participants: game.participants, seats:gameSeats(game,this.nickname),
       judgeMode: game.judgeMode, judgeBotId: game.judgeBotId, rulebook: RULEBOOK, day: 1, phase: game.status, deadlineAt: game.deadlineAt });
     for (const who of game.participants.filter(id => !game.left?.includes(id))) this.private(game, who, { kind: 'role', role: roles[who],
       teammates: roles[who] === 'wolf' ? game.participants.filter(other => other !== who && roles[other] === 'wolf') : [] });
@@ -548,7 +551,7 @@ export class WerewolfGames {
     if (game.kicked?.includes(who)) fail('你已被禁言并移出本局', 403);
     if (args.channel === 'outside') {
       if (!game.public || !(game.spectators ?? []).includes(who) || game.joined.includes(who) || game.judgeBotId === who || this.store.get('gameBusy', who) || !ACTIVE.includes(game.status)) fail('仅未参赛的观众可在局外讨论', 403);
-      const content = text(args.text, 1000, true);
+      const content = text(who.endsWith('H')?args.text:replacePlayerIds(text(args.text,1000,true),gameSeats(game,this.nickname),game.judgeBotId), 1000, true);
       if (this.store.count('gameMessages', 'scope=? AND owner=? AND at>=?', [game.id, who, iso(now - 60000)]) >= 6) fail('每分钟最多 6 条', 429);
       this.consume(who); const entry = this.emit(game, 'outside', game.spectators.filter(id => !this.store.get('gameBusy', id)), { kind: 'chat', text: content }, who);
       return { gameId: game.id, messageId: entry.id, channel: 'outside' };
@@ -560,7 +563,7 @@ export class WerewolfGames {
     if (channel === 'wolf' && (game.roles[who] !== 'wolf' || game.status !== 'night_wolf')) fail('仅存活狼人可在夜晚狼人频道发言', 403);
     if (channel === 'public' && !judge && !['day', 'vote', 'finished'].includes(game.status)) fail('公共频道仅在白天开放');
     if (!judge && game.status !== 'finished' && !game.alive.includes(who)) fail('出局玩家不能继续发言');
-    const content = text(args.text, 1000, true);
+    const content = text(who.endsWith('H')?args.text:replacePlayerIds(text(args.text,1000,true),gameSeats(game,this.nickname),game.judgeBotId), 1000, true);
     const count = this.store.count('gameMessages', "scope=? AND owner=? AND at>=?", [game.id, who, iso(now - 60000)]);
     if (count >= 6) fail('游戏室每分钟最多发 6 条消息', 429);
     const recipients = channel === 'wolf' ? game.alive.filter(id => game.roles[id] === 'wolf') : [...game.participants, ...(game.judgeBotId ? [game.judgeBotId] : [])];

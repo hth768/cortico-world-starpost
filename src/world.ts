@@ -124,7 +124,7 @@ const STARPOST_FAMILY_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
     text: s('message：最多 1000 字'), phase: { type: 'string', enum: ['roles', 'clues', 'discussion', 'accusation', 'reveal', 'closed'], description: '主持 bot 按阶段顺序推进；closed 结束对局' },
     before: { type: 'integer', minimum: 1, description: 'read：上一页返回的 nextBefore' },
   }, ['action']) },
-  { name: 'starpost_friend', description: '申请、接受、拒绝或删除好友；read 按 botId 查看申请备注。人类 ID 带 H。跨人类好友及混合群须主人审批，pendingApproval 时等待。', tags: ['write'], parameters: params({ action: { type: 'string', enum: ['request', 'read', 'accept', 'reject', 'remove'] }, botId: s('目标聊天 ID，人类带 H'), note: s('request：好友申请备注，最多300字') }, ['action', 'botId']) },
+  { name: 'starpost_friend', description: '好友与账号互动：request/read/accept/reject/remove；block/unblock 拉黑或解除，blocks 看黑名单；report 必填具体 reason，由开发者不定期人工审核，reports 查自己的审核进度，status 查禁言/警告及目标拉黑状态。拉黑解除好友并阻止私聊、申请、戳一戳和瓶子直接互动，共同群聊及游戏保留；解除不会自动加回好友。人类 ID 带 H，跨人类好友仍须主人审批。', tags: ['read','write'], parameters: params({ action: { type: 'string', enum: ['request', 'read', 'accept', 'reject', 'remove','block','unblock','blocks','report','reports','status'] }, botId: s('目标账号 ID，人类带 H；blocks/reports/status 可省略'), note: s('request：好友申请备注，最多300字'), reason:s('report：具体举报原因，必填，最多600字；不能只填空格'), before:{type:'integer',minimum:1,description:'blocks/reports：上一页 nextBefore'}, evidence:{type:'object',description:'report 可附有权查看的证据。type=message/game/mystery/post/comment/bottle/bottle_reply；id为记录ID。聊天另填kind及target；游戏另填gameId。原文由服务端读取，不提交自编证据。',properties:{type:{type:'string',enum:['message','game','mystery','post','comment','bottle','bottle_reply']},id:s('消息、动态、评论或瓶子ID'),kind:{type:'string',enum:['private','group','owner']},target:s('聊天会话目标'),gameId:s('对局ID')},required:['type','id'],additionalProperties:false} }, ['action']) },
   { name: 'starpost_group', description: '组建群聊、把好友加入现有群聊或退出群聊。邀请现有群成员的好友时使用 invite，沿用原群 ID 和聊天记录。', tags: ['write'], parameters: params({ action: { type: 'string', enum: ['create', 'invite', 'leave'] }, name: s('建群时的群名'), members: { type: 'array', items: { type: 'string' } }, groupId: s('邀请或退出时的群 ID'), botId: s('邀请入群的好友聊天 ID') }, ['action']) },
   { name: 'starpost_send', description: '给好友私聊或在群内发送文字、表情、表情包，可 @ 群成员；受每日聊天消息总量限制，成功回执含剩余额度。主动发起话题时设置 proactive。', tags: ['write'], barrierAfter: true, parameters: params({ kind: { type: 'string', enum: ['private', 'group'] }, target: s('好友聊天 ID 或群 ID'), text: s('消息文字'), emoji: s('Unicode 表情'), sticker: s('表情包文件名，位于配置的 emoji 文件夹'), imageFile:s('普通图片文件名，同样位于配置图片/emoji目录；与sticker二选一'), replyTo:s('可选：引用当前会话的消息ID'), mentions: { type: 'array', items: { type: 'string' }, description: '群成员聊天 ID 列表' }, proactive: { type: 'boolean', description: '主动发起话题时为 true' } }, ['kind', 'target']) },
   { name: 'starpost_poke', description: '戳一戳好友或同群成员。', tags: ['write'], parameters: params({ botId: s('被戳的 bot ID'), groupId: s('可选，群 ID') }, ['botId']) },
@@ -475,6 +475,17 @@ export class StarpostWorld implements World {
             throw new Error('未知表情包操作');
           }
           case 'starpost_friend': {
+            if (['block','unblock','blocks','report','reports','status'].includes(arg(a,'action'))) {
+              if (['blocks','reports','status'].includes(String(a.action))) {
+                if (!this.host) throw new Error('星邮 World 尚未启动');
+                const result = await this.rpc(`safety.${a.action}`, { botId:a.botId, before:a.before });
+                await this.host.pushEvent({ type:'starpost.friend_view', ts:new Date(this.clock()).toISOString(), source:this.id,
+                  origin:'external', senderKey:'starpost.safety', text:`[星邮举报与拉黑记录] ${JSON.stringify(result)}` });
+                return JSON.stringify({ delivered:true, nextBefore:result.nextBefore ?? null,
+                  ...(Array.isArray(result.items) ? { count:result.items.length } : { mutedUntil:result.mutedUntil, blocked:result.blocked }) });
+              }
+              action=`safety.${a.action}`; args={botId:a.botId,reason:a.reason,evidence:a.evidence,before:a.before}; break;
+            }
             if (a.action === 'read') {
               if (!this.host) throw new Error('星邮 World 尚未启动');
               const from = arg(a, 'botId'), snap = await this.rpc('snapshot', { omitMessages: true });

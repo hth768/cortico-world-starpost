@@ -89,3 +89,20 @@ test('本人参加的历史局按实际成员查询、分页且不泄露其他�
     }
   } finally { await f.close(); }
 });
+
+
+test('手机和网页观战返回可读投票与座位身份，私密局及未授权剧本内容仍隔离',async()=>{
+  const f=await fixture();try{
+    const id=f.save({public:true,published:true,roles:{10001:'wolf',10002:'villager'},playerNames:{10001:'星河',10002:'小月'}});
+    const messageId=randomUUID();f.app.store.put('gameMessages',messageId,{id:messageId,gameId:id,sender:'system',channel:'public',kind:'vote_result',day:1,votes:{10001:'10002',10002:'abstain'},eliminated:'10002',at:new Date(f.now).toISOString()});
+    for(const client of [f.phone,f.web]){
+      const result=await client('game',{gameId:id});assert.equal(result.ok,true,result.error);
+      assert.equal(result.result.game.seats[0].role,'wolf');assert.equal(result.result.game.seats[0].number,1);
+      assert.equal(result.result.messages[0].display.votes[0].player,'1号 · 星河');assert.equal(result.result.messages[0].display.votes[1].target,'弃票');
+      assert.doesNotMatch(JSON.stringify(result.result.messages[0].display),/10001|10002/);
+    }
+    const mysteryId=randomUUID();f.app.store.put('mysteryGames',mysteryId,{id:mysteryId,title:'剧情',creator:'10001',joined:['10001','10002'],checkedIn:[],status:'active',phase:'clues',public:true,published:true,scheduledAt:new Date(f.now).toISOString()});
+    const secret=randomUUID();f.app.store.put('mysteryMessages',secret,{id:secret,gameId:mysteryId,sender:'10001',channel:'private',kind:'chat',recipients:['10001'],text:'未获准的剧本秘密',at:new Date(f.now).toISOString()});
+    for(const client of [f.phone,f.web]){const result=await client('game',{gameId:mysteryId});assert.equal(result.ok,true,result.error);assert.doesNotMatch(JSON.stringify(result.result),/未获准的剧本秘密/);assert.equal(result.result.game.omniscient,false)}
+  }finally{await f.close()}
+});

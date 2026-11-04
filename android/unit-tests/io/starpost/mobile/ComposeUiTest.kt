@@ -32,6 +32,43 @@ class ComposeUiTest {
     private fun client()=StarpostClient(ApplicationProvider.getApplicationContext<Application>())
     private val account get()=obj("humanId" to "10003H","nickname" to "星河访客","email" to "hello@example.com","botId" to "10001","bots" to JSONArray().put(obj("botId" to "10001","nickname" to "陈玥汐")))
     private fun shot(name:String){val file=File("../.deployment/compose/screenshots/$name.png");file.parentFile.mkdirs();compose.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG,100,file.outputStream())}
+    @Test fun reportRequiresReasonAndKeepsDraftAfterErrorAndThemeChange(){
+        val vm=client();val dark=mutableStateOf(false);val state=mutableStateOf(ClientState(starting=false,signedIn=true,account=account));val ui=UiActions(vm);val report=Modal.Report("10002",obj("type" to "message","id" to "original"))
+        val shown=mutableStateOf(false)
+        compose.setContent{StarpostTheme(if(dark.value)"dark" else "light",false){Box(Modifier.fillMaxSize()){Text("聊天页面");if(shown.value)ReportDialog(ui,state.value,report)}}}
+        compose.runOnIdle{shown.value=true}
+        fun dialogShot(name:String){val file=File("../.deployment/compose/screenshots/$name.png");file.parentFile!!.mkdirs();compose.onNode(isDialog()).captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG,100,file.outputStream())}
+        compose.onNodeWithText("提交举报").assertIsNotEnabled()
+        compose.onNode(hasSetTextAction()).performTextInput("   ");compose.onNodeWithText("提交举报").assertIsNotEnabled()
+        compose.onNode(hasSetTextAction()).performTextReplacement("这条消息持续骚扰，请核实相关记录。")
+        compose.onNodeWithText("提交举报").assertIsEnabled();dialogShot("android-report-light")
+        compose.runOnIdle{state.value=state.value.copy(error="网络暂时不可用，请重试");dark.value=true}
+        compose.onNodeWithText("这条消息持续骚扰，请核实相关记录。").assertExists();compose.onNodeWithText("网络暂时不可用，请重试").assertExists();dialogShot("android-report-dark")
+        compose.onNode(hasSetTextAction()).performTextReplacement("字".repeat(601));compose.onNodeWithText("提交举报").assertIsNotEnabled()
+    }
+    @Test fun safetyCenterShowsReviewProgressAndRetainedHistoryWithoutAdminActions(){
+        val vm=client();val state=mutableStateOf(ClientState(starting=false,signedIn=true,account=account,route=Route("safety",kind="blocks"),data=obj("items" to JSONArray().put(obj("botId" to "10002H","nickname" to "海风","hasHistory" to true,"at" to "2026-11-04T06:30:00Z")))))
+        compose.setContent{StarpostTheme("dark",false){SafetyScreen(UiActions(vm),state.value)}}
+        compose.onNodeWithText("解除拉黑").assertExists();compose.onNodeWithText("查看保留的私聊记录").assertExists();shot("android-blacklist-dark")
+        compose.runOnIdle{state.value=state.value.copy(route=Route("safety",kind="reports"),data=obj("items" to JSONArray().put(obj("botId" to "10002H","status" to "confirmed","reason" to "持续骚扰","reviewNote" to "人工核实后已警告","at" to "2026-11-04T06:30:00Z"))))}
+        compose.onNodeWithText("举报成立").assertExists();compose.onNodeWithText("审核说明：人工核实后已警告").assertExists();compose.onNodeWithText("批准举报").assertDoesNotExist();compose.onNodeWithText("发送").assertDoesNotExist()
+    }
+    @Test fun spectatorTimelineFiltersRetainStateAndShowSeatNamesInBothThemes(){
+        val vm=client();val dark=mutableStateOf(false)
+        val game=obj("gameId" to "watch-room","title" to "月色下的推理","status" to "day","day" to 2,"alive" to JSONArray().put("10001").put("10002"),"viewLabel" to "公开对局 · 全知观战","seats" to JSONArray().put(obj("id" to "10001","number" to 1,"nickname" to "星河","alive" to true,"role" to "wolf")).put(obj("id" to "10002","number" to 2,"nickname" to "小月","alive" to true,"role" to "seer")))
+        val messages=JSONArray().put(obj("id" to "watch-chat","sender" to "10001","kind" to "chat","channel" to "public","at" to "2026-11-04T06:30:00Z","display" to obj("speaker" to "1号 · 星河","body" to "我想先听听2号的看法。","channel" to "公共频道","round" to "第 2 天 · 白天讨论","key" to false)))
+            .put(obj("id" to "watch-result","sender" to "system","kind" to "inspect_result","channel" to "private","at" to "2026-11-04T06:31:00Z","display" to obj("speaker" to "星邮法官","body" to "2号 · 小月：非狼人","title" to "查验结果","channel" to "私密频道","round" to "第 2 夜 · 神职行动","key" to true)))
+        val state=mutableStateOf(ClientState(starting=false,signedIn=true,account=account,route=Route("game","watch-room"),data=obj("game" to game,"messages" to messages)))
+        compose.setContent{StarpostTheme(if(dark.value)"dark" else "light",false){WatchGame(UiActions(vm),state.value)}}
+        compose.onNodeWithText("1号 · 星河").assertExists();compose.onNodeWithText("10001").assertDoesNotExist()
+        compose.onNodeWithText("私密",useUnmergedTree=true).performClick();compose.onNodeWithText("查验结果").assertExists();compose.onNodeWithText("1号 · 星河").assertDoesNotExist()
+        compose.onNodeWithText("全部",useUnmergedTree=true).performClick();compose.onNodeWithText("搜索本页昵称或内容").performTextInput("星河")
+        compose.runOnIdle{state.value=state.value.copy(data=obj("game" to game,"messages" to messages,"serverNow" to "2026-11-04T06:32:00Z"));dark.value=true}
+        compose.onNodeWithText("1号 · 星河").assertExists();compose.onNodeWithText("查验结果").assertDoesNotExist();shot("android-watch-timeline-dark")
+        compose.onNodeWithText("玩家牌桌",useUnmergedTree=true).performClick();compose.onNodeWithText("狼人",useUnmergedTree=true).assertDoesNotExist()
+        compose.onNodeWithText("显示身份").performClick();compose.onNodeWithText("狼人",useUnmergedTree=true).assertExists();compose.onNodeWithText("1号",useUnmergedTree=true).assertExists();shot("android-watch-board-dark")
+        compose.runOnIdle{dark.value=false};shot("android-watch-board-light")
+    }
     @Test fun capsuleComposerKeepsDraftAndSupportsCustomTimeAndThreePhotos(){
         val vm=client();val ready=mutableStateOf(false);val dark=mutableStateOf(false)
         val state=mutableStateOf(ClientState(starting=false,signedIn=true,account=account,route=Route("newCapsule")))
@@ -89,7 +126,7 @@ class ComposeUiTest {
         val game=obj("gameId" to "public-game","title" to "今晚的公开局","public" to true,"published" to true,"status" to "scheduled","gameType" to "werewolf","scheduledAt" to "2026-11-03T10:00:00Z")
         val state=mutableStateOf(ClientState(starting=false,signedIn=true,account=account,route=Route("game","public-game"),data=obj("game" to game,"messages" to JSONArray())))
         compose.setContent{StarpostTheme("light",false){StarpostApp(vm,state.value)}}
-        compose.onNodeWithText("加入预约（无需邀请）").performScrollTo().performClick()
+        compose.onNodeWithText("加入预约（无需邀请）").assertIsDisplayed().performClick()
         compose.onNodeWithText("以自己的人类身份加入「今晚的公开局」？${gameStartLabel(game)}。").assertExists()
         compose.onNodeWithText("取消",useUnmergedTree=true).performClick()
         for(updated in listOf(JSONObject(game.toString()).put("public",false),JSONObject(game.toString()).put("published",false),JSONObject(game.toString()).put("status","day"),JSONObject(game.toString()).put("gameType","mystery"))){
@@ -425,7 +462,8 @@ class ComposeUiTest {
     @Test fun mysteryViewerShowsProgressWithoutHumanActions(){
         val vm=client();val g=obj("title" to "午夜列车","gameType" to "mystery","status" to "active","phase" to "clues","seats" to JSONArray().put(obj("id" to "10002","nickname" to "小夏","number" to 1,"alive" to true)))
         compose.setContent{StarpostTheme("dark",false){StarpostApp(vm,ClientState(starting=false,signedIn=true,account=account,route=Route("game","mystery"),data=obj("game" to g,"messages" to JSONArray())))}}
-        compose.onNodeWithText("3 搜集线索").assertExists();compose.onNodeWithText("确认行动").assertDoesNotExist();compose.onAllNodes(hasSetTextAction()).assertCountEquals(0)
+        compose.onNodeWithText("搜集线索").assertExists();compose.onNodeWithText("确认行动").assertDoesNotExist();compose.onNodeWithContentDescription("发送消息").assertDoesNotExist();compose.onNodeWithText("搜索本页昵称或内容").assertExists()
+        compose.onNodeWithText("狼人").assertDoesNotExist();compose.onNodeWithText("私密").assertExists()
         shot("android-mystery-arena")
     }
     @Test fun activeGameShowsRoleActionsAndHidesSocialNavigation(){

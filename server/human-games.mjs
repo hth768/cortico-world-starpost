@@ -1,3 +1,4 @@
+import { presentGamePage, gameSeats } from './game-presentation.mjs';
 import { randomUUID } from 'node:crypto';
 
 const fail = (message, status = 400) => { const e = new Error(message); e.status = status; throw e; };
@@ -109,7 +110,7 @@ export class HumanGames {
   }
   options(game, who) {
     if (!game.alive.includes(who) && !(game.status === 'hunter' && game.pendingHunter === who) || game.kicked?.includes(who)) return [];
-    const role = game.roles[who], targets = game.alive.map(id => ({ id, nickname: this.games.nickname(id) || id }));
+    const role = game.roles[who], targets = gameSeats(game,this.games.nickname).filter(s=>game.alive.includes(s.id)).map(s=>({id:s.id,nickname:s.nickname,seat:s.number}));
     const option = (move, label, list) => ({ move, label, targets: list });
     if (game.status === 'vote' && !Object.hasOwn(game.votes, who)) return [option('vote', '投票', [...targets, { id: 'abstain', nickname: '弃票' }])];
     if (game.status === 'day' && !game.dayDone?.includes(who)) return [option('end_speech', '结束发言', [{ id: '', nickname: '结束本轮发言，全员结束后立即投票' }])];
@@ -130,11 +131,11 @@ export class HumanGames {
   }
   room(owner, gameId, before) {
     const game = this.assertRoom(owner, gameId), who = this.id(owner), kicked = game.kicked?.includes(who) === true;
-    const page = this.games.read(who, game.id, before);
+    const page = presentGamePage(game,this.games.read(who,game.id,before),this.games.nickname,{label:'我的参赛视角'});
     const channels = !kicked && (game.alive.includes(who) || game.status === 'finished')
       ? ['day', 'vote', 'finished'].includes(game.status) ? ['public'] : game.roles[who] === 'wolf' && game.status === 'night_wolf' ? ['wolf'] : [] : [];
-    return { ...page, serverNow:new Date(this.clock()).toISOString(), game: { ...page.game, seats: (game.status==='scheduled'?game.joined:game.participants).map((id,index)=>({id,number:index+1,nickname:this.games.nickname(id)||id,alive:game.status==='scheduled'||game.alive.includes(id),checkedIn:game.checkedIn.includes(id)})), canInvite: page.game.canInvite && !this.state(owner).banned }, humanId: who, nickname: this.games.nickname(who), kicked, moderation: this.state(owner), channels,
-      options: kicked ? [] : this.options(game, who), names: Object.fromEntries(game.participants.map(id => [id, this.games.nickname(id) || id])),
+    return { ...page, serverNow:new Date(this.clock()).toISOString(), game: { ...page.game, canInvite: page.game.canInvite && !this.state(owner).banned }, humanId: who, nickname: this.games.nickname(who), kicked, moderation: this.state(owner), channels,
+      options: kicked ? [] : this.options(game, who), names: Object.fromEntries(page.game.seats.map(s=>[s.id,`${s.number}号 · ${s.nickname}`])),
       messages: kicked ? [] : page.messages, activeGameId: this.active(owner) };
   }
   strike(owner, game, evidenceId, reason, evidence) {

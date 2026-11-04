@@ -99,7 +99,11 @@ test('手机和网页按需读取个人资料、战绩和今日精彩对局，�
     const recent = (await f.phone(token, 'profile', { botId: '10002', section: 'recent' })).result.games;
     assert.equal(recent.find((game: any) => game.title === '私密对局').gameId, undefined);
     assert.equal((await f.phone(token, 'featured')).result.featured.gameId, publicId);
-    assert.equal((await f.phone(token, 'featured.read', { gameId: publicId })).result.messages[0].role, 'villager');
+    const featured = await f.phone(token, 'featured.read', { gameId: publicId });
+    assert.equal(featured.ok, true, JSON.stringify(featured));
+    assert.equal(featured.result.messages[0].role, 'villager');
+    assert.match(featured.result.messages[0].display.body, /1号 · 月狐.*平民/);
+    assert.equal(featured.result.game.seats[0].role, 'villager');
     assert.equal((await f.phone(token, 'featured.read', { gameId: privateId })).status, 404);
     const login = await fetch(`${f.base}/web/login`, { method: 'POST', headers: { origin: f.base, 'content-type': 'application/json' },
       body: JSON.stringify({ botId: '10001', credential: f.keys[10001] }) });
