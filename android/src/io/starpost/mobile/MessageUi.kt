@@ -98,7 +98,7 @@ internal fun copyMessage(context:Context,m:JSONObject){
         Text("转发时保存的记录，保留原作者和发送时间。",style=MaterialTheme.typography.labelMedium)
         if(value.optJSONObject("message")?.optBoolean("recalled")==true)Text("该记录已撤回")
         value.rows("items").forEach{m->Surface(shape=RoundedCornerShape(20.dp),color=MaterialTheme.colorScheme.surfaceContainerHigh,modifier=Modifier.fillMaxWidth().combinedClickable(onClick={},onLongClick={menu=m})){
-            Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){Text("${m.str("senderNickname",m.str("sender"))} · ${m.str("sender")}\n${time(m.str("at"))}",style=MaterialTheme.typography.labelSmall);m.optJSONObject("quote")?.let{Text("引用 ${it.str("senderNickname")}：${it.str("text")}",style=MaterialTheme.typography.bodySmall)};if(m.str("text").isNotEmpty()||m.str("emoji").isNotEmpty())Text(m.str("text")+m.str("emoji"));MessageImage(m.optJSONObject("image"),ui,onLongClick={menu=m})}
+            Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){AccountTitleBadge(m.str("senderTitle"),style=m.optJSONObject("senderTitleStyle"));Text("${m.str("senderNickname",m.str("sender"))} · ${m.str("sender")}\n${time(m.str("at"))}",style=MaterialTheme.typography.labelSmall);m.optJSONObject("quote")?.let{Text("引用 ${it.str("senderNickname")}：${it.str("text")}",style=MaterialTheme.typography.bodySmall)};if(m.str("text").isNotEmpty()||m.str("emoji").isNotEmpty())Text(m.str("text")+m.str("emoji"));MessageImage(m.optJSONObject("image"),ui,onLongClick={menu=m})}
         }}
     }},confirmButton={TextButton(onClick=onDismiss){Text("关闭")}})
     menu?.let{MessageActionMenu(ui,it,false,false,{menu=null})}

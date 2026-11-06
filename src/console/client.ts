@@ -1,3 +1,4 @@
+import { applyTitleStyle, titleStyleCss } from '../title-style.js';
 import type { WebUiClientBundle, WebUiPanelContext } from 'cortico/web/shared/client-panel.ts';
 
 interface Snapshot {
@@ -5,15 +6,15 @@ interface Snapshot {
   messageQuota?: { used: number; limit: number; remaining: number; timezone: string; statusText?: string };
   groups: Array<{ id: string; name: string; members: string[]; admins?: string[]; titles?: Record<string, string>; announcement?: { text: string; author: string } }>;
   conversations: Array<{ kind: 'private' | 'group'; target: string; latest: { sender: string; text: string; emoji: string; hasImage: boolean; at: string } | null }>;
-  posts: Array<{ id: string; author: string; text: string; image?: { mime: string; base64: string }; comments: Array<{ id: string; author: string; text: string; parentId?: string }>; at: string }>;
-  bottles: Array<{ id: string; author: string; text: string; pickedBy?: string; reply?: string }>;
-  square: Array<{ id: string; kind: 'bot' | 'group' | 'game'; author: string; target: string; text: string; nickname?: string; bio?: string; groupName?: string; at: string }>;
+  posts: Array<{ id: string; author: string; authorTitle?: string; authorTitleStyle?: unknown; text: string; image?: { mime: string; base64: string }; comments: Array<{ id: string; author: string; authorTitle?: string; authorTitleStyle?: unknown; text: string; parentId?: string }>; at: string }>;
+  bottles: Array<{ id: string; author: string; authorTitle?: string; authorTitleStyle?: unknown; text: string; pickedBy?: string; pickerTitle?: string; pickerTitleStyle?: unknown; reply?: string }>;
+  square: Array<{ id: string; kind: 'bot' | 'group' | 'game'; author: string; authorTitle?: string; authorTitleStyle?: unknown; target: string; text: string; nickname?: string; bio?: string; groupName?: string; at: string }>;
 }
-interface Profile { botId: string; nickname: string; bio: string; discoverable: boolean; avatarVersion?: string }
+interface Profile { accountTitle?: string; accountTitleStyle?: unknown; botId: string; nickname: string; bio: string; discoverable: boolean; avatarVersion?: string }
 interface ChatMessage {
-  id: string; cursor: number; kind: 'private' | 'group'; target: string; sender: string; senderNickname: string; senderAvatarVersion?: string;
+  id: string; cursor: number; kind: 'private' | 'group'; target: string; sender: string; senderNickname: string; senderTitle?: string; senderTitleStyle?: unknown; senderAvatarVersion?: string;
   text: string; emoji: string; image?: { mime: string; base64: string }; mentions: string[]; at: string;
-  quote?: { senderNickname: string; text: string; hasImage?: boolean }; forward?: { count: number; preview: string[] }; recalled?: boolean;
+  quote?: { senderNickname: string; senderTitle?: string; senderTitleStyle?: unknown; text: string; hasImage?: boolean }; forward?: { count: number; preview: string[] }; recalled?: boolean;
 }
 interface HistoryPage { messages: ChatMessage[]; nextBefore: number | null; nextAfter: number | null }
 interface StickerPage {
@@ -25,7 +26,7 @@ interface GameSummary {
   judge: boolean; judgeMode: string; judgeBotId: string | null; rules: Record<string, number | string>; phaseDeadlineAt: string | null;
 }
 interface GameMessage {
-  id: string; cursor: number; channel: string; kind: string; sender: string; senderNickname: string; at: string; text?: string;
+  id: string; cursor: number; channel: string; kind: string; sender: string; senderNickname: string; senderTitle?: string; senderTitleStyle?: unknown; at: string; text?: string;
   role?: string; teammates?: string[]; roles?: Record<string, string>; rules?: Record<string, number>; day?: number;
   target?: string | null; botId?: string; hunter?: string; voter?: string; eliminated?: string | null; isWolf?: boolean;
   victim?: string | null; saveAvailable?: boolean; poisonAvailable?: boolean; deaths?: string[]; winner?: string;
@@ -79,6 +80,7 @@ const chatCss = `
 .sp-chat-card{display:block;width:100%;border:1px solid transparent;border-radius:11px;padding:10px 12px;text-align:left;background:transparent;color:inherit;cursor:pointer;font:inherit}
 .sp-chat-card:hover,.sp-chat-card:focus-visible{background:rgba(90,145,225,.1)}
 .sp-chat-card[aria-pressed="true"]{background:rgba(90,145,225,.18);border-color:rgba(90,145,225,.38)}
+.sp-account-title{display:inline-block;max-width:100%;margin:3px 6px;padding:3px 9px;border:1.5px solid #9b6516;border-radius:8px;background:linear-gradient(120deg,#fff1b8,#ffd980);color:#583600;font-weight:850;font-size:12px;line-height:1.5;white-space:normal;overflow-wrap:anywhere;vertical-align:middle}
 .sp-chat-title{display:block;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sp-chat-preview{display:block;font-size:12px;opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:4px}
 .sp-chat-thread{display:flex;flex-direction:column;min-width:0;min-height:540px}
@@ -97,11 +99,14 @@ const chatCss = `
 .sp-bubble img.sp-expanded{max-width:100%;max-height:none;cursor:zoom-out}
 .sp-thread-foot{padding:9px 16px;border-top:1px solid rgba(128,128,128,.2);font-size:12px;opacity:.65}
 @media(max-width:700px){.sp-chat-layout{grid-template-columns:1fr}.sp-chat-list{max-height:190px;border-right:0;border-bottom:1px solid rgba(128,128,128,.22)}.sp-chat-thread{min-height:420px}.sp-thread-scroll{height:380px}}
+
+${titleStyleCss}
 `;
 const chatKey = (kind: 'private' | 'group', target: string) => `${kind}:${target}`;
 const displayTime = (at: string) => at ? new Date(at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
 
-function line(ctx: WebUiPanelContext, parent: HTMLElement, text: string) { parent.appendChild(ctx.ui.h('div', 'msgline', text)); }
+function titleBadge(ctx:WebUiPanelContext,parent:HTMLElement,title?:string,style?:unknown){if(!title)return;const badge=ctx.ui.h('span','sp-account-title',`✦ ${title}`);badge.setAttribute('aria-label',`账号头衔：${title}`);badge.title='服务器授予的账号头衔';applyTitleStyle(badge,style);parent.append(badge);}
+function line(ctx: WebUiPanelContext, parent: HTMLElement, text: string, title?:string,style?:unknown) { const node=ctx.ui.h('div','msgline',text);titleBadge(ctx,node,title,style);parent.append(node); }
 function image(ctx: WebUiPanelContext, parent: HTMLElement, value?: { mime: string; base64: string }) {
   if (!value || !['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(value.mime)
     || typeof value.base64 !== 'string' || value.base64.length > 1400000
@@ -117,7 +122,7 @@ function image(ctx: WebUiPanelContext, parent: HTMLElement, value?: { mime: stri
 
 function profileActivity(ctx:WebUiPanelContext,body:HTMLElement,p:any,section:string){
   if(section==='post'){if(!p.post){line(ctx,body,'暂无可见动态');return;}line(ctx,body,`最近动态 · ${p.post.at}`);line(ctx,body,p.post.text);image(ctx,body,p.post.image);}
-  else{const b=p.bottle;if(!b){line(ctx,body,'暂无你可见的漂流瓶互动');return;}line(ctx,body,`投瓶 ${b.author} → 捞瓶 ${b.pickedBy}`);line(ctx,body,b.text);line(ctx,body,`回复：${b.reply||'尚未回复'}`);}
+  else{const b=p.bottle;if(!b){line(ctx,body,'暂无你可见的漂流瓶互动');return;}line(ctx,body,`投瓶 ${b.author}`,b.authorTitle,b.authorTitleStyle);line(ctx,body,`捞瓶 ${b.pickedBy}`,b.pickerTitle,b.pickerTitleStyle);line(ctx,body,b.text);line(ctx,body,`回复：${b.reply||'尚未回复'}`);}
 }
 async function forwardedRecord(ctx:WebUiPanelContext,kind:string,target:string,messageId:string) {
   const {ui}=ctx,dialog=ui.h('dialog','sp-profile-dialog sp-record-dialog'),body=ui.h('div');
@@ -129,7 +134,7 @@ async function forwardedRecord(ctx:WebUiPanelContext,kind:string,target:string,m
     if(ctx.signal.aborted||!dialog.isConnected)return;body.replaceChildren();
     if(page.message.recalled){line(ctx,body,'该记录已撤回');return;}
     line(ctx,body,'以下是转发时保存的记录，保留原作者和发送时间。');
-    for(const m of page.items??[]){const record=ui.h('div','sp-bubble');line(ctx,record,`${m.senderNickname} · ${m.sender} · ${displayTime(m.at)}`);if(m.quote)line(ctx,record,`引用 ${m.quote.senderNickname}：${m.quote.text||'[图片]'}`);line(ctx,record,`${m.text||''}${m.emoji||''}`);image(ctx,record,m.image);body.append(record);}
+    for(const m of page.items??[]){const record=ui.h('div','sp-bubble');line(ctx,record,`${m.senderNickname} · ${m.sender} · ${displayTime(m.at)}`,m.senderTitle,m.senderTitleStyle);if(m.quote)line(ctx,record,`引用 ${m.quote.senderNickname}：${m.quote.text||'[图片]'}`);line(ctx,record,`${m.text||''}${m.emoji||''}`);image(ctx,record,m.image);body.append(record);}
   }catch(error){if(dialog.isConnected){body.replaceChildren();line(ctx,body,String(error));}}
 }
 function avatarProfile(ctx:WebUiPanelContext,id:string) {
@@ -143,9 +148,9 @@ function avatarProfile(ctx:WebUiPanelContext,id:string) {
   async function load(section:string){
     const seq=++request;body.replaceChildren();line(ctx,body,'加载中…');
     try{
-      const p=await ctx.invoke<{botId:string;post?:any;bottle?:any;nickname?:string;bio?:string;avatarVersion?:string;pokeText?:string;wins?:number;losses?:number;draws?:number;games?:Array<{title:string;at:string;result:string}>}>('profileRead',[id,section]);
+      const p=await ctx.invoke<{botId:string;post?:any;bottle?:any;nickname?:string;accountTitle?:string; accountTitleStyle?: unknown;bio?:string;avatarVersion?:string;pokeText?:string;wins?:number;losses?:number;draws?:number;games?:Array<{title:string;at:string;result:string}>}>('profileRead',[id,section]);
       if(ctx.signal.aborted||!dialog.isConnected||seq!==request)return;body.replaceChildren();
-      if(section==='basic'){avatar(ctx,body,p.botId,p.avatarVersion,p.nickname,false);line(ctx,body,`${p.nickname||'未设置昵称'} · ID ${p.botId}`);line(ctx,body,`简介：${p.bio||'未设置'}`);if(p.pokeText)line(ctx,body,`戳一戳文案：${p.pokeText}`);}
+      if(section==='basic'){avatar(ctx,body,p.botId,p.avatarVersion,p.nickname,false);line(ctx,body,`${p.nickname||'未设置昵称'} · ID ${p.botId}`);titleBadge(ctx,body,p.accountTitle,p.accountTitleStyle);line(ctx,body,`简介：${p.bio||'未设置'}`);if(p.pokeText)line(ctx,body,`戳一戳文案：${p.pokeText}`);}
       else profileActivity(ctx,body,p,section);
     }catch(error){if(dialog.isConnected&&seq===request){body.replaceChildren();line(ctx,body,String(error));}}
   }
@@ -271,7 +276,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
       const self = message.sender === snapshotData?.botId, row = ui.h('div', `sp-message${self ? ' sp-self' : ''}`), wrap = ui.h('div', 'sp-bubble-wrap');
       const channel = ({ public: '公共', private: '私密', wolf: '狼人', judge: '法官', outside: '局外观战' } as Record<string, string>)[message.channel] || message.channel;
       wrap.appendChild(ui.h('div', 'sp-message-meta', `${channel} · ${message.senderNickname || message.sender}${message.sender !== 'system' ? ` (${message.sender})` : ''} · ${displayTime(message.at)}`));
-      wrap.appendChild(ui.h('div', 'sp-bubble', gameWords(message))); row.appendChild(wrap); scroll.appendChild(row);
+      titleBadge(ctx,wrap,message.senderTitle,message.senderTitleStyle);wrap.appendChild(ui.h('div', 'sp-bubble', gameWords(message))); row.appendChild(wrap); scroll.appendChild(row);
     }
     gameThread.append(scroll, ui.h('div', 'sp-thread-foot', '仅展示本机 bot 有权查看的公共与私密消息。'));
     queueMicrotask(() => { if (scroll.isConnected) scroll.scrollTop = bottom ? scroll.scrollHeight : oldTop; });
@@ -399,10 +404,10 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
       async function load(section: string) {
         const request = ++profileRequest; body.replaceChildren(); line(ctx, body, '加载中…');
         try {
-          const p = await ctx.invoke<{botId:string;post?:any;bottle?:any;nickname?:string;bio?:string;avatarVersion?:string;wins?:number;losses?:number;draws?:number;games?:Array<{title:string;at:string;result:string}>}>('profileRead', [botId, section]);
+          const p = await ctx.invoke<{botId:string;post?:any;bottle?:any;nickname?:string;accountTitle?:string; accountTitleStyle?: unknown;bio?:string;avatarVersion?:string;wins?:number;losses?:number;draws?:number;games?:Array<{title:string;at:string;result:string}>}>('profileRead', [botId, section]);
           if(ctx.signal.aborted || request !== profileRequest) return;
           body.replaceChildren();
-          if(section === 'basic') { avatar(ctx,body,p.botId,p.avatarVersion,p.nickname); line(ctx, body, `${p.nickname || '未设置昵称'} · ID ${p.botId}`); line(ctx, body, `简介：${p.bio || '未设置'}`); }
+          if(section === 'basic') { avatar(ctx,body,p.botId,p.avatarVersion,p.nickname); line(ctx, body, `${p.nickname || '未设置昵称'} · ID ${p.botId}`); titleBadge(ctx,body,p.accountTitle,p.accountTitleStyle);line(ctx, body, `简介：${p.bio || '未设置'}`); }
           else profileActivity(ctx,body,p,section);
         } catch(error) { if(!ctx.signal.aborted && request === profileRequest) { body.replaceChildren(); line(ctx, body, String(error)); } }
       }
@@ -415,7 +420,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
         if (!matches.length) line(ctx, results, '没有找到可见账号');
         for (const p of matches) {
           const entry = ui.button(`${p.nickname || '未设置昵称'} · ${p.botId}${p.botId === snapshotData?.botId ? ' · 我自己' : ''} · 查看个人主页`, { onClick: () => { void openProfile(p.botId); } });
-          avatar(ctx,entry,p.botId,p.avatarVersion,p.nickname);
+          avatar(ctx,entry,p.botId,p.avatarVersion,p.nickname);titleBadge(ctx,entry,p.accountTitle,p.accountTitleStyle);
           entry.style.display = 'block'; entry.style.width = '100%'; entry.style.textAlign = 'left'; entry.style.marginBlock = '0.6rem'; results.append(entry);
         }
       }).catch((error: unknown) => { line(ctx, results, String(error)); }).finally(() => { button.disabled = false; });
@@ -458,7 +463,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
     const oldTop = oldScroll?.scrollTop ?? 0; resetScroll = false;
     content.replaceChildren();
     line(ctx, content, `Bot：${data.profile.nickname || '未设置昵称'} (${data.botId}) · 好友 ${data.friends.length} · 群聊 ${data.groups.length}`);
-    line(ctx, content, `简介：${data.profile.bio || '未设置'} · 账号可见：${data.profile.discoverable ? '是' : '否'}`);
+    titleBadge(ctx,content,data.profile.accountTitle,data.profile.accountTitleStyle);line(ctx, content, `简介：${data.profile.bio || '未设置'} · 账号可见：${data.profile.discoverable ? '是' : '否'}`);
     if (data.messageQuota) line(ctx, content, data.messageQuota.statusText || `今日聊天已发 ${data.messageQuota.used}/${data.messageQuota.limit} 条 · 剩余 ${data.messageQuota.remaining} 条 · ${data.messageQuota.timezone}`);
     if (data.requests.length) line(ctx, content, `待处理好友申请：${data.requests.map(r => r.from).join('、')}`);
     content.appendChild(ui.section('聊天记录', '点击好友或群聊查看记录。页面只读，消息由 bot 自己发送。'));
@@ -472,6 +477,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
       const key = chatKey(chat.kind, chat.target), button = ui.h('button', 'sp-chat-card');
       button.type = 'button'; button.setAttribute('aria-pressed', String(key === selected));
       button.appendChild(ui.h('span', 'sp-chat-title', `${chat.kind === 'group' ? '群聊' : '私聊'} · ${titleOf(chat)}`));
+      if(chat.kind==='private')titleBadge(ctx,button,data.friendProfiles.find(p=>p.botId===chat.target)?.accountTitle,data.friendProfiles.find(p=>p.botId===chat.target)?.accountTitleStyle);
       const preview = chat.latest ? `${chat.latest.hasImage ? '[图片] ' : ''}${chat.latest.text || chat.latest.emoji || ''}` : '还没有消息';
       button.appendChild(ui.h('span', 'sp-chat-preview', `${preview} ${displayTime(chat.latest?.at || '')}`));
       button.addEventListener('click', () => {
@@ -516,6 +522,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
         const wrap = ui.h('div', 'sp-bubble-wrap');
         avatar(ctx,wrap,m.sender,m.senderAvatarVersion,m.senderNickname);
         wrap.appendChild(ui.h('div', 'sp-message-meta', `${self ? '本机 bot' : m.senderNickname || '未设置昵称'} · ${m.sender} · ${displayTime(m.at)}`));
+        titleBadge(ctx,wrap,m.senderTitle,m.senderTitleStyle);
         const bubble = ui.h('div', 'sp-bubble');
         if(m.quote)bubble.append(ui.h('div','sp-message-meta',`引用 ${m.quote.senderNickname}：${m.quote.text||(m.quote.hasImage?'[图片]':'')}`));
         const words = [m.text, m.emoji, ...(m.mentions?.length ? [`@${m.mentions.join(' @')}`] : [])].filter(Boolean).join(' ');
@@ -546,7 +553,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
         else {
           if (featuredBefore !== null) square.appendChild(ui.button('加载更早流程', { size: 'sm', onClick: () => { void loadFeatured(featuredBefore).catch(error => { status.textContent = String(error); }); } }));
           for (const message of [...featuredMessages.values()].sort((a, b) => a.cursor - b.cursor))
-            line(ctx, square, `${displayTime(message.at)} · ${message.senderNickname || message.sender} · ${message.channel}：${gameWords(message)}`);
+            line(ctx, square, `${displayTime(message.at)} · ${message.senderNickname || message.sender} · ${message.channel}：${gameWords(message)}`,message.senderTitle,message.senderTitleStyle);
         }
       } else if (featuredInfo.published) line(ctx, square, '该统计日暂无可公开的完赛对局');
     }
@@ -554,21 +561,21 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
       const title = item.kind === 'bot'
         ? `Bot ${item.nickname || item.author} (${item.author})${item.bio ? ` · ${item.bio}` : ''}`
         : item.kind === 'game' ? `公开狼人杀 ${item.target} · 发起者 ${item.author}` : `群 ${item.groupName || item.target} (${item.target}) · 群主 ${item.author}`;
-      line(ctx, square, `${item.at} ${title}：${item.text || '展示资料'} · 展示 ID ${item.id}`);
+      line(ctx, square, `${item.at} ${title}：${item.text || '展示资料'} · 展示 ID ${item.id}`,item.authorTitle,item.authorTitleStyle);
     }
     if (!data.square?.length) line(ctx, square, '暂无有效展示');
     content.appendChild(square);
     const feed = ui.h('div'); line(ctx, feed, '自己及好友的动态');
     feed.classList.add('sp-discovery');feed.dataset.area='discover';
     for (const p of [...data.posts].reverse().slice(0, 50)) {
-      const row = ui.h('div'); line(ctx, row, `${p.at} ${p.author}：${p.text}`); image(ctx, row, p.image);
-      for (const c of p.comments) line(ctx, row, `  ${c.author}${c.parentId ? ` 回复 ${c.parentId}` : ''}：${c.text}`);
+      const row = ui.h('div'); line(ctx, row, `${p.at} ${p.author}：${p.text}`,p.authorTitle,p.authorTitleStyle); image(ctx, row, p.image);
+      for (const c of p.comments) line(ctx, row, `  ${c.author}${c.parentId ? ` 回复 ${c.parentId}` : ''}：${c.text}`,c.authorTitle,c.authorTitleStyle);
       feed.appendChild(row);
     }
     content.appendChild(feed);
     const bottles = ui.h('div'); line(ctx, bottles, `漂流瓶：${data.bottles.length} 个`);
     bottles.classList.add('sp-discovery');bottles.dataset.area='discover';
-    for (const bottle of [...data.bottles].reverse().slice(0, 20)) line(ctx, bottles, `${bottle.id} · 投瓶 ${bottle.author}${bottle.pickedBy ? ` · 捞瓶 ${bottle.pickedBy}` : ''}：${bottle.text}${bottle.reply ? ` · 回复：${bottle.reply}` : ''}`);
+    for (const bottle of [...data.bottles].reverse().slice(0, 20)) { line(ctx, bottles, `${bottle.id} · 投瓶 ${bottle.author}${bottle.pickedBy ? ` · 捞瓶 ${bottle.pickedBy}` : ''}：${bottle.text}${bottle.reply ? ` · 回复：${bottle.reply}` : ''}`,bottle.authorTitle,bottle.authorTitleStyle);if(bottle.pickerTitle,bottle.pickerTitleStyle)line(ctx,bottles,`捞瓶人 ${bottle.pickedBy}`,bottle.pickerTitle,bottle.pickerTitleStyle);}
     content.appendChild(bottles);
     showPanel();
   }

@@ -27,6 +27,7 @@ test('统一工具按 family 和 action 调用狼人杀，房间正文作为外�
     assert.equal(mysteryHelp.family, 'mystery');
     assert.ok(mysteryHelp.parameters.properties.action.enum.includes('catalog'));
     assert.ok(mysteryHelp.parameters.properties.action.enum.includes('exit'));
+    assert.ok(mysteryHelp.parameters.properties.action.enum.includes('report'));
     const call = async (args: Record<string, unknown>) => JSON.parse(String(await familyTool(world, 'werewolf').handler(args, {} as never)));
     assert.equal((await call({ action: 'rules' })).dailyLimit, 5);
     const profile = familyTool(world, 'profile');

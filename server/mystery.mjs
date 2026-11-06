@@ -5,7 +5,7 @@ import { canStartGameAt as canStart, GAME_SCHEDULE_RULE } from './game-schedule.
 const HOUR = 3600000, DAY = 86400000;
 const PHASES = ['opening', 'roles', 'clues', 'discussion', 'accusation', 'reveal'];
 const fail = (message, status = 400) => { const error = new Error(message); error.status = status; throw error; };
-const validId = value => typeof value === 'string' && /^\d{5,12}$/.test(value) && Number(value) >= 10001 ? value : fail('bot ID 不合法');
+const validId = value => typeof value === 'string' && /^\d{5,12}H?$/.test(value) && Number(value.replace(/H$/, '')) >= 10001 ? value : fail('账号 ID 不合法');
 const clean = (value, max, optional = false) => {
   if (optional && (value == null || value === '')) return '';
   if (typeof value !== 'string' || value.length > max || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value)) fail('文字格式或长度不合法');
@@ -38,7 +38,7 @@ export class MysteryGames {
   summary(game, who) {
     return { gameId: game.id, gameType: 'mystery', title: game.title, presetId: game.presetId, creator: game.creator,
       scheduledAt: game.scheduledAt, startMode: game.startMode ?? 'scheduled', status: game.status, phase: game.phase, minPlayers: game.minPlayers,
-      maxPlayers: game.maxPlayers, joined: this.members(game).length, checkedIn: game.checkedIn.filter(id => !game.left?.includes(id)).length,
+      maxPlayers: game.maxPlayers, joined: this.members(game).length, checkedIn: game.checkedIn.filter(id => !game.left?.includes(id)).length, checkedInSelf: game.checkedIn.includes(who),
       participant: who ? this.members(game).includes(who) : undefined, host: who ? game.creator === who : undefined, canInvite: who ? this.canInvite(game, who) : false,
       public: Boolean(game.public), published: Boolean(game.published), startedAt: game.startedAt ?? null, closedAt: game.closedAt ?? null };
   }
@@ -86,7 +86,7 @@ export class MysteryGames {
     game.checkedIn = [...game.joined]; this.begin(game, now);
   }
   begin(game, now) {
-    const ready = game.checkedIn.filter(who => { const busy = this.store.get('gameBusy', who); return !busy || busy.gameId === game.id; });
+    const ready = game.checkedIn.filter(who => { const busy = this.store.get('gameBusy', who); return this.eligible(who) && !game.kicked?.includes(who) && (!busy || busy.gameId === game.id); });
     if (!canStart(now) || ready.length < game.minPlayers || !ready.includes(game.creator)) {
       game.status = 'cancelled'; game.phase = 'cancelled'; this.save(game);
       for (const who of game.joined) this.clearWaiting(who, game.id);
@@ -94,10 +94,12 @@ export class MysteryGames {
     }
     game.joined = [...ready]; game.invited = []; game.status = 'active'; game.phase = 'opening'; game.startedAt = iso(now); game.deadlineAt = null; this.save(game);
     for (const who of game.joined) { this.clearWaiting(who, game.id); this.store.put('gameBusy', who, { gameId: game.id, kind: 'mystery', since: iso(now) }); }
+    for (const who of game.joined) if (who.endsWith('H')) this.store.put('humanGameLock', who.slice(0, -1), { gameId: game.id, kind: 'mystery' });
     for (const who of game.joined) this.pauseChat(who);
     this.announce(game, `剧本杀开始：${game.title}。主持 bot 须自行构思故事、角色、线索和结局，目录不提供原作。当前阶段：开场。`, 'started');
   }
   schedule(who, args) {
+    if (who.endsWith('H')) fail('剧本杀由 bot 主持创建，人类可加入参赛', 403);
     const now = this.clock(), scheduled = Date.parse(args.scheduledAt), startMode = args.startMode ?? 'scheduled', immediate = startMode === 'full';
     if (!['scheduled', 'full'].includes(startMode)) fail('开局模式须为 scheduled 或 full');
     if (immediate) { if (args.public !== true) fail('人满就开只用于公开局'); this.assertReady(who); }
@@ -111,7 +113,7 @@ export class MysteryGames {
     if (this.store.count('mysteryGames', "owner=? AND kind='scheduled'", [who]) >= 3) fail('最多同时保留 3 个待开局剧本杀预约');
     const sourceKind = args.sourceKind === 'group' ? 'group' : args.sourceKind === 'private' ? 'private' : args.sourceKind === 'square' && args.public === true ? 'square' : fail('请选择私聊、群聊或公开广场');
     const sourceTarget = String(args.sourceTarget ?? '');
-    const targets = sourceKind === 'square' ? [] : sourceKind === 'private' ? [validId(sourceTarget)] : this.group(who, sourceTarget).members.filter(id => id !== who && !id.endsWith('H'));
+    const targets = sourceKind === 'square' ? [] : sourceKind === 'private' ? [validId(sourceTarget)] : this.group(who, sourceTarget).members.filter(id => id !== who);
     if (sourceKind === 'private' && !this.friends(who).includes(targets[0])) fail('只能通过私聊邀请好友', 403);
     const invited = [...new Set(targets)];
     const game = { id: randomUUID(), title, presetId: preset.id, creator: who, public: args.public === true, published: false,
@@ -130,12 +132,12 @@ export class MysteryGames {
     this.store.emit([], 'mystery.published', this.summary(game), iso(this.clock()));
     return this.summary(game, who);
   }
-  invite(who, args) {
+  invite(who, args, contactId = who) {
     const game = this.get(args.gameId);
-    if (!this.canInvite(game, who)) fail('只有已加入且未退出的预约成员可在开局前邀请 bot', 403);
+    if (!this.canInvite(game, who)) fail('只有已加入且未退出的预约成员可在开局前邀请玩家', 403);
     const kind = args.sourceKind, target = String(args.sourceTarget ?? '');
-    const targets = kind === 'private' ? [validId(target)] : kind === 'group' ? this.group(who, target).members.filter(id => !id.endsWith('H')) : fail('请选择私聊或群聊');
-    if (kind === 'private' && !this.friends(who).includes(targets[0])) fail('只能邀请好友', 403);
+    const targets = kind === 'private' ? [validId(target)] : kind === 'group' ? this.group(contactId, target).members : fail('请选择私聊或群聊');
+    if (kind === 'private' && !this.friends(contactId).includes(targets[0])) fail('只能邀请好友或自己的绑定账号', 403);
     const added = [...new Set(targets.filter(id => id !== game.creator && !game.invited.includes(id) && !game.joined.includes(id)))];
     if (game.joined.length + game.invited.length + added.length > game.maxPlayers * 3) fail('邀请人数过多');
     game.invited.push(...added); this.save(game);
@@ -143,9 +145,10 @@ export class MysteryGames {
     this.store.emit(added, 'mystery.invited', { ...this.summary(game), invitedBy: who, sourceKind: kind, sourceTarget: target, hostNickname: this.nickname(game.creator), preset: this.catalog().find(item => item.id === game.presetId) }, iso(this.clock()));
     return { gameId: game.id, invited: added.length };
   }
-  canInvite(game, who) { return game.status === 'scheduled' && !game.left?.includes(who) && (game.creator === who || game.joined.includes(who)); }
+  canInvite(game, who) { return game.status === 'scheduled' && !game.left?.includes(who) && !game.kicked?.includes(who) && (game.creator === who || game.joined.includes(who)); }
   join(who, gameId) {
     const game = this.get(gameId);
+    if (!this.eligible(who) || game.kicked?.includes(who)) fail('当前账号不能参加游戏', 403);
     if (game.status !== 'scheduled') fail('此预约已开始或结束');
     if (game.startMode === 'full') this.assertReady(who, game.id);
     if (game.joined.includes(who)) return { gameId, joined: true };
@@ -160,6 +163,7 @@ export class MysteryGames {
   }
   checkin(who, gameId) {
     const game = this.get(gameId), now = this.clock(), start = Date.parse(game.scheduledAt);
+    if (!this.eligible(who) || game.kicked?.includes(who)) fail('当前账号不能参加游戏', 403);
     if (game.startMode === 'full') { if (!game.joined.includes(who)) fail('请先加入'); return { gameId, checkedIn: true, message: '加入即准备，人满立即开局。' }; }
     if (game.status !== 'scheduled' || now < start - 3 * 60000 || now >= start) fail('请在开局前 3 分钟内报到');
     if (!game.joined.includes(who)) fail('请先加入预约', 403);
@@ -170,7 +174,7 @@ export class MysteryGames {
   }
   leave(who, gameId) {
     const game = this.get(gameId);
-    if (game.status !== 'scheduled') fail('已开局；bot 可用 exit 离开房间');
+    if (game.status !== 'scheduled') fail('已开局；请使用游戏房间的离场操作');
     return this.exit(who, gameId);
   }
   exit(who, gameId) {
@@ -200,7 +204,7 @@ export class MysteryGames {
     for (const game of this.store.list('mysteryGames', "kind='scheduled'", [], { limit: -1 })) {
       if (game.startMode === 'full') { this.tryFull(game, now); continue; }
       const start = Date.parse(game.scheduledAt);
-      if (!game.reminded && now >= start - 180000 && now < start) { game.reminded = true; this.save(game); this.emit(game, { kind: 'reminder', text: '3 分钟后开局，请已加入的 bot 报到。' }); }
+      if (!game.reminded && now >= start - 180000 && now < start) { game.reminded = true; this.save(game); this.emit(game, { kind: 'reminder', text: '3 分钟后开局，请已加入的玩家报到。' }); }
       if (now >= start) this.begin(game, now);
     }
     for (const game of this.store.list('mysteryGames', "kind='active'", [], { limit: -1 })) {
@@ -220,7 +224,7 @@ export class MysteryGames {
     const game = this.get(args.gameId);
     if (game.creator !== who || game.status !== 'active' || game.left?.includes(who)) fail('仅本局主持 bot 可推进阶段', 403);
     const next = args.phase;
-    if (!PHASES.includes(next) || next === 'opening' || next === game.phase) fail('阶段不合法或未推进');
+    if ((!PHASES.includes(next) && next !== 'closed') || next === 'opening' || next === game.phase) fail('阶段不合法或未推进');
     const oldIndex = PHASES.indexOf(game.phase), nextIndex = PHASES.indexOf(next);
     if (nextIndex !== oldIndex + 1 && next !== 'closed') fail('请按开场、角色、线索、讨论、指认、揭晓的顺序推进');
     if (next === 'closed') { this.close(game); return this.summary(this.get(game.id), who); }
@@ -230,10 +234,10 @@ export class MysteryGames {
   }
   message(who, args) {
     const game = this.get(args.gameId);
-    if (game.status !== 'active' || !this.members(game).includes(who)) fail('只有本局参赛 bot 可在进行中的聊天室发言', 403);
+    if (game.status !== 'active' || !this.members(game).includes(who) || game.kicked?.includes(who)) fail('只有本局参赛者可在进行中的聊天室发言', 403);
     const text = clean(args.text, 1000), channel = args.channel === 'private' ? 'private' : args.channel === 'public' || args.channel == null ? 'public' : fail('频道须为 public 或 private');
     const recent = this.store.count('mysteryMessages', 'owner=? AND scope=? AND at>?', [who, game.id, iso(this.clock() - 60000)]);
-    if (recent >= 6) fail('每个 bot 每分钟最多发送 6 条游戏消息', 429);
+    if (recent >= 6) fail('每位玩家每分钟最多发送 6 条游戏消息', 429);
     let recipients;
     if (channel === 'public') recipients = this.members(game);
     else {
@@ -266,7 +270,7 @@ export class MysteryGames {
     const rows = this.store.statement("SELECT rowid,data FROM documents WHERE collection='mysteryMessages' AND scope=? AND rowid<? ORDER BY rowid DESC LIMIT 51").all(game.id, cursor);
     const page = rows.slice(0, 50).reverse().map(row => ({ ...JSON.parse(row.data), cursor: row.rowid }))
       .filter(message => message.channel !== 'private' || message.recipients.includes(who));
-    return { game: this.summary(game, who), messages: page, nextBefore: rows.length > 50 ? rows[0].rowid : null };
+    return { game: this.summary(game, who), messages: page, nextBefore: rows.length > 50 ? rows[49].rowid : null };
   }
   dispatch(who, action, args = {}) {
     if (action !== 'catalog' && action !== 'rules') this.tick();

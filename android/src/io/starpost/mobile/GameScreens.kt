@@ -42,7 +42,7 @@ internal fun gameText(m:JSONObject):String {m.optJSONObject("display")?.let{d->r
 private fun rulesText(game:JSONObject):String=roleSummary(game.optJSONObject("rules"))+"\n"+(game.optJSONObject("rulebook")?.let{r->r.keys().asSequence().flatMap{key->val v=r.opt(key);if(v is JSONObject)v.keys().asSequence().map{v.str(it)}else sequenceOf(v.toString())}.joinToString("\n")}?:"")
 internal fun gameStartLabel(g:JSONObject)=if(g.str("startMode")=="full")(if(g.optBoolean("matching"))"实时匹配 · 人满就开" else "人满就开")+" · 加入即准备，请保持在线" else "集合时间：${time(g.str("scheduledAt"))} · 开局前 3 分钟报到"
 @Composable internal fun PublicGameJoin(ui:UiActions,s:ClientState,g:JSONObject){
-    if(g.str("gameType")=="mystery"||!g.optBoolean("public")||!g.optBoolean("published")||g.str("status")!="scheduled")return
+    if(!g.optBoolean("public")||!g.optBoolean("published")||g.str("status")!="scheduled")return
     val id=g.str("gameId",g.str("id"))
     Button(enabled=!s.working,onClick={ui.confirm("加入预约","以自己的人类身份加入「${g.str("title")}」？${gameStartLabel(g)}。"){ui.vm.perform("human.join",obj("gameId" to id),Route("humanReservation",id))}}){Text("加入预约（无需邀请）")}
 }
@@ -54,13 +54,15 @@ internal fun gameStartLabel(g:JSONObject)=if(g.str("startMode")=="full")(if(g.op
     "gameInvite"->GameInvites(ui,s)
     else->ContentList(ui){when(s.route.page){
         "games"->{
-            GameBanner(obj("title" to "今夜，来一场推理","status" to "scheduled"),"游戏大厅")
+            val mystery=s.route.kind=="mystery"
+            ChoiceTabs(listOf("werewolf" to "狼人杀","mystery" to "剧本杀"),if(mystery)"mystery" else "werewolf"){ui.vm.navigate(Route("games",kind=it),false)}
+            GameBanner(obj("title" to if(mystery)"一起走进故事里" else "今夜，来一场推理","gameType" to if(mystery)"mystery" else "werewolf","status" to "scheduled"),"游戏大厅")
             Entry("我的 bot 对局","包含加入其他 bot 的预约、私密局与历史局"){ui.go("botGames",kind="own")}
-            val rules=s.data.optJSONObject("rules")?:JSONObject();SectionTitle("狼人杀广场","${s.data.str("nickname")} · ${s.data.str("humanId")} · 今日 ${rules.optInt("usedToday")}/${rules.optInt("dailyLimit",5)} 局")
+            val rules=s.data.optJSONObject("rules")?:JSONObject();SectionTitle(if(mystery)"剧本杀广场" else "狼人杀广场","${s.data.str("nickname")} · ${s.data.str("humanId")}"+(if(mystery)" · bot 主持，共同推理" else " · 今日 ${rules.optInt("usedToday")}/${rules.optInt("dailyLimit",5)} 局"))
             val moderation=s.data.optJSONObject("moderation")?:JSONObject();if(moderation.str("message").isNotEmpty())Text(moderation.str("message"),color=MaterialTheme.colorScheme.error)
-            Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){if(!moderation.optBoolean("banned"))Button(onClick={ui.go("schedule")}){Text("发起预约")};TextButton(onClick={ui.form("设置人类昵称",listOf(TextFieldSpec("nickname","昵称",s.data.str("nickname")))){ui.vm.perform("human.profile",obj("nickname" to it["nickname"]))}}){Text("修改昵称")}}
-            Matchmaking(ui,s,moderation.optBoolean("banned"))
-            Text("公开局可直接加入；定时局提前 3 分钟报到，人满就开局加入即准备。",style=MaterialTheme.typography.bodySmall);val games=s.data.rows("games");if(games.isEmpty())EmptyState("还没有游戏预约","发起一局，等朋友们一起加入。")
+            Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){if(!mystery&&!moderation.optBoolean("banned"))Button(onClick={ui.go("schedule")}){Text("发起预约")};TextButton(onClick={ui.form("设置人类昵称",listOf(TextFieldSpec("nickname","昵称",s.data.str("nickname")))){ui.vm.perform("human.profile",obj("nickname" to it["nickname"]))}}){Text("修改昵称")}}
+            if(!mystery)Matchmaking(ui,s,moderation.optBoolean("banned"))else Text("主持 bot 自行创作故事、角色和线索。加入预约后，你可接收私密资料，与其他玩家共同推理。")
+            Text("公开局可直接加入；定时局提前 3 分钟报到，人满就开局加入即准备。",style=MaterialTheme.typography.bodySmall);val games=s.data.rows("games").filter{(it.str("gameType")=="mystery")==mystery};if(games.isEmpty())EmptyState("还没有游戏预约","发起一局，等朋友们一起加入。")
             games.forEach{g->val joined=g.optBoolean("participant")||g.str("creator")==s.data.str("humanId");GameLobbyCard(g){if(joined)ui.go("humanReservation",g.str("gameId"))else if(g.str("status")=="scheduled"&&!moderation.optBoolean("banned"))ui.confirm("加入预约",g.str("title")+"\n"+gameStartLabel(g)){ui.vm.perform("human.join",obj("gameId" to g.str("gameId")),Route("humanReservation",g.str("gameId")))}else if(g.optBoolean("public")&&!moderation.optBoolean("banned"))ui.go("game",g.str("gameId"))else ui.vm.notice("当前无法加入此预约")}}
 
         }
@@ -78,7 +80,7 @@ internal fun gameStartLabel(g:JSONObject)=if(g.str("startMode")=="full")(if(g.op
             if(s.data.rows("items").isEmpty())EmptyState("暂无对局记录","预约、已开始和已结束的对局都会显示在这里。")
             var filter by rememberSaveable(s.route.id){mutableStateOf(if(s.route.id=="mystery")"mystery" else "all")}
             ChoiceTabs(listOf("all" to "全部","werewolf" to "狼人杀","mystery" to "剧本杀"),filter){filter=it}
-            if(filter=="mystery")Text("剧本杀目前仅供 bot 参赛，你可以在这里观看公开对局。")
+            if(filter=="mystery")Text("剧本杀支持人类参赛，可直接加入公开预约；也可在游戏大厅查看自己的私密邀请。")
             s.data.rows("items").filter{filter=="all" || (if(it.str("gameType")=="mystery")"mystery" else "werewolf")==filter}.forEach{g->GameLobbyCard(g){ui.go("game",g.str("gameId"))}}
 
         }
@@ -132,7 +134,7 @@ internal fun gameStartLabel(g:JSONObject)=if(g.str("startMode")=="full")(if(g.op
                 s.data.rows("options").forEach{o->FilledTonalButton(enabled=!s.working&&o.rows("targets").isNotEmpty(),onClick={action=o;actionPhase=gamePhaseKey(g)}){Text(o.str("label"))}}
             }else Text(if(channels.isNotEmpty())"轮到讨论 · 说出你的判断" else "当前没有可用行动，等待法官推进。",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
             if(channels.isNotEmpty()){
-                if(channels.size>1)ChoiceTabs(channels.map{it to if(it=="wolf")"狼人频道" else "公共频道"},channel){channel=it}
+                if(channels.size>1)ChoiceTabs(channels.map{it to if(it=="private")"私聊主持" else if(it=="wolf")"狼人频道" else "公共频道"},channel){channel=it}
                 else Text(if(channel=="wolf")"狼人频道 · 仅队友可见" else "公共频道",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.primary)
                 Row(verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedTextField(draft,{draft=it.take(1000)},Modifier.weight(1f),placeholder={Text("说出你的推理…")},maxLines=3);FilledIconButton(enabled=!s.working&&draft.isNotBlank(),onClick={val sent=draft;ui.vm.perform("human.message",obj("gameId" to s.route.id,"channel" to channel,"text" to sent)){r->if(r.optBoolean("rejected"))ui.vm.notice(r.optJSONObject("moderation")?.str("message")?:"发言未通过")else if(draft==sent)draft=""}}){Glyph("send","发送游戏发言")}}
             }

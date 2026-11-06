@@ -4,8 +4,8 @@ const digest = value => createHash('sha256').update(value).digest('hex');
 const fail = (message, status = 400) => { const e = new Error(message); e.status = status; throw e; };
 const short = (value, max) => typeof value === 'string' && value.length <= max && !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value) ? value.trim() : fail('文字格式或长度不合法');
 export class MobileAccess {
-  constructor(store, { login, fingerprint, snapshot, history, rpc, games, humans, mysteryGames, image, ownerControl, humanActive, clock = Date.now }) {
-    Object.assign(this, { store, login, fingerprint, snapshot, history, rpc, games, humans, mysteryGames, image, ownerControl, clock });
+  constructor(store, { login, fingerprint, snapshot, history, rpc, games, humans, mysteryGames, image, ownerControl, humanActive, onMessage = () => {}, clock = Date.now }) {
+    Object.assign(this, { store, login, fingerprint, snapshot, history, rpc, games, humans, mysteryGames, image, ownerControl, onMessage, clock });
     this.humanActive = humanActive ?? (who => humans.active(who));
     this.attempts = new Map();
   }
@@ -56,6 +56,7 @@ export class MobileAccess {
     const message = { id: randomUUID(), botId: who, direction, sender:actor, senderNickname:this.messageActions.profile(actor)?.nickname??'', address: address ?? '', text,
       prefix, image, ...content, at: new Date(this.clock()).toISOString() };
     const saved = this.store.put('ownerMessages', message.id, message);
+    this.onMessage(actor,message.at);
     if (direction === 'human') this.store.emit([who], 'owner.message', this.messageActions.view(saved), message.at);
     return { id: message.id };
   }

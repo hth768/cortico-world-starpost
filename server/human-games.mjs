@@ -16,6 +16,7 @@ export function humanViolation(value) {
 export class HumanGames {
   constructor(store, games, clock, accounts) { Object.assign(this, { store, games, clock, accounts }); }
   id(owner) { return `${owner}H`; }
+  engine(gameId) { return this.store.get('mysteryGames', gameId) ? this.mysteryGames : this.games; }
   ownerKeys(owner) { return this.accounts ? this.accounts.aliases(this.id(owner)).map(id => id.slice(0, -1)) : [owner]; }
   state(owner) {
     const states = this.ownerKeys(owner).map(key => this.store.get('humanConduct', key)).filter(Boolean);
@@ -24,34 +25,37 @@ export class HumanGames {
   }
   active(owner) {
     for (const key of this.ownerKeys(owner)) {
-      const lock = this.store.get('humanGameLock', key) ?? this.store.get('gameBusy', this.id(key));
-      const game = lock && this.store.get('games', lock.gameId);
-      if (game && activeStates.includes(game.status)) return game.id;
+      for (const lock of [this.store.get('humanGameLock', key), this.store.get('gameBusy', this.id(key))]) {
+        const game = lock && (this.store.get('games', lock.gameId) ?? this.store.get('mysteryGames', lock.gameId));
+        if (game && [...activeStates, 'active'].includes(game.status)) return game.id;
+      }
     }
     return null;
   }
-  assertEligible(owner) { if (this.state(owner).banned) fail('该账号下的人类玩家已被禁止参加狼人杀，bot 不受影响', 403); }
+  assertEligible(owner) { if (this.state(owner).banned) fail('该账号下的人类玩家已被禁止参加游戏，bot 不受影响', 403); }
   assertRoom(owner, gameId) {
     const current = this.active(owner);
     if (current && current !== gameId) fail('请先完成当前对局', 403);
-    const game = this.games.get(gameId), who = this.id(owner);
-    if (!game.joined.includes(who) && !game.participants.includes(who) && game.creator !== who) fail('不是本局人类玩家', 403);
+    const game = this.engine(gameId).get(gameId), who = this.id(owner);
+    if (!game.joined.includes(who) && !game.participants?.includes(who) && game.creator !== who) fail('不是本局人类玩家', 403);
     return game;
   }
   lobby(owner) {
-    this.games.tick();
+    this.games.tick(); this.mysteryGames?.tick();
     const who = this.id(owner), profile = this.store.get('humanProfiles', owner);
     const aliases = this.ownerKeys(owner).map(key => this.id(key));
     return { ownerBotId: owner, humanId: who, nickname: profile?.nickname || '匿名人类', moderation: this.state(owner), activeGameId: this.active(owner),
-      rules: this.games.rules(who), matching: this.games.matchStatus(who), games: [...new Map([...aliases.flatMap(id => this.games.list(id)), ...this.games.publicListings()].map(g => [g.gameId, g])).values()]
-        .map(g => { const game = this.games.get(g.gameId); const identity = aliases.find(id => [...game.joined, ...game.participants, game.creator].includes(id)) ?? who; return this.games.summary(game, identity); }) };
+      rules: this.games.rules(who), matching: this.games.matchStatus(who), games: [...new Map([...aliases.flatMap(id => this.games.list(id)), ...this.games.publicListings(),
+        ...(this.mysteryGames ? [...aliases.flatMap(id => this.mysteryGames.list(id)), ...this.mysteryGames.browse()] : [])].map(g => [g.gameId, g])).values()]
+        .map(g => { const engine = this.engine(g.gameId), game = engine.get(g.gameId); const identity = aliases.find(id => [...game.joined, ...(game.participants ?? []), game.creator].includes(id)) ?? who; return engine.summary(game, identity); }) };
   }
   call(owner, action, args) {
     this.games.touchWaiting(this.id(owner));
-    this.games.tick();
+    for (const key of this.ownerKeys(owner)) this.mysteryGames?.touchWaiting(this.id(key));
+    this.games.tick(); this.mysteryGames?.tick();
     if (args?.gameId && this.accounts) {
-      const game = this.games.get(args.gameId), aliases = this.ownerKeys(owner);
-      owner = aliases.find(key => [...game.joined, ...game.participants, game.creator].includes(this.id(key))) ?? owner;
+      const game = this.engine(args.gameId).get(args.gameId), aliases = this.ownerKeys(owner);
+      owner = aliases.find(key => [...game.joined, ...(game.participants ?? []), ...(this.engine(game.id) === this.mysteryGames ? game.invited : []), game.creator].includes(this.id(key))) ?? owner;
     }
     const who = this.id(owner);
     if (action === 'status' || action === 'lobby') return this.lobby(owner);
@@ -80,10 +84,11 @@ export class HumanGames {
     }
     if (action === 'join') {
       if (this.active(owner)) fail('请先完成当前对局');
-      return this.games.join(who, args.gameId);
+      return this.engine(args.gameId).join(who, args.gameId);
     }
     const game = this.assertRoom(owner, args.gameId);
     if (game.kicked?.includes(who)) fail('你已被禁言并移出本局', 403);
+    if (this.engine(game.id) === this.mysteryGames) return this.mysteryCall(owner, action, args, game);
     if (action === 'invite') return this.games.invite(who, { gameId: game.id, sourceKind: args.sourceKind, sourceTarget: args.sourceTarget }, this.accounts?.canonical(who) ?? who);
     if (action === 'checkin') return this.games.checkin(who, game.id);
     if (action === 'leave') return this.games.leave(who, game.id);
@@ -108,6 +113,22 @@ export class HumanGames {
     }
     fail('不支持的人类游戏操作');
   }
+  mysteryCall(owner, action, args, game) {
+    const who = this.id(owner), engine = this.mysteryGames;
+    if (action === 'invite') return engine.invite(who, { gameId:game.id, sourceKind:args.sourceKind, sourceTarget:args.sourceTarget }, this.accounts?.canonical(who) ?? who);
+    if (action === 'checkin') return engine.checkin(who, game.id);
+    if (action === 'leave') return engine.leave(who, game.id);
+    if (action === 'exit') return engine.exit(who, game.id);
+    if (action === 'message') {
+      const room = this.room(owner, game.id);
+      if (!room.channels.includes(args.channel)) fail('当前不能在此频道发言', 403);
+      const text = field(args.text, 1000, true), reason = humanViolation(text);
+      if (reason) return { rejected:true, moderation:this.strike(owner, game, randomUUID(), reason, text) };
+      // The client cannot choose another player's private channel or impersonate the host.
+      return engine.message(who, { gameId:game.id, channel:args.channel, text });
+    }
+    fail('人类只能参赛，剧本与阶段推进由主持 bot 负责', 403);
+  }
   options(game, who) {
     if (!game.alive.includes(who) && !(game.status === 'hunter' && game.pendingHunter === who) || game.kicked?.includes(who)) return [];
     const role = game.roles[who], targets = gameSeats(game,this.games.nickname).filter(s=>game.alive.includes(s.id)).map(s=>({id:s.id,nickname:s.nickname,seat:s.number}));
@@ -131,6 +152,14 @@ export class HumanGames {
   }
   room(owner, gameId, before) {
     const game = this.assertRoom(owner, gameId), who = this.id(owner), kicked = game.kicked?.includes(who) === true;
+    if (this.engine(game.id) === this.mysteryGames) {
+      const page = presentGamePage(game, this.mysteryGames.read(who, game.id, before), this.mysteryGames.nickname, {label:'我的剧本杀参赛视角'});
+      return { ...page, serverNow:new Date(this.clock()).toISOString(),
+        game:{...page.game, canInvite:page.game.canInvite && !this.state(owner).banned, rulebook:this.mysteryGames.rules(null,'protocol').protocol},
+        humanId:who, nickname:this.mysteryGames.nickname(who), kicked, moderation:this.state(owner),
+        channels:game.status==='active' && !kicked && !game.left?.includes(who) ? ['public','private'] : [], options:[],
+        messages:kicked ? [] : page.messages, activeGameId:this.active(owner) };
+    }
     const page = presentGamePage(game,this.games.read(who,game.id,before),this.games.nickname,{label:'我的参赛视角'});
     const channels = !kicked && (game.alive.includes(who) || game.status === 'finished')
       ? ['day', 'vote', 'finished'].includes(game.status) ? ['public'] : game.roles[who] === 'wolf' && game.status === 'night_wolf' ? ['wolf'] : [] : [];
@@ -142,21 +171,24 @@ export class HumanGames {
     const key = `${game.id}:${evidenceId}`, existing = this.store.get('humanViolations', key);
     if (existing) return this.state(owner);
     const old = this.state(owner), state = { strikes: old.strikes + 1, banned: old.strikes + 1 >= 2,
-      message: old.strikes ? '第二次违规，禁止该账号下的人类参加狼人杀；bot 不受影响。' : '第一次违规警告，已禁言并移出本局；再次违规将禁止人类参赛。' };
+      message: old.strikes ? '第二次违规，禁止该账号下的人类参加游戏；bot 不受影响。' : '第一次违规警告，已禁言并移出本局；再次违规将禁止人类参赛。' };
     this.store.put('humanViolations', key, { owner, gameId: game.id, reason, evidence, at: new Date(this.clock()).toISOString() });
     const localStrikes = (this.store.get('humanConduct', owner)?.strikes ?? 0) + 1;
     this.store.put('humanConduct', owner, { ...state, strikes: localStrikes });
-    game.kicked = [...new Set([...(game.kicked ?? []), this.id(owner)])]; this.games.save(game);
-    this.games.suspend(this.id(owner), !state.banned);
+    const engine = this.engine(game.id);
+    game.kicked = [...new Set([...(game.kicked ?? []), this.id(owner)])]; engine.save(game);
+    if (engine === this.mysteryGames) engine.exit(this.id(owner), game.id);
+    else this.games.suspend(this.id(owner), !state.banned);
     return state;
   }
   report(reporter, args) {
-    const game = this.games.get(args.gameId), message = this.store.get('gameMessages', args.messageId);
-    this.games.canView(game, reporter);
+    const engine = this.engine(args.gameId), mystery = engine === this.mysteryGames;
+    const game = engine.get(args.gameId), message = this.store.get(mystery ? 'mysteryMessages' : 'gameMessages', args.messageId);
+    engine.canView(game, reporter);
     if (!message || message.gameId !== game.id || message.kind !== 'chat' || !/^\d{5,12}H$/.test(message.sender)) fail('只能举报本局人类的聊天消息');
-    const participant = game.participants.includes(reporter) || game.judgeBotId === reporter;
+    const participant = (mystery ? game.joined : game.participants).includes(reporter) || game.judgeBotId === reporter;
     const spectator = game.public && game.published && !participant && !this.store.get('gameBusy', reporter);
-    if (!(spectator || participant && (message.channel === 'public' || message.recipients.includes(reporter)))) fail('不能举报无权读取的消息', 403);
+    if (!(spectator && (!mystery || message.channel !== 'private') || participant && (message.channel === 'public' || message.recipients.includes(reporter)))) fail('不能举报无权读取的消息', 403);
     if (!['sexual', 'abuse', 'injection', 'other'].includes(args.reason)) fail('举报原因不合法');
     const key = `${reporter}:${message.id}`, old = this.store.get('humanReports', key);
     if (old) return { reportId: key, status: old.status };
@@ -171,8 +203,8 @@ export class HumanGames {
     report.status = approve ? 'confirmed' : 'dismissed'; report.reviewedAt = new Date(this.clock()).toISOString();
     this.store.put('humanReports', key, report);
     if (approve) {
-      const message = this.store.get('gameMessages', report.messageId);
-      this.strike(report.humanId.slice(0, -1), this.games.get(report.gameId), report.messageId, report.reason, message?.text ?? '');
+      const engine = this.engine(report.gameId), message = this.store.get(engine === this.mysteryGames ? 'mysteryMessages' : 'gameMessages', report.messageId);
+      this.strike(report.humanId.slice(0, -1), engine.get(report.gameId), report.messageId, report.reason, message?.text ?? '');
     }
     return { reportId: key, status: report.status };
   }

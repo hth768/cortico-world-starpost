@@ -38,6 +38,73 @@ async function fixture() {
   return { directory, app, mails, keys, post, rpc, bot, sendCode, register, claim, base, advance(ms) { now += ms; }, async close() { await app.close(); rmSync(directory, { recursive: true, force: true }); } };
 }
 
+test('主人专属发言重置对应私聊静默时间，连发限制与专属回复入口仍有效', async () => {
+  const f=await fixture();try{
+    const owner=await f.claim('10001','owner-reply@example.com');
+    f.app.store.befriend('10001',owner.humanId);
+    assert.equal((await f.rpc(owner.accessToken,'social.message.send',{kind:'private',target:'10001',text:'普通私聊'})).ok,true);
+    assert.equal((await f.bot('10001','message.send',{kind:'private',target:owner.humanId,text:'普通私聊回复'})).ok,true);
+    f.advance(301000);
+    assert.match((await f.bot('10001','message.send',{kind:'private',target:owner.humanId,text:'此前仍静默'})).error,/对方静默/);
+    await f.rpc(owner.accessToken,'owner.address',{address:'主人'});
+    const incoming=await f.rpc(owner.accessToken,'owner.send',{text:'在吗'});assert.equal(incoming.ok,true);
+    const sent=await f.bot('10001','message.send',{kind:'private',target:owner.humanId,text:'普通私聊也能发送'});
+    assert.equal(sent.ok,true,sent.error);
+    const streak=await f.bot('10001','message.send',{kind:'private',target:owner.humanId,text:'连发',maxConsecutiveBotTurns:1});
+    assert.match(streak.error,/连续发言/);assert.match(streak.error,/family="mobile"/);
+    const reply=await f.bot('10001','owner.send',{text:'在的',replyTo:incoming.result.id});assert.equal(reply.ok,true,reply.error);
+    const history=(await f.rpc(owner.accessToken,'owner.history')).result.messages;
+    assert.deepEqual(history.map(m=>m.text),['在吗','在的']);assert.equal(history[1].quote.id,incoming.result.id);
+    f.advance(299000);
+    assert.equal((await f.bot('10001','message.send',{kind:'private',target:owner.humanId,text:'重置后五分钟内'})).ok,true);
+    await f.bot('10001','owner.send',{text:'bot自己说话不延长计时'});f.advance(2000);
+    const expired=await f.bot('10001','message.send',{kind:'private',target:owner.humanId,text:'重新到期'});
+    assert.match(expired.error,/对方静默/);assert.match(expired.error,/family="mobile"/);
+    f.advance(1000);
+    await f.rpc(owner.accessToken,'social.message.send',{kind:'private',target:'10001',text:'回到普通私聊'});
+    assert.equal((await f.bot('10001','message.send',{kind:'private',target:owner.humanId,text:'普通私聊正常回复'})).ok,true);
+    f.app.store.befriend('10001','10002');
+    await f.bot('10002','message.send',{kind:'private',target:'10001',text:'好友私聊'});
+    await f.bot('10001','message.send',{kind:'private',target:'10002',text:'好友回复'});f.advance(301000);
+    const other=await f.bot('10001','message.send',{kind:'private',target:'10002',text:'静默好友'});
+    assert.equal(other.error,'对方静默，话题收尾');
+  }finally{await f.close()}
+});
+
+test('网页专属发言只重置实际绑定的那一对私聊；图片有效，空消息、其他bot及群聊不重置', async () => {
+  const f=await fixture();try{
+    const owner=await f.claim('10001','owner-idle-scope@example.com');
+    assert.equal((await f.rpc(owner.accessToken,'account.bind',{botId:'10002',credential:f.keys['10002']})).ok,true);
+    for(const botId of ['10001','10002']){
+      f.app.store.befriend(botId,owner.humanId);
+      await f.rpc(owner.accessToken,'social.message.send',{kind:'private',target:botId,text:'普通私聊'});
+      await f.bot(botId,'message.send',{kind:'private',target:owner.humanId,text:'普通私聊回复'});
+    }
+    f.app.store.befriend('10002','10003');
+    await f.bot('10003','message.send',{kind:'private',target:'10002',text:'好友消息'});
+    await f.bot('10002','message.send',{kind:'private',target:'10003',text:'好友回复'});
+    const created=await f.bot('10002','group.create',{name:'隔离群',members:['10003']});assert.equal(created.ok,true,created.error);
+    const group=created.result.id;
+    assert.equal((await f.bot('10003','message.send',{kind:'group',target:group,text:'群消息'})).ok,true);
+    assert.equal((await f.bot('10002','message.send',{kind:'group',target:group,text:'群回复'})).ok,true);
+    f.advance(301000);
+    await f.rpc(owner.accessToken,'account.select',{botId:'10002'});
+    await f.rpc(owner.accessToken,'owner.address',{address:'主人'});
+    const headers={origin:f.base,cookie:`starpost_session=${owner.accessToken}`};
+    const web=(args)=>f.post('/web/rpc',{action:'owner.send',args},'','',headers);
+    assert.equal((await web({text:''})).ok,false);
+    assert.match((await f.bot('10002','message.send',{kind:'private',target:owner.humanId,text:'未重置'})).error,/对方静默/);
+    const png={mime:'image/png',base64:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aH1sAAAAASUVORK5CYII='};
+    assert.equal((await web({text:'',image:png,botId:'10001'})).ok,true);
+    for(const [who,kind,target] of [['10001','private',owner.humanId],['10002','private','10003'],['10002','group',group]]){
+      const blocked=await f.bot(who,'message.send',{kind,target,text:'其他会话仍静默'});assert.equal(blocked.error,'对方静默，话题收尾');
+    }
+    const ok=await f.bot('10002','message.send',{kind:'private',target:owner.humanId,text:'实际目标恢复'});assert.equal(ok.ok,true,ok.error);
+    const limited=await f.bot('10002','message.send',{kind:'private',target:owner.humanId,text:'每日限制仍然生效'},{maxMessagesPerDay:0});
+    assert.match(limited.error,/每日聊天消息上限/);
+  }finally{await f.close()}
+});
+
 test('首次绑定自动选中，旧空选择会话自愈，追加绑定不替换当前 bot，手机网页同步且隔离账号', async () => {
   const f=await fixture();try{
     const a=await f.register('binding-a@example.com'),other=await f.register('binding-other@example.com');

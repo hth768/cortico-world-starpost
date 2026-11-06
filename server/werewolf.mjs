@@ -65,10 +65,10 @@ function shuffle(values) {
 }
 
 export class WerewolfGames {
-  constructor(store, { isKnown, friends, group, nickname = () => '', clock = Date.now, pauseChat = () => {}, resumeChat = () => {}, consume = () => {}, knownIds = () => [], ownsHuman = (bot, human) => human === `${bot}H`, eligible = () => true }) {
+  constructor(store, { isKnown, friends, group, nickname = () => '', clock = Date.now, pauseChat = () => {}, resumeChat = () => {}, consume = () => {}, knownIds = () => [], ownsHuman = (bot, human) => human === `${bot}H`, eligible = () => true, onFinished = () => {} }) {
     this.store = store; this.isKnown = isKnown; this.friends = friends; this.group = group; this.nickname = nickname; this.clock = clock;
     this.pauseChat = pauseChat; this.resumeChat = resumeChat; this.consume = consume; this.knownIds = knownIds; this.ownsHuman = ownsHuman;
-    this.eligible = eligible;
+    this.eligible = eligible; this.onFinished = onFinished;
   }
   rules(who) {
     return { presets: PRESETS, customPlayers: '6–20 人，每种神职最多一位，狼人少于半数且至少一位平民',
@@ -396,6 +396,7 @@ export class WerewolfGames {
       game.judgeAccepted = false; game.judgeCheckedIn = false;
     }
     if (active && player) {
+      game.forfeited=[...new Set([...(game.forfeited??game.left??[]),who])];
       game.alive = game.alive.filter(id => id !== who);
       for (const votes of [game.night?.wolfVotes, game.votes]) if (votes) {
         for (const [voter, target] of Object.entries(votes)) if (voter === who || target === who) delete votes[voter];
@@ -497,7 +498,7 @@ export class WerewolfGames {
       game.participants.forEach((who, i) => { roles[who] = deck[i]; });
     }
     game.playerNames ??= Object.fromEntries(game.participants.map(id=>[id,this.nickname(id)]));
-    game.roles = roles; game.alive = game.participants.filter(who => !game.left?.includes(who)); game.day = 1;
+    game.roles = roles; game.forfeited ??= [...(game.left??[])]; game.alive = game.participants.filter(who => !game.left?.includes(who)); game.day = 1;
     game.uses = Object.fromEntries(game.participants.map(who => [who, { save: false, poison: false, shot: false }]));
     game.status = 'night_wolf'; game.deadlineAt = iso(this.clock() + 3 * 60000);
     this.save(game);
@@ -688,6 +689,7 @@ export class WerewolfGames {
       this.resumeChat(who);
     }
     this.public(game, { kind: 'finished', winner, roles: game.roles, closeAt: game.deadlineAt });
+    this.onFinished(game);
   }
   afterElimination(game, resume = 'night') {
     const winner = this.winner(game);
@@ -789,6 +791,7 @@ export class WerewolfGames {
         this.save(game);continue;
       }
       if(game.status==='finished'){this.save(game);continue;}
+      if(game.participants.includes(who))game.forfeited=[...new Set([...(game.forfeited??game.left??[]),who])];
       if(who.endsWith('H')&&game.participants.includes(who))game.kicked=[...new Set([...(game.kicked??[]),who])];
       if(game.judgeBotId===who){game.judgeBotId=null;game.judgeMode='program';game.assignmentMode='random';if(game.status==='assigning'){this.start(game);continue;}}
       if(game.alive.includes(who)){

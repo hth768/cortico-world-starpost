@@ -30,7 +30,7 @@ export function presentGamePage(source, page, nickname, { omniscient=false, labe
     day=Number.isInteger(m.day)?m.day:day;
     phase=PHASES[m.kind]?m.kind:(m.phase || phase);
     const round=mystery ? PHASES[phase] || '剧情记录' : day ? `第 ${day} ${phase.startsWith('night')?'夜':'天'} · ${PHASES[phase]||'对局记录'}` : '对局记录';
-    let body=m.text??'',title=PHASES[m.kind]||'法官消息',votes=[],reveals=[];
+    let body=m.text??'',title=PHASES[m.kind]||(mystery?'剧情通知':'法官消息'),votes=[],reveals=[];
     if(!mystery)switch(m.kind){
       case 'chat':case 'left':break;
       case 'role':title='私密身份';body=`${name(m.to)}的身份：${ROLE_LABELS[m.role]??'未知'}${m.teammates?.length?'；狼人队友：'+list(m.teammates):''}`;break;

@@ -130,6 +130,7 @@ test('手机消息立即唤醒并合批积压、重置计时，来图自动收�
     assert.equal(promotions.length, 1);
     const message = events.find(event => event.type === 'starpost.owner_message');
     assert.equal(message.origin, 'external'); assert.match(message.text, /^以下消息为星星通过星邮向你发送的消息\n马上看/); assert.ok(message.blobs?.length);
+    assert.match(message.text, /family="mobile"，action="send"/);assert.match(message.text,/无需 target/);
     assert.ok(events.some(event => event.type === 'starpost.notification_digest'));
     const state = JSON.parse(readFileSync(join(f.dir, 'starpost-cursor.json'), 'utf8'));
     assert.equal(state.pendingSinceMs, null); assert.equal(state.pendingCoreCursor, null);

@@ -58,3 +58,10 @@ input,textarea,select{color:var(--ink);background:var(--lowest);border:1px solid
 @media(max-width:1100px){.watch-layout{grid-template-columns:minmax(220px,280px) minmax(0,1fr);gap:14px}.watch-board .arena-seats{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:760px){.watch-layout{display:flex;flex-direction:column}.watch-board,.watch-stream{width:100%;box-sizing:border-box;position:static;padding:14px;border-radius:22px}.watch-board .arena-seats{grid-template-columns:repeat(4,minmax(0,1fr))}.watch-seat-details summary{padding-bottom:6px}.watch-log{max-height:64dvh}.watch-message,.watch-event{padding:14px}.watch-message-head strong{font-size:12px}.watch-reveals{grid-template-columns:1fr}.watch-toolbar input{flex-basis:100%}.watch-room .arena-hero{padding:20px}}
 .safety-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px}.safety-actions small{flex-basis:100%}.dialog-card textarea[aria-label="举报原因"]{width:100%;box-sizing:border-box;resize:vertical;min-height:120px}
+
+/* Account-wide server awards: deliberately distinct from editable nicknames. */
+.account-title{display:inline-flex;align-items:center;gap:4px;max-width:100%;margin-inline:6px;padding:3px 9px;border:1.5px solid #9b6516;border-radius:8px;background:linear-gradient(120deg,#fff1b8,#ffd980);color:#583600;font-size:12px;font-weight:850;line-height:1.5;vertical-align:middle;white-space:normal;overflow-wrap:anywhere;box-shadow:0 1px 4px #9b651622;flex-shrink:0}
+.account-title[hidden]{display:none}
+[data-theme="dark"] .account-title{background:linear-gradient(120deg,#563808,#37260d);color:#ffe09a;border-color:#e2b961}
+.arena-seat .account-title{margin:3px 0;font-size:11px;padding:2px 4px;flex-shrink:1}
+.watch-message-head{flex-wrap:wrap}

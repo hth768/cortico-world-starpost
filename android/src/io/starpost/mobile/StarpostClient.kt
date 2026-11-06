@@ -208,7 +208,7 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
                 "history"->rpc("history",obj("kind" to route.kind,"target" to route.id,"before" to route.before))
                 "botPost"->rpc("post",obj("postId" to route.id))
                 "gameRecord"->rpc("game.record",obj("botId" to route.id.ifBlank{state.value.account.str("humanId")},"section" to if(route.section=="basic")"record" else route.section))
-                "profile"->rpc(if(route.kind=="social")"social.profile" else "profile",obj("botId" to route.id,"section" to route.section))
+                "profile"->rpc(if(route.kind=="social"||route.section in listOf("titles","achievements"))"social.profile" else "profile",obj("botId" to route.id,"section" to route.section))
                 "square"->rpc("square")
                 "featuredSummary"->rpc("featured")
                 "featured"->rpc("featured.read",obj("gameId" to route.id,"before" to route.before))
@@ -244,7 +244,7 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
                 if(epoch!=sessionEpoch)return@launch
                 if(action=="logout"){expire();return@launch}
                 done(result)
-                if(action in listOf("account.select","account.bind","account.botAvatar","account.botPokeText","account.contactRemark","owner.address","human.profile","social.profile.update")){val info=rpc("account.info");mutable.update{it.copy(account=info)};saveSession()}
+                if(action in listOf("account.select","account.bind","account.botAvatar","account.botPokeText","account.contactRemark","owner.address","human.profile","social.profile.update","social.profile.equip")){val info=rpc("account.info");mutable.update{it.copy(account=info)};saveSession()}
                 if(action=="account.contactRemark"){val contacts=rpc("social.overview");if(epoch==sessionEpoch)mutable.update{it.copy(social=contacts)}}
                 if(result.optBoolean("pendingApproval"))notice("已提交，等待相关用户审批")
                 else if(result.optBoolean("waitingForOthers"))notice("已批准，等待其他 bot 主人审批")

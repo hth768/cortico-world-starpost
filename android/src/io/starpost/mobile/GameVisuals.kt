@@ -41,9 +41,10 @@ internal fun gamePhaseLabel(g:JSONObject)=if(g.str("gameType")=="mystery")myster
                 Text((if(g.optInt("day")>0&&!script)"第 ${g.optInt("day")} 天 · " else "")+gamePhaseLabel(g),Modifier.weight(1f),style=MaterialTheme.typography.titleSmall,color=foreground)
                 if(deadline>0&&g.str("status") !in listOf("closed","cancelled"))Surface(shape=CircleShape,color=colors.surface.copy(alpha=.85f)){Text(if(remaining>0)"%02d:%02d".format(remaining/60,remaining%60)else "等待结算",Modifier.padding(horizontal=12.dp,vertical=8.dp),style=MaterialTheme.typography.labelLarge)}
             }
-            if(!compact)Text(if(mode=="游戏大厅")"选择定时预约、人满就开，或实时匹配。" else if(script)"跟随主持人推进剧情，按获准视角查看线索与消息。" else when(g.str("status")){"scheduled"->if(g.str("startMode")=="full")"加入即准备，人满立即开局。保持在线，断连超过 2 分钟释放席位。" else "开局前 3 分钟报到，准时入座。";"day"->"讨论完毕请选择结束发言，全员结束立即投票，计时只作兜底。";"vote"->"点选目标后确认投票，也可以弃票。";"finished","closed"->"故事暂告一段落，一起回顾这场推理。";else->"轮到你行动时，使用牌桌下方的技能按钮。"},style=MaterialTheme.typography.bodyMedium,color=foreground)
+            if(!compact)Text(if(mode=="游戏大厅")(if(script)"选择 bot 主持的故事，加入预约或人满即开房间。" else "选择定时预约、人满就开，或实时匹配。") else if(script)"跟随主持人推进剧情，按获准视角查看线索与消息。" else when(g.str("status")){"scheduled"->if(g.str("startMode")=="full")"加入即准备，人满立即开局。保持在线，断连超过 2 分钟释放席位。" else "开局前 3 分钟报到，准时入座。";"day"->"讨论完毕请选择结束发言，全员结束立即投票，计时只作兜底。";"vote"->"点选目标后确认投票，也可以弃票。";"finished","closed"->"故事暂告一段落，一起回顾这场推理。";else->"轮到你行动时，使用牌桌下方的技能按钮。"},style=MaterialTheme.typography.bodyMedium,color=foreground)
             if(script&&!compact){val current=mysterySteps.indexOfFirst{it.first==g.str("phase")};mysterySteps.chunked(3).forEachIndexed{row,steps->Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){steps.forEachIndexed{col,step->Surface(Modifier.weight(1f),shape=RoundedCornerShape(10.dp),color=if(row*3+col<=current)colors.primaryContainer else colors.surface.copy(alpha=.65f)){Text("${row*3+col+1} ${step.second}",Modifier.padding(8.dp),style=MaterialTheme.typography.labelSmall)}}}}}
             if(g.str("status")=="day"&&g.has("speechesDone"))Text((if(g.optBoolean("speechEnded"))"你已结束本轮发言 · " else "")+"${g.optInt("speechesDone")}/${g.strings("alive").size} 人已结束发言",style=MaterialTheme.typography.labelMedium,color=foreground)
+            if(g.str("creatorTitle").isNotEmpty()){Text("发起者 ${g.rows("seats").find{it.str("id")==g.str("creator")}?.str("nickname")?:""}",style=MaterialTheme.typography.labelSmall);AccountTitleBadge(g.str("creatorTitle"),style=g.optJSONObject("creatorTitleStyle"))}
             if(g.str("winner").isNotEmpty())Text(when(g.str("winner")){"wolves"->"狼人阵营获胜";"village"->"好人阵营获胜";else->"本局平局"},style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,color=foreground)
         }
     }
@@ -60,6 +61,7 @@ internal fun gamePhaseLabel(g:JSONObject)=if(g.str("gameType")=="mystery")myster
                     Text("${seat.optInt("number")}号",style=MaterialTheme.typography.labelSmall,color=colors.onSurfaceVariant)
                     Surface(shape=CircleShape,color=if(me)colors.primary else colors.secondaryContainer,modifier=Modifier.size(36.dp)){Box(contentAlignment=Alignment.Center){Text(seat.str("nickname",seat.str("id")).take(1),fontWeight=FontWeight.Bold)}}
                     Text(seat.str("nickname",seat.str("id")),style=MaterialTheme.typography.labelMedium,maxLines=1,overflow=TextOverflow.Ellipsis)
+                    AccountTitleBadge(seat.str("accountTitle"),compact=true,style=seat.optJSONObject("accountTitleStyle"))
                     if(showRoles&&seat.has("role"))Text(roleNames[seat.str("role")]?:"未知",style=MaterialTheme.typography.labelSmall,color=colors.primary)
                     Text(if(me)"我" else if(seat.str("id").endsWith("H"))"人类" else "Bot",style=MaterialTheme.typography.labelSmall,color=colors.onSurfaceVariant)
                     Text(if(scheduled){if(seat.optBoolean("checkedIn"))"已报到" else "待报到"}else if(active)"在场" else "已离场",style=MaterialTheme.typography.labelSmall)
@@ -74,7 +76,7 @@ internal fun gamePhaseLabel(g:JSONObject)=if(g.str("gameType")=="mystery")myster
     Surface(shape=RoundedCornerShape(24.dp),color=MaterialTheme.colorScheme.tertiaryContainer,modifier=Modifier.fillMaxWidth()){
         Row(Modifier.padding(18.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(16.dp)){
             Text("✦",style=MaterialTheme.typography.headlineLarge)
-            Column{Text("仅你可见 · 身份牌",style=MaterialTheme.typography.labelSmall);Text(roleNames[g.str("ownRole")]?:"等待领取身份",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold);Text(if(g.str("ownRole")=="wolf")"找到同伴，隐藏自己" else "谨慎推理，寻找真相",style=MaterialTheme.typography.bodySmall)}
+            Column{Text(if(g.str("gameType")=="mystery")"角色与线索 · 私密资料" else "仅你可见 · 身份牌",style=MaterialTheme.typography.labelSmall);Text(if(g.str("gameType")=="mystery")"请查看主持私信" else roleNames[g.str("ownRole")]?:"等待领取身份",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold);Text(if(g.str("ownRole")=="wolf")"找到同伴，隐藏自己" else "谨慎推理，寻找真相",style=MaterialTheme.typography.bodySmall)}
         }
     }
 }
@@ -84,7 +86,7 @@ internal fun gamePhaseLabel(g:JSONObject)=if(g.str("gameType")=="mystery")myster
         Column(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
             Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(14.dp)){
                 Surface(shape=RoundedCornerShape(18.dp),color=MaterialTheme.colorScheme.primaryContainer,modifier=Modifier.size(52.dp)){Box(contentAlignment=Alignment.Center){Text(if(g.str("gameType")=="mystery")"✦" else "☾",style=MaterialTheme.typography.headlineMedium)}}
-                Column(Modifier.weight(1f)){Text(if(g.str("gameType")=="mystery")"剧本杀 · 观战" else "狼人杀",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.primary);Text(g.str("title"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold);Text(gamePhaseLabel(g),style=MaterialTheme.typography.bodySmall)}
+                Column(Modifier.weight(1f)){Text(if(g.str("gameType")=="mystery")"剧本杀" else "狼人杀",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.primary);Text(g.str("title"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold);Text(gamePhaseLabel(g),style=MaterialTheme.typography.bodySmall)}
                 Glyph("chevron")
             }
             Text("${if(g.str("startMode")=="full")if(g.optBoolean("matching"))"实时匹配 · 人满就开" else "人满就开" else time(g.str("scheduledAt"))} · ${if(g.optBoolean("public"))"公开" else "私密"}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
@@ -101,7 +103,7 @@ internal fun gamePhaseLabel(g:JSONObject)=if(g.str("gameType")=="mystery")myster
         Text(if(validPhase&&current!=null)"先选择目标，再确认行动。" else "阶段或可用行动已变化，请关闭后重新选择。",color=if(validPhase&&current!=null)MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error)
         Column(Modifier.heightIn(max=340.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)){
             targets.chunked(2).forEach{row->Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){row.forEach{target->val id=target.str("id");val enabled=validPhase&&!working&&current?.rows("targets")?.any{it.str("id")==id}==true;OutlinedCard(onClick={selected=id},enabled=enabled,modifier=Modifier.weight(1f),shape=RoundedCornerShape(18.dp),border=BorderStroke(if(selected==id)2.dp else 1.dp,if(selected==id)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),colors=CardDefaults.outlinedCardColors(containerColor=if(selected==id)MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface)){
-                Column(Modifier.padding(14.dp)){Text(target.str("nickname",id.ifBlank{"跳过"}),fontWeight=FontWeight.Bold);Text(if(id.isBlank())"不选择玩家" else if(target.optInt("seat")>0)"${target.optInt("seat")}号" else "玩家",style=MaterialTheme.typography.bodySmall)}
+                Column(Modifier.padding(14.dp)){Text(target.str("nickname",id.ifBlank{"跳过"}),fontWeight=FontWeight.Bold);AccountTitleBadge(target.str("accountTitle"),compact=true,style=target.optJSONObject("accountTitleStyle"));Text(if(id.isBlank())"不选择玩家" else if(target.optInt("seat")>0)"${target.optInt("seat")}号" else "玩家",style=MaterialTheme.typography.bodySmall)}
             }};if(row.size==1)Spacer(Modifier.weight(1f))}}
         }
         if(selected!=null)Text("已选择：${targets.find{it.str("id")==selected}?.str("nickname")?:selected}",style=MaterialTheme.typography.labelLarge)

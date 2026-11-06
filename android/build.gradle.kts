@@ -3,6 +3,24 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose") version "2.2.10"
 }
 
+abstract class TitleAssetsTask : DefaultTask() {
+    @get:InputFile @get:PathSensitive(PathSensitivity.NONE)
+    abstract val presets: RegularFileProperty
+    @get:OutputDirectory abstract val outputDirectory: DirectoryProperty
+    @TaskAction fun generate() {
+        val output = outputDirectory.get().asFile
+        output.mkdirs()
+        presets.get().asFile.copyTo(output.resolve("title-style-presets.json"), overwrite = true)
+    }
+}
+
+androidComponents.onVariants { variant ->
+    val assets = tasks.register<TitleAssetsTask>("generate${variant.name.replaceFirstChar { it.uppercase() }}TitleAssets") {
+        presets.set(layout.projectDirectory.file("../server/title-style-presets.json"))
+    }
+    variant.sources.assets?.addGeneratedSourceDirectory(assets, TitleAssetsTask::outputDirectory)
+}
+
 android {
     namespace = "io.starpost.mobile"
     compileSdk = 37
@@ -10,8 +28,8 @@ android {
         applicationId = "io.starpost.mobile"
         minSdk = 26
         targetSdk = 35
-        versionCode = 19
-        versionName = "1.8.0"
+        versionCode = 20
+        versionName = "1.9.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     sourceSets {

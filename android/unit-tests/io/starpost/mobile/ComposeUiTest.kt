@@ -32,6 +32,50 @@ class ComposeUiTest {
     private fun client()=StarpostClient(ApplicationProvider.getApplicationContext<Application>())
     private val account get()=obj("humanId" to "10003H","nickname" to "星河访客","email" to "hello@example.com","botId" to "10001","bots" to JSONArray().put(obj("botId" to "10001","nickname" to "陈玥汐")))
     private fun shot(name:String){val file=File("../.deployment/compose/screenshots/$name.png");file.parentFile.mkdirs();compose.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG,100,file.outputStream())}
+    @Test fun titleLibraryKeepsMultipleAwardsAndOnlyOffersEquipOrRemove(){
+        val vm=client();val ui=UiActions(vm);val theme=mutableStateOf("light")
+        val data=obj("accountId" to "10003H","equippedTitleId" to "first","titles" to JSONArray()
+            .put(obj("id" to "first","text" to "热心星友","style" to obj("background" to "jade","fill" to "solid","weight" to "bold"),"equipped" to true,"grantedAt" to "2026-11-06T00:00:00Z"))
+            .put(obj("id" to "second","text" to "故事收藏家","style" to obj("background" to "aurora","font" to "serif","italic" to true),"equipped" to false,"grantedAt" to "2026-11-06T00:00:00Z")))
+        val s=ClientState(starting=false,signedIn=true,account=account,route=Route("profile","10003H","social","titles"),data=data)
+        compose.setContent{StarpostTheme(theme.value,false){androidx.compose.material3.Surface{ScreenBody(ui,s)}}}
+        compose.onNodeWithText("已佩戴").assertIsNotEnabled();compose.onNodeWithText("佩戴这个头衔").assertIsEnabled()
+        compose.onNodeWithText("不佩戴任何头衔").assertIsEnabled();compose.onNodeWithText("创建头衔").assertDoesNotExist()
+        compose.onNodeWithContentDescription("账号头衔：热心星友").assertExists()
+        shot("android-titles-light");compose.runOnIdle{theme.value="dark"};shot("android-titles-dark")
+    }
+    @Test fun titleStylesShowAllPalettesInBothThemesAndFallbackSafely(){
+        val theme=mutableStateOf("light")
+        compose.setContent{StarpostTheme(theme.value,false){androidx.compose.material3.Surface{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+            Text("账号头衔 · 样式预览",style=androidx.compose.material3.MaterialTheme.typography.titleLarge)
+            listOf("gold","aurora","ocean","rose","jade","slate").forEachIndexed{index,color->
+                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                    listOf("gradient","solid","outline").forEach{fill->AccountTitleBadge("星海领航员",style=obj("background" to color,"fill" to fill,"font" to listOf("sans","serif","mono")[index%3],"weight" to listOf("heavy","bold","medium")[index%3],"italic" to (index==1)))}
+                }
+            }
+            AccountTitleBadge("旧版默认")
+            AccountTitleBadge("未知样式回退",style=obj("background" to "url(test)","font" to "unknown"))
+        }}}}
+        compose.onAllNodesWithContentDescription("账号头衔：星海领航员").assertCountEquals(18)
+        compose.onNodeWithText("✦ 旧版默认").assertExists();compose.onNodeWithText("✦ 未知样式回退").assertExists()
+        shot("android-title-styles-light");compose.runOnIdle{theme.value="dark"};shot("android-title-styles-dark")
+    }
+    @Test fun titleAchievementsShowConditionsProgressAndEarnedStateWithoutUnlockButton(){
+        val vm=client();val theme=mutableStateOf("light")
+        val data=obj("rules" to "头衔永久保留，不自动佩戴。统计日期按北京时间。","items" to JSONArray()
+            .put(obj("text" to "话痨","tier" to "进阶","description" to "同一天成功发送超过 150 条聊天消息。","progress" to 150,"target" to 151,"earned" to false,"style" to obj("background" to "jade","fill" to "solid")))
+            .put(obj("text" to "狼人杀常胜将军","tier" to "传说","description" to "有效胜负局至少 21 场，胜率达到 75%。","progress" to 21,"target" to 21,"winRate" to 0.8,"earned" to true,"owned" to true,"style" to obj("background" to "gold","font" to "serif"))))
+        compose.setContent{StarpostTheme(theme.value,false){androidx.compose.material3.Surface{ScreenBody(UiActions(vm),ClientState(starting=false,signedIn=true,account=account,route=Route("profile","10003H","social","achievements"),data=data))}}}
+        compose.onNodeWithText("进度 150/151").assertExists();compose.onNodeWithText("立即解锁").assertDoesNotExist()
+        compose.onNodeWithText("已获得 · 可在我的头衔中佩戴").assertExists()
+        shot("android-achievements-light");compose.runOnIdle{theme.value="dark"};shot("android-achievements-dark")
+    }
+    @Test fun titleBadgeStaysSeparateFromNicknameAndGameRole(){
+        val game=obj("status" to "day","seats" to JSONArray().put(obj("id" to "10003H","number" to 1,"nickname" to "星河旅人","accountTitle" to "星海领航员","role" to "seer","alive" to true)))
+        compose.setContent{StarpostTheme("dark",false){androidx.compose.material3.Surface{Column(Modifier.padding(16.dp)){GameSeatBoard(game,showRoles=true);WatchMessage(obj("sender" to "10003H","senderTitle" to "星海领航员","senderNickname" to "星河旅人","text" to "我们来核对线索。","at" to "2026-11-06T00:00:00Z"))}}}}
+        compose.onNodeWithText("预言家").assertExists();compose.onAllNodesWithContentDescription("账号头衔：星海领航员").assertCountEquals(2)
+        shot("android-titles-game")
+    }
     @Test fun reportRequiresReasonAndKeepsDraftAfterErrorAndThemeChange(){
         val vm=client();val dark=mutableStateOf(false);val state=mutableStateOf(ClientState(starting=false,signedIn=true,account=account));val ui=UiActions(vm);val report=Modal.Report("10002",obj("type" to "message","id" to "original"))
         val shown=mutableStateOf(false)
@@ -129,7 +173,7 @@ class ComposeUiTest {
         compose.onNodeWithText("加入预约（无需邀请）").assertIsDisplayed().performClick()
         compose.onNodeWithText("以自己的人类身份加入「今晚的公开局」？${gameStartLabel(game)}。").assertExists()
         compose.onNodeWithText("取消",useUnmergedTree=true).performClick()
-        for(updated in listOf(JSONObject(game.toString()).put("public",false),JSONObject(game.toString()).put("published",false),JSONObject(game.toString()).put("status","day"),JSONObject(game.toString()).put("gameType","mystery"))){
+        for(updated in listOf(JSONObject(game.toString()).put("public",false),JSONObject(game.toString()).put("published",false),JSONObject(game.toString()).put("status","day"))){
             compose.runOnIdle{state.value=state.value.copy(data=obj("game" to updated,"messages" to JSONArray()))}
             compose.onNodeWithText("加入预约（无需邀请）").assertDoesNotExist()
         }
@@ -271,14 +315,34 @@ class ComposeUiTest {
         compose.onNodeWithText("将 小星（10002）的头像恢复为默认图标？").assertIsDisplayed()
         compose.onNodeWithText("取消").performClick()
     }
-    @Test fun miniAppsSearchFiltersIconsAndOpensMysteryViewer(){
+    @Test fun humanMysteryRoomHasHostChannelAndKeepsDraftWhenRefreshed(){
+        val vm=client();val game=obj("gameId" to "mystery-human","gameType" to "mystery","title" to "钟楼疑云","status" to "active","phase" to "roles","joined" to 6,"maxPlayers" to 6,"seats" to JSONArray(),"rulebook" to obj("process" to "主持发送角色与线索"))
+        val messages=JSONArray().put(obj("id" to "my-clue","gameType" to "mystery","sender" to "10001","senderNickname" to "主持","channel" to "private","kind" to "chat","text" to "你是钟表匠，线索只有你与主持可见。","at" to "2026-11-06T10:00:00Z"))
+        val data=mutableStateOf(obj("game" to game,"humanId" to "10003H","channels" to JSONArray().put("public").put("private"),"messages" to messages,"options" to JSONArray()))
+        compose.setContent{StarpostTheme("dark",false){StarpostApp(vm,ClientState(starting=false,signedIn=true,account=account,route=Route("humanRoom","mystery-human"),activeGame="mystery-human",data=data.value))}}
+        compose.onNodeWithText("私聊主持").assertExists().performClick()
+        compose.onNode(hasSetTextAction()).performTextInput("请主持解释钟楼线索")
+        compose.runOnIdle{data.value=JSONObject(data.value.toString()).put("serverNow","2026-11-06T10:00:01Z")}
+        compose.onNodeWithText("请主持解释钟楼线索").assertExists()
+        compose.onNodeWithText("讨论记录",useUnmergedTree=true).performClick()
+        compose.onNodeWithText("你是钟表匠，线索只有你与主持可见。").assertExists()
+        compose.onNodeWithText("投票").assertDoesNotExist();compose.onNodeWithText("查验身份").assertDoesNotExist()
+        shot("android-human-mystery-room")
+    }
+    @Test fun publicMysteryHasJoinEntryAndHumanConfirmation(){
+        val vm=client();val ui=UiActions(vm);val game=obj("gameId" to "mystery-join","gameType" to "mystery","title" to "钟楼疑云","public" to true,"published" to true,"status" to "scheduled","startMode" to "full")
+        compose.setContent{StarpostTheme("light",false){PublicGameJoin(ui,ClientState(account=account),game)}}
+        compose.onNodeWithText("加入预约（无需邀请）").assertExists().performClick()
+        compose.runOnIdle{org.junit.Assert.assertTrue(ui.modal is Modal.Confirm)}
+    }
+    @Test fun miniAppsSearchFiltersIconsAndOpensMysteryLobby(){
         var selected:MiniApp?=null
         compose.setContent{StarpostTheme("light",false){MiniAppsCatalog({},{selected=it})}}
         compose.onNodeWithText("搜索游戏和额外功能").performTextInput("剧本杀")
         compose.onNodeWithText("搜索结果 · 3").assertExists()
         compose.onNodeWithText("狼人杀").assertDoesNotExist()
         compose.onNode(hasText("剧本杀") and !hasSetTextAction()).performClick()
-        compose.runOnIdle{org.junit.Assert.assertEquals("mystery",selected?.id);org.junit.Assert.assertEquals("public",selected?.kind)}
+        compose.runOnIdle{org.junit.Assert.assertEquals("games",selected?.page);org.junit.Assert.assertEquals("mystery",selected?.kind)}
         compose.onNodeWithContentDescription("清空搜索").performClick()
         compose.onNodeWithText("搜索游戏和额外功能").performTextInput("不存在的功能")
         compose.onNodeWithText("没有找到相关功能，试试“狼人杀”或“动态”。").assertExists()

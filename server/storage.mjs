@@ -122,7 +122,7 @@ export class StarpostStorage {
     if (collection === 'mysteryAccess') { owner = v.owner; target = v.gameId ?? ''; }
     if (collection === 'humanReports') { owner = v.owner; target = v.humanId; kind = v.status; }
     if (collection === 'safetyReports') { owner = v.owner; target = v.target; kind = v.status; }
-    if (['accountBlocks','privateArchives','safetyNotices'].includes(collection)) owner = v.owner;
+    if (['accountBlocks','privateArchives','safetyNotices','accountTitles','accountTitleWear','accountTitleAudit','achievementStats','achievementEarned','achievementGames'].includes(collection)) owner = v.owner;
     if (collection === 'humanViolations') owner = v.owner;
     if (collection === 'spectatorUsage') owner = v.sender;
     if (collection === 'deferredChat') target = v.recipient;

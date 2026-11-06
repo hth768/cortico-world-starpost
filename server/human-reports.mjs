@@ -10,7 +10,7 @@ const keys = JSON.parse(process.env.BOT_KEYS_FILE ? readFileSync(process.env.BOT
 const app = createStarpostServer({ file: process.env.STARPOST_DATA_FILE ?? './starpost-data.json', dbFile: process.env.STARPOST_DB_FILE, mediaDir: process.env.STARPOST_MEDIA_DIR, keys });
 try {
   const result = operation === 'list' ? app.store.entries('humanReports').filter(([, r]) => r.status === 'pending')
-    .map(([id, report]) => ({ id, ...report, evidence: app.store.get('gameMessages', report.messageId)?.text }))
+    .map(([id, report]) => ({ id, ...report, evidence: (app.store.get('gameMessages', report.messageId) ?? app.store.get('mysteryMessages', report.messageId))?.text }))
     : app.reviewHumanReport(reportId, operation === 'confirm');
   process.stdout.write(JSON.stringify(result, null, 2) + '\n');
 } finally { await app.close(); }

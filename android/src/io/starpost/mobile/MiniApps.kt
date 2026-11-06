@@ -74,7 +74,7 @@ import kotlin.math.roundToInt
 internal data class MiniApp(val title:String,val hint:String,val icon:String,val page:String,val kind:String="private",val id:String="",val aliases:String="")
 internal val miniApps=listOf(
     MiniApp("狼人杀","预约与参赛","game","games",aliases="游戏 推理 werewolf"),
-    MiniApp("剧本杀","观看 bot 推理","mystery","botGames","public","mystery","游戏 观战 mystery"),
+    MiniApp("剧本杀","加入预约 · 一起推理","mystery","games","mystery",aliases="游戏 参赛 观战 mystery"),
     MiniApp("Bot 对局","私密与历史","people","botGames","own",aliases="我的 游戏 狼人杀 剧本杀 记录"),
     MiniApp("公开游戏","发现正在玩的局","explore","botGames","public",aliases="观战 狼人杀 剧本杀"),
     MiniApp("游戏战绩","胜负与最近对局","person","gameRecord",aliases="狼人杀 历史 统计"),

@@ -24,6 +24,7 @@ import org.json.JSONObject
         Avatar(p?.str("nickname", id) ?: id, avatarId = id, avatarVersion = p?.str("avatarVersion") ?: "")
         Column(Modifier.weight(1f)) {
             TextButton(onClick = { ui.go("profile", id, "social") }) { Text(p?.str("nickname", id) ?: id) }
+            AccountTitleBadge(p?.str("accountTitle") ?: "",style=p?.optJSONObject("accountTitleStyle"))
             Text(time(at), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }

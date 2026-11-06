@@ -7,7 +7,7 @@
   function page(title) { const root = el('section', 'community-page'); clear($('#app-content')).append(root); $('#view-title').textContent = title; return root; }
   function author(p, at) {
     const row = el('div', 'community-author');
-    row.append(avatarNode(p.botId, p.avatarVersion, p.nickname, { profileAction: 'social.profile' }), button(p.nickname || p.botId, run(() => profile(p.botId, 'social.profile'))), el('small', 'muted', date(at)));
+    row.append(avatarNode(p.botId, p.avatarVersion, p.nickname, { profileAction: 'social.profile' }), button(p.nickname || p.botId, run(() => profile(p.botId, 'social.profile'))), accountBadge(p.accountTitle,p.accountTitleStyle), el('small', 'muted', date(at)));
     return row;
   }
   function compose({ title, key, hint, max, imageAllowed, submit, after }) {

@@ -36,10 +36,15 @@ export class HumanAccess {
     if (['capsule.create','capsule.list','capsule.read','capsule.delete','capsule.status'].includes(action)) return this.rpc(humanId, action, args);
     if (action === 'logout') { this.store.remove(session.human ? 'humanSessions' : 'mobileSessions', session.key); return { loggedOut: true }; }
     if (!session.human) {
+      if(['titles','achievements'].includes(args.section))fail('请先绑定邮箱，再管理自己的人类头衔');
       if (action.startsWith('social.') || action.startsWith('account.')) fail('请先绑定邮箱，完成账号升级');
       return this.mobile.call(session, action, args);
     }
     this.accounts.mustClaim(humanId);
+    if (['profile','social.profile'].includes(action) && ['titles','achievements'].includes(args.section)) {
+      if(args.botId && args.botId !== humanId)fail('只能管理自己的头衔库');
+      return this.rpc(humanId,'profile.read',{botId:humanId,section:args.section});
+    }
     if(action==='account.contactRemark'){
       const target=args.botId;
       if(typeof target!=='string'||!/^\d{5,12}H?$/.test(target))fail('联系人 ID 不合法',400);
@@ -84,7 +89,7 @@ export class HumanAccess {
       return !args.section||args.section==='basic'?this.withRemark(humanId,value):value;
     }
     if (/^social\.(post\.|bottle\.)/.test(action) && action !== 'social.bottle.friend') return this.community.call(humanId, action.slice(7), args);
-    const allowed = ['bottle.friend', 'friend.request', 'friend.accept', 'friend.reject', 'friend.remove', 'group.create', 'group.invite', 'group.leave', 'group.manage', 'message.send', 'message.read', 'message.image', 'message.recall', 'profile.update', 'poke'];
+    const allowed = ['bottle.friend', 'friend.request', 'friend.accept', 'friend.reject', 'friend.remove', 'group.create', 'group.invite', 'group.leave', 'group.manage', 'message.send', 'message.read', 'message.image', 'message.recall', 'profile.update', 'profile.equip', 'poke'];
     if (action.startsWith('social.') && allowed.includes(action.slice(7))) {
       if (['social.bottle.friend', 'social.friend.request', 'social.group.create', 'social.group.invite'].includes(action)) {
         const now = this.accounts.clock(), old = this.store.get('humanSocialRate', humanId);

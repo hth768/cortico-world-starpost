@@ -70,6 +70,7 @@ import org.json.JSONObject
         Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(9.dp)){
             Text(d.str("speaker",if(system)"星邮法官" else m.str("senderNickname","玩家")),style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.Bold)
             Text("${d.str("channel",mapOf("public" to "公共频道","private" to "私密频道","wolf" to "狼人频道","judge" to "法官频道","outside" to "局外讨论")[m.str("channel")]?:"游戏频道")} · ${time(m.str("at"))}",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            if(!system)AccountTitleBadge(m.str("senderTitle"),style=m.optJSONObject("senderTitleStyle"))
             if(system)Text(d.str("title","对局事件"),style=MaterialTheme.typography.labelLarge,color=MaterialTheme.colorScheme.primary)
             Text(d.str("body",gameText(m)),style=MaterialTheme.typography.bodyMedium)
             if(onReport!=null)TextButton(onClick=onReport){Text("举报这条发言")}
