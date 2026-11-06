@@ -1,3 +1,4 @@
+import { GamePrivacy, gamePrivacy } from './game-privacy.mjs';
 import http from 'node:http';
 import { avatarImage } from './avatars.mjs';
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -95,6 +96,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
   const titles = new AccountTitles(store, { known: who => known.has(who), clock });
   const achievements = new Achievements(store,titles,{clock,isKnown});
   const profile = (who) => isHumanId(who) ? accounts.publicProfile(who) : ({ botId: who, nickname: '', bio: '', discoverable: true, accountType: 'bot', ...store.get('profiles', who) });
+  const privacy=new GamePrivacy(store,who=>profile(who).nickname||'');
   const withSenderNickname = (message) => ({ ...messageActions.view(message), senderAvatarVersion: profile(message.sender).avatarVersion ?? '', senderNickname: message.senderNickname ?? profile(message.sender).nickname });
   function register(input) {
     const installationId = str(input?.installationId, 80);
@@ -342,6 +344,8 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
   }
   function rpc(who, action, args = {}) { return titles.decorate(rpcRaw(who, action, args)); }
   function rpcRaw(who, action, args = {}) {
+    args=privacy.decode(args,action);
+    if(action==='game.privacy'||action==='mystery.privacy')return gamePrivacy(store,who,args);
     if (action === 'safety.report') return safety.report(who, args);
     if (action === 'safety.reports') return safety.reports(who, args);
     if (action === 'safety.status') return safety.status(who, args.botId);
@@ -907,11 +911,11 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         } else {
           const token = /(?:^|;\s*)starpost_session=([a-f0-9]{64})(?:;|$)/.exec(req.headers.cookie ?? '')?.[1] ?? '';
           const session = access.authenticate(`Bearer ${token}`);
-          result = store.transaction(() => access.call(session, input.action, input.args ?? {}));
+          result = store.transaction(() => access.call(session, input.action, privacy.decode(input.args ?? {},input.action)));
           if (input.action === 'logout') res.setHeader('Set-Cookie', cookie('', 0));
         }
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'private, no-store' });
-        res.end(JSON.stringify({ ok: true, result: titles.decorate(store.hydrate(Array.isArray(result) ? { items: result } : result)) })); return;
+        res.end(JSON.stringify({ ok: true, result: privacy.project(titles.decorate(store.hydrate(Array.isArray(result) ? { items: result } : result))) })); return;
       }
       if(req.url==='/owner/control'){
         const input=JSON.parse(raw);const result=store.transaction(()=>teen.control(who,input.operation,input.args??{}));
@@ -921,9 +925,9 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         const input = JSON.parse(raw);
         const result = store.transaction(() => req.url === '/mobile/login'
           ? access.signIn(input, remote)
-          : access.call(access.authenticate(req.headers.authorization), input.action, input.args ?? {}));
+          : access.call(access.authenticate(req.headers.authorization), input.action, privacy.decode(input.args ?? {},input.action)));
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-        res.end(JSON.stringify({ ok: true, result: titles.decorate(store.hydrate(Array.isArray(result) ? { items: result } : result)) })); return;
+        res.end(JSON.stringify({ ok: true, result: privacy.project(titles.decorate(store.hydrate(Array.isArray(result) ? { items: result } : result))) })); return;
       }
       if (req.url === '/register') {
         if (raw.length > 4096) fail('注册请求过大', 413);
@@ -957,27 +961,40 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         const previous = store.get('limits', who);
         const next = { private: number(limits.private, 10, 0, 1000), groups: number(limits.groups, 5, 0, 1000),
           maxMessagesPerDay: number(limits.maxMessagesPerDay, previous?.maxMessagesPerDay ?? 300, 0, 1000000),
+          maxWerewolfGamesPerDay: number(limits.maxWerewolfGamesPerDay, previous?.maxWerewolfGamesPerDay ?? 5, 0, 1000),
           periods: Object.fromEntries(['morning', 'afternoon', 'sleep'].map(key => [key,
             number(limits.periods?.[key], previous?.periods?.[key] ?? (key === 'sleep' ? 6 : 60), 0, 1000000)])) };
         if (previous?.private !== next.private || previous?.groups !== next.groups || previous?.maxMessagesPerDay !== next.maxMessagesPerDay
+          || previous?.maxWerewolfGamesPerDay !== next.maxWerewolfGamesPerDay
           || Object.keys(next.periods).some(key => previous?.periods?.[key] !== next.periods[key])) nextLimits = next;
       }
       const readOnly = ['capsule.list', 'capsule.status', 'snapshot', 'events', 'release.latest', 'chat.history', 'chat.image', 'message.read', 'message.image', 'post.read', 'bottle.read', 'square.list', 'square.featured', 'profile.read', 'directory.search', 'game.rules', 'game.list', 'game.read', 'game.record'].includes(action);
       const run = () => {
-        store.transaction(()=>{conduct.recover(who);games.touchWaiting(who);mysteryGames.touchWaiting(who);});
-        if (typeof action === 'string' && action.startsWith('game.')) tickGames();
-        const observedAt = clock(), ready = action === 'events' && reminders.hasDue(who, observedAt);
-        const capsuleReady = action === 'events' && !conduct.until(who) && capsules.nextDueMs(who, observedAt) === 0;
-        const ackNeeded = action === 'events' && store.needsAck(who, since);
-        const invoke = () => {
-          if (nextLimits) store.put('limits', who, nextLimits);
-          if (ackNeeded) store.ackEvents(who, since);
-          if (capsuleReady) capsules.deliver(who, observedAt);
-          if (ready) reminders.deliver(who, observedAt, profile(who).discoverable);
-          if(action==='events'&&conduct.until(who))return store.events(who,since).filter(event=>event.type==='moderation.warning');
-          return rpc(who, action, args ?? {});
+        const prepare = () => {
+          conduct.recover(who); games.touchWaiting(who); mysteryGames.touchWaiting(who);
+          if (typeof action === 'string' && action.startsWith('game.')) advanceGames();
         };
-        return readOnly && !nextLimits && !ready && !capsuleReady && !ackNeeded ? invoke() : store.transaction(invoke);
+        const perform = (inTransaction = false) => {
+          const observedAt = clock(), ready = action === 'events' && reminders.hasDue(who, observedAt);
+          const capsuleReady = action === 'events' && !conduct.until(who) && capsules.nextDueMs(who, observedAt) === 0;
+          const ackNeeded = action === 'events' && store.needsAck(who, since);
+          const invoke = () => {
+            if (ackNeeded) store.ackEvents(who, since);
+            if (capsuleReady) capsules.deliver(who, observedAt);
+            if (ready) reminders.deliver(who, observedAt, profile(who).discoverable);
+            if(action==='events'&&conduct.until(who))return store.events(who,since).filter(event=>event.type==='moderation.warning');
+            return rpc(who, action, args ?? {});
+          };
+          return inTransaction || readOnly && !ready && !capsuleReady && !ackNeeded ? invoke() : store.transaction(invoke);
+        };
+        if (nextLimits) {
+          // Admission timers see the new cap, but failed operations still roll back atomically.
+          const result = store.transaction(() => { store.put('limits', who, nextLimits); prepare(); return perform(true); });
+          nextLimits = undefined; // A resumed long poll must not restore stale settings.
+          return result;
+        }
+        store.transaction(prepare);
+        return perform();
       };
       let result = run();
       if (action === 'events' && waitMs > 0 && result.length === 0) {
@@ -987,7 +1004,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         result = run();
       }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-      res.end(JSON.stringify({ ok: true, result: titles.decorate(store.hydrate(result, new Map(), action === 'events' && args?.mediaRefs === true)),
+      res.end(JSON.stringify({ ok: true, result: privacy.project(titles.decorate(store.hydrate(result, new Map(), action === 'events' && args?.mediaRefs === true))),
         ...(action === 'events' ? { messageQuota: messageQuota(who), suspendedUntil:conduct.until(who) } : {}) }));
     } catch (e) { res.writeHead(e.status ?? 400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: false, error: e.message, ...(e.quota ? { messageQuota: e.quota } : {}), ...(e.suspendedUntil?{suspendedUntil:e.suspendedUntil}:{}) })); }
   });
@@ -995,10 +1012,11 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
   let closed = false;
   let pruneTimer = null;
   let gameTimer = null;
-  const tickGames = () => store.transaction(() => {
+  const advanceGames = () => {
     for(const state of store.statement("SELECT key FROM documents WHERE collection='conduct' AND kind='active' AND at<=?").all(new Date(clock()).toISOString()))conduct.recover(state.key);
     games.tick(clock()); mysteryGames.tick(clock());
-  });
+  };
+  const tickGames = () => store.transaction(advanceGames);
   return { server, store, tickGames,
     reviewSafetyReport: (reportId, decision) => store.transaction(() => safety.review(reportId, decision)),
     reviewHumanReport: (reportId, approve) => store.transaction(() => humans.review(reportId, approve)),

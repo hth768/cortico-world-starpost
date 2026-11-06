@@ -18,6 +18,7 @@ export interface StarpostConfigSection {
   maxPrivateChats: number;
   maxGroups: number;
   maxMessagesPerDay: number;
+  maxWerewolfGamesPerDay: number;
   periodLimits: { morning: number; afternoon: number; sleep: number };
   groupSpeak: { maxPerWindow: number; windowSec: number };
   antiLoop: { maxConsecutiveBotTurns: number; idleToEndSec: number };
@@ -30,7 +31,7 @@ export interface StarpostConfigSection {
 export const STARPOST_DEFAULTS: StarpostConfigSection = {
   enabled: false, receiveMode: 'mixed', serverUrl: 'https://starpost.com.cn', botId: '', tokenSecret: 'CORTICO_STARPOST_TOKEN', emojiDir: '',
   sticker: { enabled: true, maxFiles: 10000, qqIndexFile: '' },
-  maxPrivateChats: 10, maxGroups: 5, maxMessagesPerDay: 300,
+  maxPrivateChats: 10, maxGroups: 5, maxMessagesPerDay: 300, maxWerewolfGamesPerDay: 5,
   periodLimits: { morning: 60, afternoon: 60, sleep: 6 },
   groupSpeak: { maxPerWindow: 6, windowSec: 60 },
   antiLoop: { maxConsecutiveBotTurns: 5, idleToEndSec: 300 },
@@ -53,6 +54,7 @@ export const STARPOST_CONFIG_GROUP: ConfigGroup = {
     'worlds.starpost.sticker.qqIndexFile': { type: 'string', title: 'QQ 表情包标签索引', description: '留空尝试读取本实例 data/sticker-index.json；跨实例共用目录时可填写对应 QQ 实例的索引路径。只读导入哈希与文件匹配的标注，修改后重启 World。' },
     'worlds.starpost.maxPrivateChats': { type: 'integer', minimum: 0, maximum: 1000, title: '私聊上限', 'x-hot': true },
     'worlds.starpost.maxGroups': { type: 'integer', minimum: 0, maximum: 1000, title: '群聊上限', 'x-hot': true },
+    'worlds.starpost.maxWerewolfGamesPerDay': { type: 'integer', minimum: 0, maximum: 1000, title: '每日狼人杀局数上限', description: '由人类设置当前 bot 的额度，默认 5 局，参赛和担任法官合并计数；0 表示暂停参加新局。按北京时间午夜恢复，修改上限不清空已用次数，不中断正在进行的对局；人类账号独立计数。', 'x-hot': true },
     'worlds.starpost.maxMessagesPerDay': { type: 'integer', minimum: 0, maximum: 1000000, title: '每日聊天消息发送上限', description: '默认每个 bot 每天 300 条，私聊和群聊合并计算；文字、表情及表情包每次成功发送计一条。按北京时间午夜恢复，0 表示暂停发送聊天消息。', 'x-hot': true },
     'worlds.starpost.periodLimits.morning': { type: 'integer', minimum: 0, maximum: 1000000, title: '北京时间 09:00–12:00 消息上限', description: '周一至周五默认 60 条，同时计入每日总量，0 表示本时段暂停发送。周六、周日仅受每日总量限制。', 'x-hot': true },
     'worlds.starpost.periodLimits.afternoon': { type: 'integer', minimum: 0, maximum: 1000000, title: '北京时间 14:00–18:00 消息上限', description: '周一至周五默认 60 条，同时计入每日总量，0 表示本时段暂停发送。周六、周日仅受每日总量限制。', 'x-hot': true },

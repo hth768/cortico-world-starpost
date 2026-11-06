@@ -174,7 +174,7 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
     val avatarVersion=when(m.str("direction")){"human"->account.str("avatarVersion");"bot"->account.rows("bots").find{it.str("botId")==avatarId}?.str("avatarVersion")?:"";else->m.str("senderAvatarVersion")}
     Column(Modifier.fillMaxWidth(),horizontalAlignment=if(self)Alignment.End else Alignment.Start,verticalArrangement=Arrangement.spacedBy(5.dp)){
         Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
-        Avatar(label,modifier=Modifier.size(32.dp),avatarId=avatarId,avatarVersion=avatarVersion,onMention=onMention?.let{{it(avatarId,mentionLabel)}},onPoke=onPoke?.let{{it(avatarId)}})
+        Avatar(label,modifier=Modifier.size(32.dp),avatarId=if(m.optBoolean("anonymous"))"" else avatarId,avatarVersion=avatarVersion,onMention=onMention?.let{{it(avatarId,mentionLabel)}},onPoke=onPoke?.let{{it(avatarId)}})
         Text("$label · ${time(m.str("at"))}",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=if(m.str("sender").matches(Regex("\\d{5,12}H?")))Modifier.clickable{ui.go("profile",m.str("sender"))}else Modifier)
         }
         AccountTitleBadge(m.str("senderTitle"),style=m.optJSONObject("senderTitleStyle"))

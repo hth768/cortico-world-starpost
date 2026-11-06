@@ -1,3 +1,4 @@
+import { gamePrivacy } from './game-privacy.mjs';
 import { presentGamePage, gameSeats } from './game-presentation.mjs';
 import { randomUUID } from 'node:crypto';
 
@@ -45,7 +46,7 @@ export class HumanGames {
     const who = this.id(owner), profile = this.store.get('humanProfiles', owner);
     const aliases = this.ownerKeys(owner).map(key => this.id(key));
     return { ownerBotId: owner, humanId: who, nickname: profile?.nickname || '匿名人类', moderation: this.state(owner), activeGameId: this.active(owner),
-      rules: this.games.rules(who), matching: this.games.matchStatus(who), games: [...new Map([...aliases.flatMap(id => this.games.list(id)), ...this.games.publicListings(),
+      privacy:gamePrivacy(this.store,who), rules: this.games.rules(who), matching: this.games.matchStatus(who), games: [...new Map([...aliases.flatMap(id => this.games.list(id)), ...this.games.publicListings(),
         ...(this.mysteryGames ? [...aliases.flatMap(id => this.mysteryGames.list(id)), ...this.mysteryGames.browse()] : [])].map(g => [g.gameId, g])).values()]
         .map(g => { const engine = this.engine(g.gameId), game = engine.get(g.gameId); const identity = aliases.find(id => [...game.joined, ...(game.participants ?? []), game.creator].includes(id)) ?? who; return engine.summary(game, identity); }) };
   }
@@ -58,6 +59,7 @@ export class HumanGames {
       owner = aliases.find(key => [...game.joined, ...(game.participants ?? []), ...(this.engine(game.id) === this.mysteryGames ? game.invited : []), game.creator].includes(this.id(key))) ?? owner;
     }
     const who = this.id(owner);
+    if(action==='privacy')return gamePrivacy(this.store,this.accounts?.canonical(who)??who,args);
     if (action === 'status' || action === 'lobby') return this.lobby(owner);
     if (action === 'room') return this.room(owner, args.gameId, args.before);
     if (action === 'profile') {
@@ -73,10 +75,10 @@ export class HumanGames {
     }
     if (action === 'schedule') {
       if (this.active(owner)) fail('请先完成当前对局');
-      const title = field(args.title || '人类发起的狼人杀', 60);
+      const title = field(args.title || '一起玩狼人杀', 60);
       if (humanViolation(title)) fail('预约标题不合法');
       const game = this.games.schedule(who, { title, scheduledAt: args.scheduledAt, startMode: args.startMode, maxPlayers: args.maxPlayers,
-        roles: args.roles, public: args.public === true, judgeMode: 'program',
+        roles: args.roles, anonymous: args.anonymous, public: args.public === true, judgeMode: 'program',
         sourceKind: args.sourceTarget || (this.accounts ? this.accounts.bots(who)[0]?.botId : owner) ? 'private' : 'square',
         sourceTarget: args.sourceTarget || (this.accounts ? this.accounts.bots(who)[0]?.botId : owner) });
       if (args.public === true && !game.published) this.games.publish(who, game.gameId);

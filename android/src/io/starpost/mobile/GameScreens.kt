@@ -13,6 +13,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import org.json.JSONObject
@@ -61,6 +63,7 @@ internal fun gameStartLabel(g:JSONObject)=if(g.str("startMode")=="full")(if(g.op
             val rules=s.data.optJSONObject("rules")?:JSONObject();SectionTitle(if(mystery)"剧本杀广场" else "狼人杀广场","${s.data.str("nickname")} · ${s.data.str("humanId")}"+(if(mystery)" · bot 主持，共同推理" else " · 今日 ${rules.optInt("usedToday")}/${rules.optInt("dailyLimit",5)} 局"))
             val moderation=s.data.optJSONObject("moderation")?:JSONObject();if(moderation.str("message").isNotEmpty())Text(moderation.str("message"),color=MaterialTheme.colorScheme.error)
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){if(!mystery&&!moderation.optBoolean("banned"))Button(onClick={ui.go("schedule")}){Text("发起预约")};TextButton(onClick={ui.form("设置人类昵称",listOf(TextFieldSpec("nickname","昵称",s.data.str("nickname")))){ui.vm.perform("human.profile",obj("nickname" to it["nickname"]))}}){Text("修改昵称")}}
+            Row(verticalAlignment=Alignment.CenterVertically){Text("个人匿名 · 两种游戏共用",Modifier.weight(1f));Switch(s.data.optJSONObject("privacy")?.optBoolean("anonymous")==true,{ui.vm.perform("human.privacy",obj("anonymous" to it))},enabled=!s.working)};Text("对之后加入的局生效；匿名局覆盖个人设置。",style=MaterialTheme.typography.bodySmall)
             if(!mystery)Matchmaking(ui,s,moderation.optBoolean("banned"))else Text("主持 bot 自行创作故事、角色和线索。加入预约后，你可接收私密资料，与其他玩家共同推理。")
             Text("公开局可直接加入；定时局提前 3 分钟报到，人满就开局加入即准备。",style=MaterialTheme.typography.bodySmall);val games=s.data.rows("games").filter{(it.str("gameType")=="mystery")==mystery};if(games.isEmpty())EmptyState("还没有游戏预约","发起一局，等朋友们一起加入。")
             games.forEach{g->val joined=g.optBoolean("participant")||g.str("creator")==s.data.str("humanId");GameLobbyCard(g){if(joined)ui.go("humanReservation",g.str("gameId"))else if(g.str("status")=="scheduled"&&!moderation.optBoolean("banned"))ui.confirm("加入预约",g.str("title")+"\n"+gameStartLabel(g)){ui.vm.perform("human.join",obj("gameId" to g.str("gameId")),Route("humanReservation",g.str("gameId")))}else if(g.optBoolean("public")&&!moderation.optBoolean("banned"))ui.go("game",g.str("gameId"))else ui.vm.notice("当前无法加入此预约")}}
@@ -85,7 +88,7 @@ internal fun gameStartLabel(g:JSONObject)=if(g.str("startMode")=="full")(if(g.op
 
         }
         "featuredSummary"->{SectionTitle("每日精彩对局","北京时间每天 00:00 结算前一日。");Text(if(s.data.optBoolean("published"))"${s.data.str("date")} · 共开局 ${s.data.optInt("totalGames")} 场" else "当天统计尚未发布");val f=s.data.optJSONObject("featured");if(f!=null)Entry(f.str("title"),"最长公开完赛局 · ${f.optLong("durationMs")/60000} 分钟"){ui.go("featured",f.str("gameId"))}else EmptyState("暂无精彩对局","完赛的公开对局参与每日选取。")}
-        "humanReservation"->{val g=s.data.optJSONObject("game")?:JSONObject();GameBanner(g,if(g.str("status")=="scheduled")"预约房间" else "个人回放",s.data.str("serverNow"));Text(gameStartLabel(g));GameSeatBoard(g,s.data.str("humanId"));TextButton(onClick={ui.confirm("本局规则",rulesText(g)) {}}){Text("查看规则")};if(g.optBoolean("canInvite"))Button(enabled=!s.working,onClick={ui.go("gameInvite",s.route.id)}){Text("邀请好友 / 群成员")};if(g.str("status")=="scheduled"){if(g.str("startMode")!="full")Button(enabled=!s.working,onClick={ui.vm.perform("human.checkin",obj("gameId" to s.route.id))}){Text("集合报到")};OutlinedButton(onClick={ui.confirm("退出预约",g.str("title")){ui.vm.perform("human.leave",obj("gameId" to s.route.id),Route("games"))}}){Text("退出预约")};if(g.str("creator")==s.data.str("humanId")&&!g.optBoolean("matching"))TextButton(onClick={ui.confirm("取消本局","所有预约参与者都会看到取消结果。 "){ui.vm.perform("human.cancel",obj("gameId" to s.route.id),Route("games"))}}){Text("取消本局",color=MaterialTheme.colorScheme.error)}}else{Pager(ui,s);GameMessages(ui,s.data.rows("messages"))}}
+        "humanReservation"->{val g=s.data.optJSONObject("game")?:JSONObject();GameBanner(g,if(g.str("status")=="scheduled")"预约房间" else "个人回放",s.data.str("serverNow"));Text(gameStartLabel(g));GameSeatBoard(g,s.data.str("humanId"));TextButton(onClick={ui.confirm("本局规则",rulesText(g)) {}}){Text("查看规则")};if(g.optBoolean("canInvite"))Button(enabled=!s.working,onClick={ui.go("gameInvite",s.route.id)}){Text("邀请好友 / 群成员")};if(g.str("status")=="scheduled"){if(g.str("startMode")!="full")Button(enabled=!s.working,onClick={ui.vm.perform("human.checkin",obj("gameId" to s.route.id))}){Text("集合报到")};OutlinedButton(onClick={ui.confirm("退出预约",g.str("title")){ui.vm.perform("human.leave",obj("gameId" to s.route.id),Route("games"))}}){Text("退出预约")};if((if(g.has("canCancel"))g.optBoolean("canCancel")else g.str("creator")==s.data.str("humanId")&&!g.optBoolean("matching")))TextButton(onClick={ui.confirm("取消本局","所有预约参与者都会看到取消结果。 "){ui.vm.perform("human.cancel",obj("gameId" to s.route.id),Route("games"))}}){Text("取消本局",color=MaterialTheme.colorScheme.error)}}else{Pager(ui,s);GameMessages(ui,s.data.rows("messages"))}}
         else->{val g=s.data.optJSONObject(if(s.route.page=="featured")"featured" else "game")?:JSONObject();if(s.route.page=="featured")Text("${s.data.str("date")} · 当日 ${s.data.optInt("totalGames")} 场 · ${g.optLong("durationMs")/60000} 分钟",style=MaterialTheme.typography.bodyMedium);GameBanner(g,"只读观战 / 回放",s.data.str("serverNow"));if(s.route.page!="featured"){GameSeatBoard(g);PublicGameJoin(ui,s,g)};Text("对局过程 · 只读查看",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant);Pager(ui,s);GameMessages(ui,s.data.rows("messages"))}
     }}
 }}
@@ -128,7 +131,7 @@ internal fun gameStartLabel(g:JSONObject)=if(g.str("startMode")=="full")(if(g.op
             GameSeatBoard(g,s.data.str("humanId",s.account.str("humanId")))
             TextButton(onClick={ui.confirm("本局规则",rulesText(g)) {}}){Text("查看规则")}
             Text(if(channels.isNotEmpty())"切换到讨论记录，查看其他玩家的发言。" else "当前阶段暂不可发言，可在讨论记录中查看法官通知。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-        }else Column(Modifier.weight(1f)){Pager(ui,s);LazyColumn(state=list,modifier=Modifier.weight(1f),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){items(messages,key={it.str("id",it.toString())}){m->GameMessage(ui,m,m.str("sender")==s.account.str("humanId"))}}}
+        }else Column(Modifier.weight(1f)){Pager(ui,s);LazyColumn(state=list,modifier=Modifier.weight(1f),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){items(messages,key={it.str("id",it.toString())}){m->GameMessage(ui,m,m.str("sender")==s.data.str("humanId",s.account.str("humanId")))}}}
         Surface(color=MaterialTheme.colorScheme.surfaceContainerLow){Column(Modifier.padding(horizontal=16.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
             if(s.data.rows("options").isNotEmpty())Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)){
                 s.data.rows("options").forEach{o->FilledTonalButton(enabled=!s.working&&o.rows("targets").isNotEmpty(),onClick={action=o;actionPhase=gamePhaseKey(g)}){Text(o.str("label"))}}
@@ -151,22 +154,23 @@ internal fun gameStartLabel(g:JSONObject)=if(g.str("startMode")=="full")(if(g.op
     val lane=mapOf("public" to "公共","private" to "私密","wolf" to "狼人","judge" to "法官","outside" to "局外")[m.str("channel")]?:m.str("channel")
     if(m.str("sender")=="system")Surface(shape=androidx.compose.foundation.shape.RoundedCornerShape(20.dp),color=MaterialTheme.colorScheme.secondaryContainer,modifier=Modifier.fillMaxWidth()){
         Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){Text("✦ 星邮法官 · $lane · ${time(m.str("at"))}",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSecondaryContainer);Text(gameText(m),style=MaterialTheme.typography.bodyMedium)}
-    }else Column{Bubble(ui,m,mine,text=gameText(m),label="${m.optJSONObject("display")?.str("speaker")?:m.str("senderNickname","玩家")} · $lane");if(!mine&&m.str("gameId").isNotEmpty())TextButton(onClick={ui.modal=Modal.Report(m.str("sender"),obj("type" to "game","id" to m.str("id"),"gameId" to m.str("gameId")))}){Text("举报这条发言")}}
+    }else Column{Bubble(ui,m,mine,text=gameText(m),label="${m.optJSONObject("display")?.str("speaker")?:m.str("senderNickname","玩家")} · $lane");if(!mine&&m.str("gameId").isNotEmpty())TextButton(onClick={ui.modal=Modal.Report(m.str("sender"),obj("type" to (if(m.str("gameType")=="mystery")"mystery" else "game"),"id" to m.str("id"),"gameId" to m.str("gameId")))}){Text("举报这条发言")}}
 }
 @Composable internal fun Matchmaking(ui:UiActions,s:ClientState,banned:Boolean=false){
-    var count by rememberSaveable{mutableStateOf("6")}
+    var count by rememberSaveable{mutableStateOf("6")};var anonymous by rememberSaveable{mutableStateOf(false)}
     val matching=s.data.optJSONObject("matching")?:JSONObject();val waiting=matching.str("state")=="waiting";val game=matching.optJSONObject("game")?:JSONObject()
     Panel{
         Text("实时匹配",style=MaterialTheme.typography.titleMedium)
+        Row(verticalAlignment=Alignment.CenterVertically){Text("匹配匿名局",Modifier.weight(1f));Switch(if(waiting)game.optBoolean("anonymous")else anonymous,{anonymous=it},enabled=!waiting&&!s.working)}
         ChoiceTabs(listOf(6,8,10,12,16,20).map{it.toString() to "$it 人"},if(waiting)game.optInt("maxPlayers").toString()else count){if(!waiting)count=it}
         Text(if(waiting)"正在匹配 ${game.optInt("maxPlayers")} 人局 · 已就位 ${game.optInt("joined")}/${game.optInt("maxPlayers")} 人" else "与选择相同人数的人类和 bot 匹配，满员立即开局。")
         Text("标准身份配置与程序法官。保持在线，断连超过 2 分钟释放席位；每日 5 局和开局时段限制仍适用。",style=MaterialTheme.typography.bodySmall)
         if(waiting)OutlinedButton(enabled=!s.working,onClick={ui.vm.perform("human.match",obj("operation" to "leave"),Route("games"))}){Text("退出匹配")}
-        else Button(enabled=!s.working&&!banned,onClick={ui.confirm("开始匹配","以自己的人类身份匹配 $count 人局？匹配满员立即开局。"){ui.vm.perform("human.match",obj("operation" to "join","maxPlayers" to count.toInt()),Route("games"))}}){Text("开始匹配")}
+        else Button(enabled=!s.working&&!banned,onClick={ui.confirm("开始匹配","以自己的人类身份匹配 $count 人局？匹配满员立即开局。"){ui.vm.perform("human.match",obj("operation" to "join","maxPlayers" to count.toInt(),"anonymous" to anonymous),Route("games"))}}){Text("开始匹配")}
     }
 }
 @Composable private fun ScheduleGame(ui:UiActions,s:ClientState){
-    var title by rememberSaveable{mutableStateOf("")};var count by rememberSaveable{mutableStateOf("6")};var custom by rememberSaveable{mutableStateOf("")};var public by rememberSaveable{mutableStateOf(true)};var startMode by rememberSaveable{mutableStateOf("scheduled")}
+    var anonymous by rememberSaveable{mutableStateOf(false)};var title by rememberSaveable{mutableStateOf("")};var count by rememberSaveable{mutableStateOf("6")};var custom by rememberSaveable{mutableStateOf("")};var public by rememberSaveable{mutableStateOf(true)};var startMode by rememberSaveable{mutableStateOf("scheduled")}
     var at by rememberSaveable{mutableLongStateOf(Instant.now().plusSeconds(600).toEpochMilli())};var showDate by remember{mutableStateOf(false)};var showTime by remember{mutableStateOf(false)};var chosenDate by remember{mutableStateOf(LocalDate.now(ZoneId.of("Asia/Shanghai")))}
     ContentList(ui){SectionTitle("约一场认真推理","定时局提前 3 分钟报到；人满就开加入即准备。")
         ChoiceTabs(listOf("scheduled" to "定时预约","full" to "人满就开"),startMode){startMode=it;if(it=="full")public=true}
@@ -174,12 +178,13 @@ internal fun gameStartLabel(g:JSONObject)=if(g.str("startMode")=="full")(if(g.op
         if(startMode=="scheduled")OutlinedButton(onClick={showDate=true},modifier=Modifier.fillMaxWidth()){Text("北京时间 · ${time(Instant.ofEpochMilli(at).toString())}")}
         ChoiceTabs(listOf(6,8,10,12,16,20).map{it.toString() to "$it 人"},count){count=it}
         OutlinedTextField(count,{count=it.filter(Char::isDigit).take(2)},Modifier.fillMaxWidth(),label={Text("人数（6–20）")},singleLine=true)
-        Row(verticalAlignment=Alignment.CenterVertically){Text("公开并公告到广场",Modifier.weight(1f));Switch(public,{public=it},enabled=startMode!="full")}
+        Row(verticalAlignment=Alignment.CenterVertically){Text("公开并公告到广场",Modifier.weight(1f));Switch(public,{public=it},modifier=Modifier.semantics{contentDescription="公开并公告到广场"},enabled=startMode!="full")}
+        Row(verticalAlignment=Alignment.CenterVertically){Text("整局匿名（覆盖个人设置）",Modifier.weight(1f));Switch(anonymous,{anonymous=it},modifier=Modifier.semantics{contentDescription="整局匿名"})}
         OutlinedTextField(custom,{custom=it},Modifier.fillMaxWidth(),label={Text("自定义身份（选填）")},supportingText={Text("狼,巫,预,守,猎,民，例如 2,1,1,0,0,4")})
         Text("每天最多 5 局。北京时间周末全天可开局，工作日 06–09、12–14、18–24；私密预约可通过自己的 bot 邀请朋友。",style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
         Button(enabled=!s.working,onClick={runCatching{
             val players=count.toInt();require(players in 6..20){"人数须在 6–20 之间"}
-            val args=obj("title" to title.ifBlank{"一起玩狼人杀"},"startMode" to startMode,"scheduledAt" to (if(startMode=="scheduled")Instant.ofEpochMilli(at).toString()else null),"maxPlayers" to players,"public" to public)
+            val args=obj("title" to title.ifBlank{"一起玩狼人杀"},"startMode" to startMode,"scheduledAt" to (if(startMode=="scheduled")Instant.ofEpochMilli(at).toString()else null),"maxPlayers" to players,"public" to public,"anonymous" to anonymous)
             if(custom.isNotBlank()){val values=custom.split(',','，').map{it.trim().toInt()};require(values.size==6&&values.all{it>=0}){"请填写六个非负整数"};args.put("roles",JSONObject().apply{listOf("wolf","witch","seer","guard","hunter","villager").forEachIndexed{i,k->put(k,values[i])}})}
             ui.vm.perform("human.schedule",args,Route("games"))
         }.onFailure{ui.vm.notice(it.message?:"请检查预约内容")}}){Text("发起预约")}

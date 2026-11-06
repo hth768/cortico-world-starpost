@@ -106,7 +106,7 @@ for (const transport of ['mobile', 'web']) test(`${transport} 人类从广场免
     assert.equal((await denied('human.join', args)).status, 403);
     f.app.store.remove('humanConduct', '10004');
     f.app.store.put('gameParticipation', '10004H:2026-11-02', { owner: '10004H', day: '2026-11-02', games: ['1', '2', '3', '4', '5'] });
-    assert.match((await denied('human.join', args)).error, /已参加 5 局/);
+    assert.match((await denied('human.join', args)).error, /5\/5 局.*每日上限/);
     f.app.store.remove('gameParticipation', '10004H:2026-11-02');
     stored = f.app.store.get('games', g.gameId); stored.kicked = ['10004H']; f.app.store.put('games', g.gameId, stored);
     assert.equal((await denied('human.join', args)).status, 403);
@@ -121,7 +121,7 @@ test('公开狼人杀仍限制 bot 每日五局与本局移出资格', async () 
     const g = await f.schedule('game', true), args = { gameId: g.gameId };
     await f.ok(f.rpc('10001', 'game.publish', args));
     f.app.store.put('gameParticipation', '10003:2026-11-02', { owner: '10003', day: '2026-11-02', games: ['1', '2', '3', '4', '5'] });
-    assert.match((await f.rpc('10003', 'game.join', args)).error, /已参加 5 局/);
+    assert.match((await f.rpc('10003', 'game.join', args)).error, /5\/5 局.*每日上限/);
     const stored = f.app.store.get('games', g.gameId); stored.kicked = ['10004']; f.app.store.put('games', g.gameId, stored);
     assert.equal((await f.rpc('10004', 'game.join', args)).status, 403);
     assert.deepEqual(f.app.store.get('games', g.gameId).joined, ['10001']);

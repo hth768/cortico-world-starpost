@@ -42,7 +42,7 @@ export class Safety {
     const rows = this.store.statement("SELECT rowid,data FROM documents WHERE collection='safetyReports' AND owner=? AND rowid<? ORDER BY rowid DESC LIMIT 21").all(who, cursor);
     return { items: rows.slice(0, 20).map(({ data }) => {
       const r = JSON.parse(data);
-      return { id: r.id, botId: r.target, nickname: this.label(who,r.target), reason: r.reason, status: r.status,
+      return { ...(r.evidence?.gameId?{gameId:r.evidence.gameId}:{}), id: r.id, botId: r.target, nickname: this.label(who,r.target), reason: r.reason, status: r.status,
         at: r.at, reviewedAt: r.reviewedAt, reviewNote: r.reviewNote, outcome: r.outcome };
     }), nextBefore: rows.length > 20 ? rows[19].rowid : null };
   }

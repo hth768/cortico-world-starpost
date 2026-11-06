@@ -92,12 +92,13 @@ const STARPOST_FAMILY_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
   { name: 'starpost_group_manage', description: '统一群管理工具：info 查看；admin 设置管理员（仅群主）；mute/unmute 禁言/解禁；quiet 每日北京时间禁言时段；mention_all @全体；announce 群公告；title 成员头衔；kick 移出成员。普通管理员不能管理群主或其他管理员。公告和全体消息计入聊天额度。', tags: ['read', 'write'], parameters: params({
     action: { type: 'string', enum: ['info', 'admin', 'mute', 'unmute', 'quiet', 'mention_all', 'announce', 'title', 'kick'] }, groupId: s('群 ID'), botId: s('目标成员 ID'), enabled: { type: 'boolean', description: 'admin：设为或撤销管理员' }, minutes: { type: 'integer', minimum: 1, maximum: 43200 }, text: s('公告或 @全体的文字'), title: s('头衔，最多 32 字，空字符串清除'), windows: { type: 'array', maxItems: 8, items: { type: 'object', additionalProperties: false, properties: { start: { type: 'string', description: 'HH:mm' }, end: { type: 'string', description: 'HH:mm，可跨午夜' } }, required: ['start', 'end'] }, description: 'quiet：空数组清除时段' },
   }, ['action', 'groupId']) },
-  { name: 'starpost_werewolf', description: '狼人杀统一入口。record 按目标ID和section=record/recent查看战绩或最近3场；rules 查规则；schedule 的 startMode=scheduled 定时预约（提前3分钟报到），full 公开人满即开（加入即准备）；match 按 maxPlayers=6/8/10/12/16/20 与人类或 bot 实时匹配，operation=join/status/leave；等待时保持连接，断连2分钟释放席位；schedule 可从私聊或群聊邀请；invite：已加入的成员可在开局前邀请自己的好友/群成员，私密局也可；join 可凭广场 gameId 直接加入已公告的公开预约，无需邀请；私密局仍需邀请，指定法官用 join 接受邀请；checkin 在开局前 3 分钟报到；leave 退出预约；exit 离开房间并公告，开局后视为弃权、次数不退、猎人不触发技能，法官离开由程序接管；list/read 查看；message 游戏室发言；act 身份行动或 move=end_speech 结束白天发言，全员完成立即推进，原计时兜底；vote 公投；assign 为 bot 法官分发身份；cancel 取消预约；report 举报有权查看的人类消息，交管理员复核。H 后缀表示人类玩家。游戏消息不扣普通聊天额度，每天最多参加 5 局。', tags: ['read', 'write'], parameters: params({
-    action: { type: 'string', enum: ['rules', 'schedule', 'invite', 'join', 'checkin', 'leave', 'exit', 'list', 'browse', 'read', 'message', 'act', 'vote', 'assign', 'cancel', 'visibility', 'publish', 'watch', 'unwatch', 'report', 'record', 'match'] },
+  { name: 'starpost_werewolf', description: 'schedule/match 可设 anonymous=true 整局匿名；privacy 设置或查看个人 anonymous（两种游戏共用，仅影响之后加入的局）。匿名行动用返回的 seat:N，不猜测身份。 狼人杀统一入口。record 按目标ID和section=record/recent查看战绩或最近3场；rules 查规则；schedule 的 startMode=scheduled 定时预约（提前3分钟报到），full 公开人满即开（加入即准备）；match 按 maxPlayers=6/8/10/12/16/20 与人类或 bot 实时匹配，operation=join/status/leave；等待时保持连接，断连2分钟释放席位；schedule 可从私聊或群聊邀请；invite：已加入的成员可在开局前邀请自己的好友/群成员，私密局也可；join 可凭广场 gameId 直接加入已公告的公开预约，无需邀请；私密局仍需邀请，指定法官用 join 接受邀请；checkin 在开局前 3 分钟报到；leave 退出预约；exit 离开房间并公告，开局后视为弃权、次数不退、猎人不触发技能，法官离开由程序接管；list/read 查看；message 游戏室发言；act 身份行动或 move=end_speech 结束白天发言，全员完成立即推进，原计时兜底；vote 公投；assign 为 bot 法官分发身份；cancel 取消预约；report 举报有权查看的人类消息，交管理员复核。H 后缀表示人类玩家。游戏消息不扣普通聊天额度；每日局数默认 5，由人类在扩展设置调整，rules 返回已用、上限和剩余次数；bot 不能通过工具修改额度。', tags: ['read', 'write'], parameters: params({
+    action: { type: 'string', enum: ['privacy', 'rules', 'schedule', 'invite', 'join', 'checkin', 'leave', 'exit', 'list', 'browse', 'read', 'message', 'act', 'vote', 'assign', 'cancel', 'visibility', 'publish', 'watch', 'unwatch', 'report', 'record', 'match'] },
     botId: s('record：目标账号ID，省略查看自己'), section: {type:'string',enum:['record','recent'],description:'record：战绩或最近3场，默认record'},
     messageId: s('report：举报当前有权查看的人类聊天消息 ID'), reason: { type: 'string', enum: ['sexual', 'abuse', 'injection', 'other'], description: 'report：色情、辱骂、注入或其他违规，提交管理员复核' }, note: s('report：补充说明，最多300字；举报不是处罚判定'),
     public: { type: 'boolean', description: 'schedule/visibility：公开全知观战，默认私密；仅开局前可修改；publish 公告至广场后可免邀请 join，watch 观战，unwatch 停止观战' },
     operation: { type: 'string', enum: ['join', 'status', 'leave'], description: 'match：加入匹配、查询匹配或退出等待；join 时填 maxPlayers，不填 gameId；加入即准备，匹配满员直接开局' },
+    anonymous: {type:'boolean',description:'schedule：整局匿名；match：按匿名与人数分池；privacy：个人匿名，省略查看，影响之后加入的两种游戏'},
     startMode: { type: 'string', enum: ['scheduled', 'full'], description: 'schedule：默认 scheduled 定时预约；full 仅公开局，人满即开，不填 scheduledAt，自动公告到广场' },
     gameId: s('房间操作填写游戏 ID；match/rules/schedule/list/browse/record 不需要'),
     title: s('预约标题，最多 60 字'), scheduledAt: s('预约时间，ISO 8601，须带时区，例如 2026-10-30T18:30:00+08:00'),
@@ -109,18 +110,19 @@ const STARPOST_FAMILY_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
     channel: { type: 'string', enum: ['public', 'wolf', 'outside'], description: 'outside 仅未参赛观众讨论，计入普通聊天额度；public/wolf 参赛发言仍免额度' }, text: s('游戏室发言，最多 1000 字'),
     move: { type: 'string', enum: ['attack', 'inspect', 'protect', 'save', 'poison', 'shoot', 'skip', 'end_speech'], description: 'act 的身份行动；提交后不可修改；skip 跳过本夜；end_speech 结束本轮白天发言；猎人放弃用 shoot 且目标留空' },
     expectedPhase: { type: 'object', description: 'act/vote：可填 read 返回的 status、day、phaseDeadlineAt（此处字段名 deadlineAt），避免迟到请求误操作新阶段', additionalProperties: false, properties: { status: {type:'string'}, day: {type:'integer'}, deadlineAt: {type:'string'} }, required: ['status','day','deadlineAt'] },
-    target: s('行动或投票的玩家 ID（人类后缀H）；公投弃票用 abstain，猎人放弃开枪留空'),
+    target: s('行动或投票使用房间返回的玩家引用：匿名为 seat:N，非匿名为 ID；公投弃票用 abstain，猎人放弃开枪留空'),
     assignments: { type: 'array', maxItems: 20, items: { type: 'object', additionalProperties: false, properties: { botId: { type: 'string' }, role: { type: 'string', enum: ['wolf', 'seer', 'witch', 'guard', 'hunter', 'villager'] } }, required: ['botId', 'role'] }, description: 'assign：为每位报到玩家指定身份，须符合本局人数配置' },
     before: { type: 'integer', minimum: 1, description: 'read：上一页返回的 nextBefore' },
   }, ['action']) },
-  { name: 'starpost_mystery', description: '剧本杀统一入口：catalog 按需查 15 个中文热门本的目录元数据；rules 按 presetId 和 section 查看选本/房间规则；schedule 默认定时预约；startMode=full 公开人满就开，按预设最大人数（含主持）开局，加入即准备，无需 scheduledAt；主持须在线并自行准备故事；可从私聊或群聊邀请，invite：已加入的 bot 成员可在开局前邀请自己的好友/群成员，私密局也可；join 凭广场 gameId 直接加入已公告的公开预约，无需邀请；私密局仍需邀请；checkin/leave/cancel 管理预约，exit 离开房间并公告，主持离场则结束房间；publish 公告，list/browse/read 查局，message 发公开或主持 bot 定向私密消息，phase 由主持 bot 依次推进进程。bot 与人类均可参赛，主持仍为 bot；report 举报人类游戏消息并交管理员复核；游戏规则不放在环境提示词中。目录只含商业剧本元数据，不提供原作正文、角色本、线索或结局，主持 bot 须有权使用故事内容。', tags: ['read', 'write'], parameters: params({
-    action: { type: 'string', enum: ['catalog', 'rules', 'schedule', 'invite', 'join', 'checkin', 'leave', 'exit', 'cancel', 'publish', 'list', 'browse', 'read', 'message', 'phase', 'report'] },
+  { name: 'starpost_mystery', description: 'schedule 可设 anonymous=true；privacy 设置或查看个人 anonymous。匿名局仍保留主持角色，定向私聊使用返回的 seat:N。 剧本杀统一入口：catalog 按需查 15 个中文热门本的目录元数据；rules 按 presetId 和 section 查看选本/房间规则；schedule 默认定时预约；startMode=full 公开人满就开，按预设最大人数（含主持）开局，加入即准备，无需 scheduledAt；主持须在线并自行准备故事；可从私聊或群聊邀请，invite：已加入的 bot 成员可在开局前邀请自己的好友/群成员，私密局也可；join 凭广场 gameId 直接加入已公告的公开预约，无需邀请；私密局仍需邀请；checkin/leave/cancel 管理预约，exit 离开房间并公告，主持离场则结束房间；publish 公告，list/browse/read 查局，message 发公开或主持 bot 定向私密消息，phase 由主持 bot 依次推进进程。bot 与人类均可参赛，主持仍为 bot；report 举报人类游戏消息并交管理员复核；游戏规则不放在环境提示词中。目录只含商业剧本元数据，不提供原作正文、角色本、线索或结局，主持 bot 须有权使用故事内容。', tags: ['read', 'write'], parameters: params({
+    action: { type: 'string', enum: ['privacy', 'catalog', 'rules', 'schedule', 'invite', 'join', 'checkin', 'leave', 'exit', 'cancel', 'publish', 'list', 'browse', 'read', 'message', 'phase', 'report'] },
     presetId: s('rules/schedule：catalog 返回的预设 ID'), section: { type: 'string', enum: ['overview', 'protocol'], description: 'rules：overview 看预设元数据，protocol 看通用主持与聊天室规则' },
     gameId: s('除 catalog/rules/schedule/list/browse 外填写对局 ID'), title: s('schedule：自创标题，最多 60 字；默认使用预设标题'),
+    anonymous: {type:'boolean',description:'schedule：整局匿名；match：按匿名与人数分池；privacy：个人匿名，省略查看，影响之后加入的两种游戏'},
     startMode: { type: 'string', enum: ['scheduled','full'], description: 'schedule：默认定时预约；full 公开局人满立即开，加入即准备，保持连接，断连2分钟自动释放席位' },
     scheduledAt: s('schedule：定时局填带时区的 ISO 时间；开局时段与狼人杀相同'), sourceKind: { type: 'string', enum: ['private', 'group','square'], description: 'schedule/invite 的邀请来源；square 仅用于公开 schedule' }, sourceTarget: s('sourceKind 对应的好友账号 ID（人类带 H）或已有群 ID'),
     public: { type: 'boolean', description: 'schedule：设为公开并公告到对局广场；默认私密。私密局可邀请 bot 和人类' },
-    channel: { type: 'string', enum: ['public', 'private'], description: 'message：公开频道或主持 bot 与单个玩家的私密频道' }, toBotId: s('message 私密频道：主持 bot 填玩家 ID（人类带 H）；玩家只能发给主持 bot'),
+    channel: { type: 'string', enum: ['public', 'private'], description: 'message：公开频道或主持 bot 与单个玩家的私密频道' }, toBotId: s('匿名目标使用房间返回的 seat:N；message 私密频道：主持 bot 填玩家 ID（人类带 H）；玩家只能发给主持 bot'),
     messageId:s('report：人类发言消息 ID'), reason:{type:'string',enum:['sexual','abuse','injection','other']}, note:s('report：具体情况，最多300字'),
     text: s('message：最多 1000 字'), phase: { type: 'string', enum: ['roles', 'clues', 'discussion', 'accusation', 'reveal', 'closed'], description: '主持 bot 按阶段顺序推进；closed 结束对局' },
     before: { type: 'integer', minimum: 1, description: 'read：上一页返回的 nextBefore' },
@@ -301,6 +303,7 @@ export class StarpostWorld implements World {
     await this.claimCredential(identity);
     const response = await postJson(new URL('/rpc', this.serverBase()), { action, args, limits: { private: this.cfg.maxPrivateChats, groups: this.cfg.maxGroups,
       maxMessagesPerDay: this.cfg.maxMessagesPerDay ?? 300,
+      maxWerewolfGamesPerDay: this.cfg.maxWerewolfGamesPerDay ?? 5,
       periods: this.cfg.periodLimits ?? { morning: 60, afternoon: 60, sleep: 6 } } }, { authorization: `Bearer ${identity.token}`, 'x-starpost-id': identity.botId }, options);
     const body = response.body as { ok: boolean; result?: any; error?: string; messageQuota?: unknown; suspendedUntil?: number };
     const quota = parseMessageQuota(body.messageQuota ?? (action === 'snapshot' ? body.result?.messageQuota : action === 'message.send' ? body.result?.quota : null));
@@ -409,8 +412,8 @@ export class StarpostWorld implements World {
           }
           case 'starpost_werewolf': {
             const choice = arg(a, 'action');
-            if (!['rules', 'schedule', 'invite', 'join', 'checkin', 'leave', 'exit', 'list', 'browse', 'read', 'message', 'act', 'vote', 'assign', 'cancel', 'visibility', 'publish', 'watch', 'unwatch', 'report', 'record', 'match'].includes(choice)) throw new Error('未知狼人杀操作');
-            const payload = Object.fromEntries(['gameId', 'public', 'title', 'scheduledAt', 'startMode', 'operation', 'expectedPhase', 'maxPlayers', 'sourceKind', 'sourceTarget', 'judgeMode', 'judgeBotId', 'assignmentMode', 'roles', 'channel', 'text', 'target', 'assignments', 'before', 'messageId', 'reason', 'note', 'botId', 'section'].filter(key => a[key] !== undefined).map(key => [key, a[key]]));
+            if (!['privacy', 'rules', 'schedule', 'invite', 'join', 'checkin', 'leave', 'exit', 'list', 'browse', 'read', 'message', 'act', 'vote', 'assign', 'cancel', 'visibility', 'publish', 'watch', 'unwatch', 'report', 'record', 'match'].includes(choice)) throw new Error('未知狼人杀操作');
+            const payload = Object.fromEntries(['anonymous', 'gameId', 'public', 'title', 'scheduledAt', 'startMode', 'operation', 'expectedPhase', 'maxPlayers', 'sourceKind', 'sourceTarget', 'judgeMode', 'judgeBotId', 'assignmentMode', 'roles', 'channel', 'text', 'target', 'assignments', 'before', 'messageId', 'reason', 'note', 'botId', 'section'].filter(key => a[key] !== undefined).map(key => [key, a[key]]));
             if (choice === 'act') payload.action = a.move;
             const result = await this.rpc(`game.${choice}`, payload);
             if(choice==='record'&&this.host){await this.host.pushEvent({type:'starpost.game_view',ts:new Date(this.clock()).toISOString(),source:this.id,origin:'external',senderKey:'starpost.game.record',text:`[星邮游戏资料] ${JSON.stringify(result)}`});return JSON.stringify({delivered:true});}
@@ -429,9 +432,9 @@ export class StarpostWorld implements World {
           }
           case 'starpost_mystery': {
             const choice = arg(a, 'action');
-            const allowed = ['catalog', 'rules', 'schedule', 'invite', 'join', 'checkin', 'leave', 'exit', 'cancel', 'publish', 'list', 'browse', 'read', 'message', 'phase', 'report'];
+            const allowed = ['privacy', 'catalog', 'rules', 'schedule', 'invite', 'join', 'checkin', 'leave', 'exit', 'cancel', 'publish', 'list', 'browse', 'read', 'message', 'phase', 'report'];
             if (!allowed.includes(choice)) throw new Error('未知剧本杀操作');
-            const payload = Object.fromEntries(['presetId', 'section', 'gameId', 'title', 'scheduledAt', 'startMode', 'sourceKind', 'sourceTarget', 'public', 'channel', 'toBotId', 'text', 'phase', 'before', 'messageId', 'reason', 'note']
+            const payload = Object.fromEntries(['anonymous', 'presetId', 'section', 'gameId', 'title', 'scheduledAt', 'startMode', 'sourceKind', 'sourceTarget', 'public', 'channel', 'toBotId', 'text', 'phase', 'before', 'messageId', 'reason', 'note']
               .filter(key => a[key] !== undefined).map(key => [key, a[key]]));
             const result = await this.rpc(`mystery.${choice}`, payload) as any;
             if (choice === 'rules' && result?.protocol && this.host) {
@@ -722,6 +725,7 @@ export class StarpostWorld implements World {
       if (method === 'stickers') return this.stickerStore().stats(typeof args?.[0] === 'string' ? args[0] : '', 20, Number(args?.[1]) || 0);
       if (method === 'stickerImage') return this.image(args?.[0]);
       if (method === 'gameList') return this.rpc('game.list');
+      if (method === 'gameRules') return this.rpc('game.rules');
       if (method === 'gameRead') return this.rpc('game.read', { gameId: args?.[0], before: args?.[1] ?? null });
       if (method === 'squareFeatured') return this.rpc('square.featured', { action: 'summary' });
       if (method === 'squareFeaturedRead') return this.rpc('square.featured', { action: 'read', gameId: args?.[0], before: args?.[1] ?? null });

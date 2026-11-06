@@ -35,7 +35,7 @@ internal fun gamePhaseLabel(g:JSONObject)=if(g.str("gameType")=="mystery")myster
     Surface(shape=RoundedCornerShape(if(compact)20.dp else 28.dp),color=colors.surfaceContainer,modifier=Modifier.fillMaxWidth()){
         Column(Modifier.background(Brush.linearGradient(listOf(if(night)colors.primaryContainer else colors.secondaryContainer,colors.tertiaryContainer))).padding(if(compact)16.dp else 22.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
             Text("${if(script)"MYSTERY · 剧本杀" else "WEREWOLF · 狼人杀"} / $mode",style=MaterialTheme.typography.labelSmall,color=foreground)
-            Text(g.str("title","星邮游戏"),style=if(compact)MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold,color=foreground,maxLines=2,overflow=TextOverflow.Ellipsis)
+            Text(g.str("title","星邮游戏")+(if(g.optBoolean("anonymous"))" · 匿名局" else ""),style=if(compact)MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold,color=foreground,maxLines=2,overflow=TextOverflow.Ellipsis)
             Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
                 Text(if(script)"✦" else if(night)"☾" else "☀",style=MaterialTheme.typography.headlineMedium,color=foreground)
                 Text((if(g.optInt("day")>0&&!script)"第 ${g.optInt("day")} 天 · " else "")+gamePhaseLabel(g),Modifier.weight(1f),style=MaterialTheme.typography.titleSmall,color=foreground)
@@ -62,8 +62,9 @@ internal fun gamePhaseLabel(g:JSONObject)=if(g.str("gameType")=="mystery")myster
                     Surface(shape=CircleShape,color=if(me)colors.primary else colors.secondaryContainer,modifier=Modifier.size(36.dp)){Box(contentAlignment=Alignment.Center){Text(seat.str("nickname",seat.str("id")).take(1),fontWeight=FontWeight.Bold)}}
                     Text(seat.str("nickname",seat.str("id")),style=MaterialTheme.typography.labelMedium,maxLines=1,overflow=TextOverflow.Ellipsis)
                     AccountTitleBadge(seat.str("accountTitle"),compact=true,style=seat.optJSONObject("accountTitleStyle"))
+                    if(seat.optBoolean("hostRole"))Text("主持",style=MaterialTheme.typography.labelSmall,color=colors.primary)
                     if(showRoles&&seat.has("role"))Text(roleNames[seat.str("role")]?:"未知",style=MaterialTheme.typography.labelSmall,color=colors.primary)
-                    Text(if(me)"我" else if(seat.str("id").endsWith("H"))"人类" else "Bot",style=MaterialTheme.typography.labelSmall,color=colors.onSurfaceVariant)
+                    if(me||!seat.optBoolean("anonymous"))Text(if(me)"我" else if(seat.str("id").endsWith("H"))"人类" else "Bot",style=MaterialTheme.typography.labelSmall,color=colors.onSurfaceVariant)
                     Text(if(scheduled){if(seat.optBoolean("checkedIn"))"已报到" else "待报到"}else if(active)"在场" else "已离场",style=MaterialTheme.typography.labelSmall)
                 }
             }}
@@ -89,7 +90,7 @@ internal fun gamePhaseLabel(g:JSONObject)=if(g.str("gameType")=="mystery")myster
                 Column(Modifier.weight(1f)){Text(if(g.str("gameType")=="mystery")"剧本杀" else "狼人杀",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.primary);Text(g.str("title"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold);Text(gamePhaseLabel(g),style=MaterialTheme.typography.bodySmall)}
                 Glyph("chevron")
             }
-            Text("${if(g.str("startMode")=="full")if(g.optBoolean("matching"))"实时匹配 · 人满就开" else "人满就开" else time(g.str("scheduledAt"))} · ${if(g.optBoolean("public"))"公开" else "私密"}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("${if(g.str("startMode")=="full")if(g.optBoolean("matching"))"实时匹配 · 人满就开" else "人满就开" else time(g.str("scheduledAt"))} · ${if(g.optBoolean("public"))"公开" else "私密"}${if(g.optBoolean("anonymous"))" · 匿名局" else ""}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             if(g.optInt("maxPlayers")>0){LinearProgressIndicator(progress={g.optInt("joined").toFloat().div(g.optInt("maxPlayers")).coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth());Text("${g.optInt("joined")} / ${g.optInt("maxPlayers")} 人 · ${if(g.str("status")=="scheduled")"查看预约" else "进入对局"}",style=MaterialTheme.typography.labelMedium)}
         }
     }

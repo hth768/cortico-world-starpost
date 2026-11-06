@@ -1,3 +1,5 @@
+import { gameSeats } from './game-presentation.mjs';
+import { captureGameSeats, preparePrivacyJoin, booleanOption, anonymousPlayer } from './game-privacy.mjs';
 import { randomUUID } from 'node:crypto';
 import { MYSTERY_PRESETS, MYSTERY_RULES, mysteryPreset } from './mystery-presets.mjs';
 import { canStartGameAt as canStart, GAME_SCHEDULE_RULE } from './game-schedule.mjs';
@@ -33,10 +35,10 @@ export class MysteryGames {
     if (!game) fail('剧本杀对局不存在', 404);
     return game;
   }
-  save(game) { game.kind = game.status; game.at = game.deadlineAt ?? game.scheduledAt; this.store.put('mysteryGames', game.id, game); }
+  save(game) { captureGameSeats(game,this.store); game.kind = game.status; game.at = game.deadlineAt ?? game.scheduledAt; this.store.put('mysteryGames', game.id, game); }
   members(game) { return game.joined.filter(who => !game.left?.includes(who)); }
   summary(game, who) {
-    return { gameId: game.id, gameType: 'mystery', title: game.title, presetId: game.presetId, creator: game.creator,
+    return { gameId: game.id, self:who, anonymous:Boolean(game.anonymous), canCancel:who===game.creator && !game.matching && game.status==='scheduled', gameType: 'mystery', title: game.title, presetId: game.presetId, creator: game.creator,
       scheduledAt: game.scheduledAt, startMode: game.startMode ?? 'scheduled', status: game.status, phase: game.phase, minPlayers: game.minPlayers,
       maxPlayers: game.maxPlayers, joined: this.members(game).length, checkedIn: game.checkedIn.filter(id => !game.left?.includes(id)).length, checkedInSelf: game.checkedIn.includes(who),
       participant: who ? this.members(game).includes(who) : undefined, host: who ? game.creator === who : undefined, canInvite: who ? this.canInvite(game, who) : false,
@@ -116,7 +118,7 @@ export class MysteryGames {
     const targets = sourceKind === 'square' ? [] : sourceKind === 'private' ? [validId(sourceTarget)] : this.group(who, sourceTarget).members.filter(id => id !== who);
     if (sourceKind === 'private' && !this.friends(who).includes(targets[0])) fail('只能通过私聊邀请好友', 403);
     const invited = [...new Set(targets)];
-    const game = { id: randomUUID(), title, presetId: preset.id, creator: who, public: args.public === true, published: false,
+    const game = { id: randomUUID(), title, privacyVersion:1, anonymous:booleanOption(args.anonymous), presetId: preset.id, creator: who, public: args.public === true, published: false,
       startMode, scheduledAt: immediate ? null : iso(scheduled), createdAt: iso(now), status: 'scheduled', phase: 'scheduled', deadlineAt: immediate ? null : iso(scheduled),
       minPlayers, maxPlayers, invited, joined: [who], checkedIn: immediate ? [who] : [], reminded: false, startedAt: null, closedAt: null };
     this.save(game); if (immediate) this.ready(who, game); this.store.put('mysteryAccess', `${who}:${game.id}`, { owner: who, gameId: game.id, at: game.createdAt });
@@ -143,11 +145,11 @@ export class MysteryGames {
     game.invited.push(...added); this.save(game);
     for (const id of added) this.store.put('mysteryAccess', `${id}:${game.id}`, { owner: id, gameId: game.id, at: iso(this.clock()) });
     this.store.emit(added, 'mystery.invited', { ...this.summary(game), invitedBy: who, sourceKind: kind, sourceTarget: target, hostNickname: this.nickname(game.creator), preset: this.catalog().find(item => item.id === game.presetId) }, iso(this.clock()));
-    return { gameId: game.id, invited: added.length };
+    return { gameId: game.id, self:who, anonymous:Boolean(game.anonymous), canCancel:who===game.creator && !game.matching && game.status==='scheduled', invited: added.length };
   }
   canInvite(game, who) { return game.status === 'scheduled' && !game.left?.includes(who) && !game.kicked?.includes(who) && (game.creator === who || game.joined.includes(who)); }
   join(who, gameId) {
-    const game = this.get(gameId);
+    const game = this.get(gameId);preparePrivacyJoin(game,this.store);
     if (!this.eligible(who) || game.kicked?.includes(who)) fail('当前账号不能参加游戏', 403);
     if (game.status !== 'scheduled') fail('此预约已开始或结束');
     if (game.startMode === 'full') this.assertReady(who, game.id);
@@ -270,7 +272,7 @@ export class MysteryGames {
     const rows = this.store.statement("SELECT rowid,data FROM documents WHERE collection='mysteryMessages' AND scope=? AND rowid<? ORDER BY rowid DESC LIMIT 51").all(game.id, cursor);
     const page = rows.slice(0, 50).reverse().map(row => ({ ...JSON.parse(row.data), cursor: row.rowid }))
       .filter(message => message.channel !== 'private' || message.recipients.includes(who));
-    return { game: this.summary(game, who), messages: page, nextBefore: rows.length > 50 ? rows[49].rowid : null };
+    return { game: {...this.summary(game, who),seats:gameSeats(game,this.nickname,true)}, messages: page, nextBefore: rows.length > 50 ? rows[49].rowid : null };
   }
   dispatch(who, action, args = {}) {
     if (action !== 'catalog' && action !== 'rules') this.tick();

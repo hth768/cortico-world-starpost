@@ -1,10 +1,11 @@
+import { anonymousPlayer, seatNumber } from './game-privacy.mjs';
 // Presentation is derived only after the caller has checked room/role permissions.
 export const ROLE_LABELS = { wolf:'狼人', witch:'女巫', seer:'预言家', guard:'守卫', hunter:'猎人', villager:'平民' };
 const PHASES = { scheduled:'等待集合', assigning:'分发身份', started:'游戏开始', night_wolf:'狼人行动', night_gods:'神职行动', dawn:'天亮结算', day:'白天讨论', vote:'公开投票', vote_open:'公开投票', hunter:'猎人行动', finished:'终局复盘', closed:'对局结束', cancelled:'预约取消', opening:'序幕', roles:'领取剧本', clues:'搜集线索', discussion:'讨论推理', accusation:'指认凶手', reveal:'真相揭晓' };
 const CHANNELS = { public:'公共频道', private:'私密频道', wolf:'狼人频道', judge:'法官频道', outside:'局外讨论' };
 export function gameSeats(game, nickname, mystery = false) {
   const players = mystery || !game.participants?.length ? game.joined ?? [] : game.participants;
-  return players.map((id, index) => {const nick=game.playerNames?.[id] || nickname(id);return { id, number:index+1,
+  return players.map((id, index) => {const number=seatNumber(game,id,index+1),anonymous=anonymousPlayer(game,id),nick=anonymous?`${number}号`:game.playerNames?.[id] || nickname(id);return { id, number, anonymous, hostRole:mystery&&id===game.creator,
     nickname:nick&&nick!==id?nick:(id.endsWith('H')?'匿名人类':'未设置昵称'),
     alive:mystery ? !game.left?.includes(id) : game.status==='scheduled' || Boolean(game.alive?.includes(id)),
     checkedIn:Boolean(game.checkedIn?.includes(id)) };});
@@ -12,17 +13,17 @@ export function gameSeats(game, nickname, mystery = false) {
 export function playerLabel(seats, id) {
   if (!id || id==='abstain') return '弃票 / 无目标';
   const seat=seats.find(s=>s.id===id);
-  return seat ? `${seat.number}号 · ${seat.nickname}` : '场外成员';
+  return seat ? seat.anonymous ? `${seat.number}号` : `${seat.number}号 · ${seat.nickname}` : '场外成员';
 }
 export function replacePlayerIds(value, seats, judgeId, names = false) {
-  const labels = new Map(seats.map(s=>[s.id, names ? `${s.number}号（${s.nickname}）` : `${s.number}号`]));
+  const labels = new Map(seats.map(s=>[s.id, names && !s.anonymous ? `${s.number}号（${s.nickname}）` : `${s.number}号`]));
   if (judgeId && !labels.has(judgeId)) labels.set(judgeId,'法官');
   return String(value ?? '').replace(/(?<![\w])\d{5,12}H?(?![\w])/g,id=>labels.get(id) ?? id);
 }
 export function presentGamePage(source, page, nickname, { omniscient=false, label='获准视角 · 只读' } = {}) {
   const mystery=page.game?.gameType==='mystery', seats=gameSeats(source,nickname,mystery);
   if (omniscient && !mystery) for(const seat of seats) if(ROLE_LABELS[source.roles?.[seat.id]])seat.role=source.roles[seat.id];
-  const name=id=>id===source.judgeBotId ? '法官' : playerLabel(seats,id);
+  const name=id=>id===source.judgeBotId ? '法官' : playerLabel(seats,id)+(mystery&&id===source.creator?' · 主持':'');
   const list=ids=>(ids??[]).map(name).join('、');
   const roles=values=>Object.entries(values??{}).map(([id,role])=>({player:name(id),role:ROLE_LABELS[role]??'未知身份'}));
   let day=null, phase='';

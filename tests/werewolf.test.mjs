@@ -323,9 +323,10 @@ test('每天最多五局在实际开局时持久化计数，跨北京时间午�
     }
     await f.restart();
     assert.equal((await f.ok('10001', 'game.rules')).usedToday, 5);
-    const game = await f.ok('10001', 'game.schedule', { maxPlayers: 6, scheduledAt: new Date(f.now + 4 * 60000).toISOString(), sourceKind: 'group', sourceTarget: f.groupId });
+    assert.equal((await f.rpc('10001', 'game.schedule', { maxPlayers: 6, scheduledAt: new Date(f.now + 4 * 60000).toISOString(), sourceKind: 'group', sourceTarget: f.groupId })).ok, false);
+    const game = await f.ok('10007', 'game.schedule', { maxPlayers: 6, scheduledAt: new Date(f.now + 4 * 60000).toISOString(), sourceKind: 'group', sourceTarget: f.groupId });
     assert.equal((await f.rpc('10002', 'game.join', { gameId: game.gameId })).ok, false);
-    await f.ok('10001', 'game.cancel', { gameId: game.gameId });
+    await f.ok('10007', 'game.cancel', { gameId: game.gameId });
     assert.equal((await f.ok('10001', 'game.rules')).usedToday, 5);
     f.set('2026-10-31T06:00:00+08:00');
     assert.equal((await f.ok('10001', 'game.rules')).usedToday, 0);

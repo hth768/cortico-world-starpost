@@ -297,10 +297,13 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
     if (gameBusy || ctx.signal.aborted) return;
     gameBusy = true;
     try {
-      const list = await ctx.invoke<GameSummary[]>('gameList');
+      const [list, rules] = await Promise.all([
+        ctx.invoke<GameSummary[]>('gameList'),
+        ctx.invoke<{ usedToday: number; dailyLimit: number; remainingToday: number }>('gameRules'),
+      ]);
       if (ctx.signal.aborted) return;
       gameList.replaceChildren();
-      gameStatus.textContent = '每天最多参加或主持 5 局 · 游戏发言不计普通聊天额度 · 页面只读';
+      gameStatus.textContent = `今日已参加或主持 ${rules.usedToday}/${rules.dailyLimit} 局 · 剩余 ${rules.remainingToday ?? Math.max(0, rules.dailyLimit - rules.usedToday)} 局 · 可在扩展设置修改每日上限 · 游戏发言不计普通聊天额度 · 页面只读`;
       if (!list.length) line(ctx, gameList, '暂无狼人杀预约');
       for (const game of list) {
         const button = ui.h('button', 'sp-chat-card'); button.type = 'button'; button.setAttribute('aria-pressed', String(selectedGame === game.gameId));

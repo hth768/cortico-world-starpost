@@ -162,8 +162,8 @@ class ComposeUiTest {
     @Test fun scheduleRetainsTimedModeAndOffersPublicFullMode(){
         val vm=client();compose.setContent{StarpostTheme("light",false){StarpostApp(vm,ClientState(starting=false,signedIn=true,account=account,route=Route("schedule")))}}
         compose.onNodeWithText("定时预约").assertExists();compose.onNodeWithText("人满就开").performClick()
-        compose.onNodeWithText("公开并公告到广场").assertExists();compose.onNode(isToggleable()).assertIsOn().assertIsNotEnabled()
-        compose.onNodeWithText("定时预约").performClick();compose.onNode(isToggleable()).assertIsEnabled()
+        compose.onNodeWithText("公开并公告到广场").assertExists();compose.onNodeWithContentDescription("公开并公告到广场").assertIsOn().assertIsNotEnabled();compose.onNodeWithContentDescription("整局匿名").assertIsOff().performClick().assertIsOn()
+        compose.onNodeWithText("定时预约").performClick();compose.onNodeWithContentDescription("公开并公告到广场").assertIsEnabled()
     }
     @Test fun publicReservationOffersHumanJoinWithoutInvitationOnlyBeforeStart(){
         val vm=client()
@@ -539,6 +539,15 @@ class ComposeUiTest {
         compose.onNodeWithText("查验身份").assertExists();compose.onNodeWithText("跳过本夜").assertExists()
         compose.onNodeWithContentDescription("更多功能").assertDoesNotExist();compose.onAllNodes(hasSetTextAction()).assertCountEquals(0)
         shot("android-game-dark")
+    }
+    @Test fun anonymousGameSeatsHideAccountTypeAndShowOnlySeatLabels(){
+        val g=obj("gameId" to "anonymous-demo","anonymous" to true,"status" to "day","seats" to JSONArray().put(obj("id" to "seat:1","number" to 1,"nickname" to "1号","anonymous" to true,"alive" to true)).put(obj("id" to "seat:2","number" to 2,"nickname" to "2号","anonymous" to true,"alive" to true)))
+        compose.setContent{StarpostTheme("dark",false){GameSeatBoard(g,"seat:1")}}
+        compose.onAllNodesWithText("1号").assertCountEquals(2)
+        compose.onAllNodesWithText("2号").assertCountEquals(2)
+        compose.onNodeWithText("Bot").assertDoesNotExist();compose.onNodeWithText("人类").assertDoesNotExist()
+        compose.onNodeWithText("我").assertExists();compose.onNodeWithText("房主").assertDoesNotExist()
+        shot("android-anonymous-seats")
     }
     @Test fun ownerChannelKeepsIndependentIdentity(){
         val vm=client();val state=ClientState(starting=false,signedIn=true,account=account,route=Route("owner"),theme="light",data=obj("messages" to JSONArray().put(obj("id" to "o1","direction" to "human","address" to "旅人","text" to "今天交到朋友了吗？","at" to "2026-11-01T12:26:00Z")).put(obj("id" to "o2","direction" to "bot","text" to "交到了，就是他骗了我一整局狼人杀。","at" to "2026-11-01T12:26:00Z")).put(obj("id" to "o3","direction" to "human","address" to "旅人","text" to "那明天还一起玩吗？","at" to "2026-11-01T12:27:00Z")).put(obj("id" to "o4","direction" to "bot","text" to "玩。朋友还是要交的，票还是要投他的。","at" to "2026-11-01T12:27:00Z"))))
