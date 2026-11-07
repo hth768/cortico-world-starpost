@@ -41,6 +41,31 @@ export class HumanAccess {
       return this.mobile.call(session, action, args);
     }
     this.accounts.mustClaim(humanId);
+    if (action === 'owner.notifications') {
+      const after = args.cursors === undefined ? {} : args.cursors;
+      if (!after || typeof after !== 'object' || Array.isArray(after)) fail('通知游标不合法', 400);
+      const cursors = {}, items = [];
+      for (const { botId, nickname } of this.accounts.bots(humanId)) {
+        let cursor = after[botId];
+        if (cursor === undefined && args.cursors !== undefined) cursor = this.store.get('botOwners', botId)?.noticeCursor;
+        if (cursor === undefined) {
+          const row = this.store.statement("SELECT max(rowid) AS cursor FROM documents WHERE collection='ownerMessages' AND owner=? AND kind='bot'").get(botId);
+          cursors[botId] = row.cursor ?? 0;
+          continue;
+        }
+        if (!Number.isSafeInteger(cursor) || cursor < 0) fail('通知游标不合法', 400);
+        const row = this.store.statement(`SELECT rowid AS cursor,
+          substr(json_extract(data,'$.text'),1,100) AS text,
+          json_extract(data,'$.emoji') AS emoji, json_type(data,'$.image')='object' AS image,
+          json_type(data,'$.forward')='object' AS forwarded FROM documents
+          WHERE collection='ownerMessages' AND owner=? AND rowid>? AND kind='bot'
+          AND json_extract(data,'$.recalled') IS NOT 1 ORDER BY rowid DESC LIMIT 1`).get(botId, cursor);
+        cursors[botId] = row?.cursor ?? cursor;
+        if (row) items.push({ botId, cursor: row.cursor, nickname: this.contactRemark(humanId, botId) || nickname || botId,
+          preview: (row.text || row.emoji || (row.image ? '[图片]' : row.forwarded ? '[聊天记录]' : '新消息')).slice(0, 100) });
+      }
+      return { cursors, items };
+    }
     if (['profile','social.profile'].includes(action) && ['titles','achievements'].includes(args.section)) {
       if(args.botId && args.botId !== humanId)fail('只能管理自己的头衔库');
       return this.rpc(humanId,'profile.read',{botId:humanId,section:args.section});

@@ -30,8 +30,28 @@ internal data class ClientState(
     val capsuleUnread: Int = 0, val theme: String = "system", val dynamicColor: Boolean = true, val activeGame: String = "", val expiresAt: Long = 0
 )
 internal class ApiError(val status: Int, message: String): IOException(message)
-private class ConnectionFailure(cause: IOException): IOException(cause)
+internal class ConnectionFailure(cause: IOException): IOException(cause)
 
+internal fun validServer(value: String) = runCatching { val u=URL(value); u.protocol=="https" && u.host.isNotBlank() && u.userInfo==null && u.query==null && u.ref==null && u.path in listOf("", "/") }.getOrDefault(false)
+
+internal fun mobileRequest(base: String, path: String, body: JSONObject, token: String?): JSONObject {
+    require(validServer(base)) { "服务器地址须为 HTTPS" }
+    val c=URL(base+path).openConnection() as HttpURLConnection
+    c.connectTimeout=15000;c.readTimeout=30000;c.instanceFollowRedirects=false;c.requestMethod="POST";c.doOutput=true;c.setRequestProperty("Content-Type","application/json")
+    if(token != null)c.setRequestProperty("Authorization","Bearer $token")
+    try {
+        val bytes=body.toString().toByteArray(Charsets.UTF_8);c.setFixedLengthStreamingMode(bytes.size)
+        try { c.connect() } catch(e: IOException) { throw ConnectionFailure(e) }
+        // Never retry a request after body transmission: sends must not be duplicated.
+        c.outputStream.use { it.write(bytes) }
+        val status=c.responseCode
+        val stream=if(status>=400)c.errorStream else c.inputStream
+        val raw=stream?.use { input -> val out=java.io.ByteArrayOutputStream();val block=ByteArray(8192);while(true){val n=input.read(block);if(n<0)break;out.write(block,0,n);if(out.size()>30*1024*1024)throw IOException("内容过大，请分批查看")};out.toString("UTF-8") } ?: ""
+        val result=runCatching { JSONObject(raw) }.getOrElse { throw IOException("服务器响应异常，请稍后重试") }
+        if(status!=200 || !result.optBoolean("ok"))throw ApiError(status,result.str("error","请求失败"))
+        return result.optJSONObject("result") ?: obj("items" to result.optJSONArray("result"))
+    } finally { c.disconnect() }
+}
 /** Keeps the existing encrypted session format, app ID and sticker directory for upgrades. */
 internal class StarpostClient(app: Application): AndroidViewModel(app) {
     private val sessions = SessionStore(app)
@@ -74,9 +94,32 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
             } else expire()
         }
     }
-    private fun validServer(value: String) = runCatching { val u=URL(value); u.protocol=="https" && u.host.isNotBlank() && u.userInfo==null && u.query==null && u.ref==null && u.path in listOf("", "/") }.getOrDefault(false)
     private suspend fun saveSession() = withContext(Dispatchers.IO) { sessions.save(obj("server" to server,"token" to token,"botId" to state.value.account.str("botId"),"expiresAt" to state.value.expiresAt).toString()) }
+    private val ownerAlerts get() = OwnerAlerts(getApplication())
+
+    fun enableOwnerAlerts() {
+        if (state.value.working) return
+        val epoch = sessionEpoch
+        mutable.update { it.copy(working = true) }
+        viewModelScope.launch {
+            try {
+                val baseline = rpc("owner.notifications")
+                if (epoch == sessionEpoch) ownerAlerts.enable(token, baseline.getJSONObject("cursors"))
+            } catch (e: Exception) {
+                if (epoch == sessionEpoch) handle(e)
+            } finally { mutable.update { it.copy(working = false) } }
+        }
+    }
+
+    fun openOwnerAlert(subscription: String, botId: String) {
+        if (!ownerAlerts.matches(subscription, token) || state.value.activeGame.isNotEmpty()) return
+        if (!Regex("[0-9]{5,12}").matches(botId)) return
+        if (state.value.account.str("botId") == botId) navigate(Route("owner"))
+        else perform("account.select", obj("botId" to botId), Route("owner"))
+    }
+
     private fun expire() {
+        ownerAlerts.disable()
         sessionEpoch++;avatarCache.clear();token="";sessions.clear();backStack.clear();drafts.clear();communityDrafts.clear();capsuleDrafts.clear();lastCapsuleCheck=0L;capsuleReminder="";draftMentions.clear();attachment=null
         mutable.update { ClientState(starting=false,theme=it.theme,dynamicColor=it.dynamicColor) }
     }
@@ -84,33 +127,15 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
         withContext(Dispatchers.IO) {
             if(auth && (token.isEmpty() || state.value.expiresAt <= System.currentTimeMillis())) throw ApiError(401,"登录已过期，请重新登录")
             val selected=server
-            try { requestAt(selected,path,body,auth) }
+            try { mobileRequest(selected,path,body,token.takeIf { auth }) }
             catch(e: ConnectionFailure) {
                 if(selected!="https://starpost.com.cn") throw IOException("无法连接服务器，请检查网络")
-                val result = requestAt("https://8.148.13.225",path,body,auth)
+                val result = mobileRequest("https://8.148.13.225",path,body,token.takeIf { auth })
                 server="https://8.148.13.225";if(token.isNotEmpty())saveSession()
                 notice("已连接备用服务器")
                 result
             }
         }
-    }
-    private fun requestAt(base: String,path: String,body: JSONObject,auth: Boolean): JSONObject {
-        require(validServer(base)) { "服务器地址须为 HTTPS" }
-        val c=URL(base+path).openConnection() as HttpURLConnection
-        c.connectTimeout=15000;c.readTimeout=30000;c.instanceFollowRedirects=false;c.requestMethod="POST";c.doOutput=true;c.setRequestProperty("Content-Type","application/json")
-        if(auth)c.setRequestProperty("Authorization","Bearer $token")
-        try {
-            val bytes=body.toString().toByteArray(Charsets.UTF_8);c.setFixedLengthStreamingMode(bytes.size)
-            try { c.connect() } catch(e: IOException) { throw ConnectionFailure(e) }
-            // Never retry a request after body transmission: sends must not be duplicated.
-            c.outputStream.use { it.write(bytes) }
-            val status=c.responseCode
-            val stream=if(status>=400)c.errorStream else c.inputStream
-            val raw=stream?.use { input -> val out=java.io.ByteArrayOutputStream();val block=ByteArray(8192);while(true){val n=input.read(block);if(n<0)break;out.write(block,0,n);if(out.size()>30*1024*1024)throw IOException("内容过大，请分批查看")};out.toString("UTF-8") } ?: ""
-            val result=runCatching { JSONObject(raw) }.getOrElse { throw IOException("服务器响应异常，请稍后重试") }
-            if(status!=200 || !result.optBoolean("ok"))throw ApiError(status,result.str("error","请求失败"))
-            return result.optJSONObject("result") ?: obj("items" to result.optJSONArray("result"))
-        } finally { c.disconnect() }
     }
     private val avatarCache = linkedMapOf<String, android.graphics.Bitmap?>()
     private val avatarLock = Mutex()

@@ -92,6 +92,10 @@ export class StarpostStorage {
     const row = this.statement('SELECT data FROM documents WHERE collection=? AND key=?').get(collection, String(key));
     return row ? JSON.parse(row.data) : undefined;
   }
+  wakeAfterCommit(recipient) {
+    if (this.pendingRecipients) this.pendingRecipients.add(recipient);
+    else this.onEmit?.([recipient]);
+  }
   put(collection, key, value) {
     const data = this.externalize(value);
     const indexes = this.indexes(collection, data);

@@ -58,6 +58,10 @@ export class MobileAccess {
     const saved = this.store.put('ownerMessages', message.id, message);
     this.onMessage(actor,message.at);
     if (direction === 'human') this.store.emit([who], 'owner.message', this.messageActions.view(saved), message.at);
+    else {
+      const humanId = this.messageActions.owner(who);
+      if (humanId) this.store.wakeAfterCommit('owner-notices:' + humanId);
+    }
     return { id: message.id };
   }
   ownsGame(game, who) {

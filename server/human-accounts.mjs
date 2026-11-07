@@ -152,7 +152,12 @@ export class HumanAccounts {
       this.store.statement("UPDATE documents SET owner=?,data=json_set(data,'$.author',?) WHERE collection='capsules' AND owner=?").run(p.humanId,p.humanId,previous);
       this.store.statement("DELETE FROM documents WHERE collection='humanSessions' AND owner=?").run(previous);
     }
-    this.store.put('botOwners', bot.botId, { botId: bot.botId, humanId: p.humanId });
+    const link = this.store.get('botOwners', bot.botId);
+    const noticeCursor = previous === p.humanId ? link?.noticeCursor : this.store.statement(
+      "SELECT max(rowid) AS cursor FROM documents WHERE collection='ownerMessages' AND owner=? AND kind='bot'"
+    ).get(bot.botId).cursor ?? 0;
+    this.store.put('botOwners', bot.botId, { botId: bot.botId, humanId: p.humanId, noticeCursor });
+    this.store.wakeAfterCommit('owner-notices:' + p.humanId);
     this.revokeLegacy(p.humanId);
     return { ...this.info(p.humanId), boundBotId: bot.botId };
   }

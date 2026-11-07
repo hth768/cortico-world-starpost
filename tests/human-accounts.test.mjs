@@ -38,6 +38,49 @@ async function fixture() {
   return { directory, app, mails, keys, post, rpc, bot, sendCode, register, claim, base, advance(ms) { now += ms; }, async close() { await app.close(); rmSync(directory, { recursive: true, force: true }); } };
 }
 
+test('通知只读取已绑定 bot 的新专属消息，等待提交后返回，多设备重连及退出会话各自校验', async () => {
+  const f = await fixture();
+  try {
+    const owner = await f.claim('10001','notice@example.com');
+    const other = await f.claim('10003','other-notice@example.com');
+    const notices = args => f.rpc(owner.accessToken, 'owner.notifications', args);
+    await f.bot('10002','owner.send',{text:'绑定之前的消息'});
+    await f.bot('10001','owner.send',{text:'开启提醒前的旧消息'});
+    const initial = (await notices({})).result;
+    assert.deepEqual(initial.items, []);
+    assert.deepEqual(Object.keys(initial.cursors), ['10001']);
+    await f.rpc(owner.accessToken,'owner.address',{address:'主人'});
+    await f.rpc(owner.accessToken,'owner.send',{text:'自己发出的消息'});
+    await f.bot('10003','owner.send',{text:'其他人的消息'});
+    assert.deepEqual((await notices({cursors:{...initial.cursors,'10003':0}})).result,initial);
+    await f.rpc(owner.accessToken, 'account.bind', { botId:'10002', credential:f.keys['10002'] });
+    const expanded = (await notices({cursors:initial.cursors})).result;
+    assert.deepEqual(expanded.items, []);
+    const pending = notices({ cursors:expanded.cursors,waitMs:5000 });
+    await new Promise(resolve=>setTimeout(resolve,80));
+    assert.equal((await f.bot('10002','owner.send',{text:'第二个 bot 的回复'})).ok,true);
+    const start = Date.now(), page = (await pending).result;
+    assert(Date.now()-start<2500,'新消息应立即结束等待');
+    assert.deepEqual(page.items.map(i=>[i.botId,i.preview]),[['10002','第二个 bot 的回复']]);
+    assert.deepEqual((await notices({cursors:initial.cursors})).result.items, page.items, '断网期间新绑定 bot 的第一条回复也应补到');
+    assert.deepEqual((await notices({cursors:page.cursors})).result.items,[]);
+    assert.deepEqual((await f.rpc(other.accessToken,'owner.notifications',{cursors:initial.cursors})).result.items,[]);
+    const lost = await f.bot('10001','owner.send',{text:'已撤回的消息'});
+    await f.bot('10001','message.recall',{kind:'owner',target:'10001',messageId:lost.result.id});
+    assert.deepEqual((await notices({cursors:page.cursors})).result.items,[]);
+    const picture={mime:'image/png',base64:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lX8AAAAASUVORK5CYII='};
+    assert.equal((await f.bot('10001','owner.send',{image:picture})).ok,true);
+    const imagePage=(await notices({cursors:page.cursors})).result;
+    assert.equal(imagePage.items[0].preview,'[图片]');
+    assert(!JSON.stringify(imagePage).includes('base64'));
+    const revoked = notices({cursors:imagePage.cursors,waitMs:2000});
+    await new Promise(resolve=>setTimeout(resolve,80));
+    await f.rpc(owner.accessToken,'logout');
+    await f.bot('10002','owner.send',{text:'退出之后'});
+    assert.equal((await revoked).status,401);
+  } finally { await f.close(); }
+});
+
 test('主人专属发言重置对应私聊静默时间，连发限制与专属回复入口仍有效', async () => {
   const f=await fixture();try{
     const owner=await f.claim('10001','owner-reply@example.com');

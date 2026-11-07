@@ -146,11 +146,13 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
   };
   const waiters = new Map();
   let waitingPolls = 0;
+  let waitingOwnerPolls = 0;
   function waitForEvents(who, res, waitMs) {
     const group = waiters.get(who) ?? new Set();
-    if (waitingPolls >= 512 || group.size >= 2) fail('同时等待的连接过多，请稍后重试', 429);
+    const ownerNotice = who.startsWith('owner-notices:');
+    if ((ownerNotice ? waitingOwnerPolls : waitingPolls) >= 512 || group.size >= (ownerNotice ? 5 : 2)) fail('同时等待的连接过多，请稍后重试', 429);
     waiters.set(who, group);
-    waitingPolls++;
+    if (ownerNotice) waitingOwnerPolls++; else waitingPolls++;
     return new Promise(resolveWait => {
       let timer;
       let finished = false;
@@ -161,7 +163,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         res.off('close', done);
         group.delete(done);
         if (!group.size) waiters.delete(who);
-        waitingPolls--;
+        if (ownerNotice) waitingOwnerPolls--; else waitingPolls--;
         resolveWait();
       };
       group.add(done);
@@ -853,7 +855,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       if (req.method === 'GET' && req.url === '/metrics') {
         if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)) fail('仅允许本机读取指标', 403);
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-        res.end(JSON.stringify(metrics.snapshot(store, waitingPolls))); return;
+        res.end(JSON.stringify(metrics.snapshot(store, waitingPolls + waitingOwnerPolls))); return;
       }
       if (req.method === 'GET' && req.url?.startsWith('/media/')) {
         const match = /^\/media\/([1-9]\d*)$/.exec(req.url);
@@ -923,6 +925,23 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       }
       if (req.url === '/mobile/login' || req.url === '/mobile/rpc') {
         const input = JSON.parse(raw);
+        if (req.url === '/mobile/rpc' && input.action === 'owner.notifications') {
+          let humanId;
+          const read = () => store.transaction(() => {
+            const session = access.authenticate(req.headers.authorization);
+            humanId = session.owner;
+            return access.call(session, input.action, input.args ?? {});
+          });
+          let result = read();
+          const wait = number(input.args?.waitMs, 0, 0, 25000);
+          if (wait && !result.items.length && Object.keys(result.cursors).every(id => Object.hasOwn(input.args?.cursors ?? {}, id))) {
+            await waitForEvents('owner-notices:' + humanId, res, wait);
+            if (res.destroyed) return;
+            result = read();
+          }
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+          res.end(JSON.stringify({ ok: true, result })); return;
+        }
         const result = store.transaction(() => req.url === '/mobile/login'
           ? access.signIn(input, remote)
           : access.call(access.authenticate(req.headers.authorization), input.action, privacy.decode(input.args ?? {},input.action)));
