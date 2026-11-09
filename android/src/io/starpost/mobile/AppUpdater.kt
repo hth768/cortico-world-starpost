@@ -31,12 +31,19 @@ internal class UpdateController(
     private var downloadId=0L
     private var generation=0
     private var cancelling=false
+    private var lastCheck:Long?=null
+    private var retryAfterFailure=false
+    private fun muted()=prefs.getString("ignoredDay",null)==updateDay(now())
 
     fun foreground(active:Boolean) {
         foregroundJob?.cancel(); foregroundJob=null
         if(active) foregroundJob=scope.launch {
             restore()
-            while(isActive){check();delay(60_000)}
+            var entry=true
+            while(isActive){
+                check(entry);entry=false
+                delay(minOf(60_000L,untilUpdateMidnight(now())))
+            }
         }
     }
     private suspend fun restore() {
@@ -53,27 +60,40 @@ internal class UpdateController(
             monitor(release)
         }
     }
-    fun check(manual:Boolean=false) {
-        if(state.value.stage in listOf(UpdateStage.DOWNLOADING,UpdateStage.VERIFYING,UpdateStage.READY)) {
-            if(manual)mutable.value=state.value.copy(visible=true)
-            return
+    fun check(entry:Boolean=false) {
+        if(muted())return
+        val stamp=now()
+        val expiredSnooze=prefs.contains("ignoredDay")
+        if(expiredSnooze)prefs.edit().remove("ignoredDay").apply()
+        val displayed=state.value
+        when(displayed.stage){
+            UpdateStage.READY -> {
+                if(entry || expiredSnooze)mutable.value=displayed.copy(visible=true)
+                return
+            }
+            UpdateStage.DOWNLOADING,UpdateStage.VERIFYING -> return
+            UpdateStage.ERROR -> if(displayed.visible && displayed.release!=null)return // User can retry this download.
+            else -> Unit
         }
-        if(checking?.isActive==true) { if(manual)mutable.value=state.value.copy(visible=true);return }
-        if(!checkUpdateAllowed(now(),prefs.getLong("lastCheck",0),prefs.getString("ignoredDay","")!!,manual))return
-        // Persist an attempt time as well: network failures must not cause a retry on every resume.
-        prefs.edit().putLong("lastCheck",now()).apply()
-        mutable.value=AppUpdateState(UpdateStage.CHECKING,visible=manual)
+        if(checking?.isActive==true)return
+        val interval=when { retryAfterFailure -> 5*60_000L; entry -> 60_000L; else -> 15*60_000L }
+        if(!expiredSnooze && lastCheck?.let{updateDay(it)==updateDay(stamp) && stamp-it in 0 until interval}==true)return
+        lastCheck=stamp
+        if(!displayed.visible)mutable.value=AppUpdateState(UpdateStage.CHECKING)
         checking=scope.launch {
             try {
                 val latest=withContext(io){backend.latest()}
-                val visible=manual||state.value.visible
+                retryAfterFailure=false
                 mutable.value=when {
-                    latest.code<=currentCode -> AppUpdateState(UpdateStage.CURRENT,visible=visible,message="当前已是最新版本")
-                    latest.minSdk>sdk -> AppUpdateState(UpdateStage.ERROR,visible=visible,message="新版需要 Android API ${latest.minSdk} 及以上，当前版本仍可继续使用")
-                    else -> AppUpdateState(UpdateStage.AVAILABLE,latest,visible=visible||prefs.getString("ignoredDay","")!=updateDay(now()))
+                    latest.code<=currentCode -> AppUpdateState(UpdateStage.CURRENT)
+                    latest.minSdk>sdk -> AppUpdateState(UpdateStage.IDLE)
+                    else -> AppUpdateState(UpdateStage.AVAILABLE,latest,visible=!muted())
                 }
             } catch(cancel:CancellationException){throw cancel}
-            catch(error:Exception){mutable.value=AppUpdateState(UpdateStage.ERROR,visible=state.value.visible,message=error.message?:"检查更新失败，请稍后重试")}
+            catch(error:Exception){
+                retryAfterFailure=true
+                if(!state.value.visible)mutable.value=AppUpdateState()
+            }
         }
     }
     fun ignoreToday() {
@@ -120,7 +140,7 @@ internal class UpdateController(
                 DownloadManager.STATUS_SUCCESSFUL -> {
                     mutable.value=state.value.copy(stage=UpdateStage.VERIFYING,message="正在校验安装包")
                     withContext(io){backend.verify(release)}
-                    if(ticket==generation)mutable.value=state.value.copy(stage=UpdateStage.READY,progress=1f,message="下载完成，可以安装",autoInstall=prefs.getBoolean("autoInstall",false))
+                    if(ticket==generation)mutable.value=state.value.copy(stage=UpdateStage.READY,progress=1f,message="安装包已校验",autoInstall=!muted() && prefs.getBoolean("autoInstall",false))
                     return
                 }
                 DownloadManager.STATUS_FAILED -> error(when(row.reason) {
@@ -155,16 +175,20 @@ internal class UpdateController(
         prefs.edit().putBoolean("autoInstall",false).apply()
         mutable.value=state.value.copy(autoInstall=false)
     }
-    fun installWhenReady(){prefs.edit().putBoolean("autoInstall",true).apply();mutable.value=state.value.copy(autoInstall=true)}
+    fun installWhenReady(){if(!muted()){prefs.edit().putBoolean("autoInstall",true).apply();mutable.value=state.value.copy(autoInstall=true)}}
     suspend fun prepareInstall():File? {
         if(state.value.stage!=UpdateStage.READY)return null
         consumeAutoInstall()
-        return try {withContext(io){backend.verify(requireNotNull(state.value.release))}}
+        return try {withContext(io){backend.verify(requireNotNull(state.value.release))}.takeUnless{muted()}}
         catch(cancel:CancellationException){throw cancel}
         catch(error:Exception){fail(error);null}
     }
     fun installerOpened(){mutable.value=state.value.copy(visible=false,autoInstall=false)}
-    fun installProblem(message:String){consumeAutoInstall();mutable.value=state.value.copy(visible=true,message=message)}
+    fun installerReturned(){
+        if(state.value.stage==UpdateStage.READY && !muted())
+            mutable.value=state.value.copy(visible=true,autoInstall=false,message="安装包已保留，可以继续安装。")
+    }
+    fun installProblem(message:String){consumeAutoInstall();mutable.value=state.value.copy(visible=!muted(),message=message)}
 }
 
 internal class AppUpdater(application:Application):AndroidViewModel(application) {

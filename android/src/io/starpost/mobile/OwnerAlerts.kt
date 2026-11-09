@@ -20,6 +20,7 @@ internal class OwnerAlerts(private val context: Context) {
         const val SERVICE_CHANNEL = "owner-connection"
         const val MESSAGE_CHANNEL = "owner-replies"
         const val OPEN = "io.starpost.mobile.OPEN_OWNER"
+        const val OPEN_CHAT = "io.starpost.mobile.OPEN_CHAT"
         const val SERVICE_ID = 7410
         var visibleBot: String? = null
         var refreshVisible: (() -> Unit)? = null
@@ -32,7 +33,7 @@ internal class OwnerAlerts(private val context: Context) {
 
     fun channels() {
         manager.createNotificationChannel(NotificationChannel(SERVICE_CHANNEL, "星邮后台连接", NotificationManager.IMPORTANCE_LOW))
-        manager.createNotificationChannel(NotificationChannel(MESSAGE_CHANNEL, "我的 bot 新消息", NotificationManager.IMPORTANCE_HIGH))
+        manager.createNotificationChannel(NotificationChannel(MESSAGE_CHANNEL, "聊天新消息", NotificationManager.IMPORTANCE_HIGH))
     }
     fun permitted() = manager.areNotificationsEnabled() &&
         manager.getNotificationChannel(MESSAGE_CHANNEL)?.importance != NotificationManager.IMPORTANCE_NONE
@@ -40,11 +41,11 @@ internal class OwnerAlerts(private val context: Context) {
     fun matches(id: String, token: String) = id == subscription && token.isNotEmpty() &&
         fingerprint(token) == prefs.getString("session", null)
 
-    fun enable(token: String, cursors: JSONObject) {
+    fun enable(token: String, cursors: JSONObject, chatCursor:Long?=null) {
         channels()
-        check(permitted()) { "请在系统设置中允许「我的 bot 新消息」通知" }
+        check(permitted()) { "请在系统设置中允许「聊天新消息」通知" }
         prefs.edit().putString("session", fingerprint(token)).putString("subscription", UUID.randomUUID().toString())
-            .putString("cursors", cursors.toString()).commit()
+            .putString("cursors", cursors.toString()).putLong("chatCursor",chatCursor?:-1).commit()
         try { resume() } catch (e: Exception) { disable(); throw e }
     }
     fun resume() {
@@ -54,11 +55,14 @@ internal class OwnerAlerts(private val context: Context) {
         manager.activeNotifications.filter { it.notification.channelId == MESSAGE_CHANNEL }.forEach { manager.cancel(it.tag, it.id) }
     }
     fun disable() {
-        prefs.edit().remove("subscription").remove("session").remove("cursors").commit()
+        prefs.edit().remove("subscription").remove("session").remove("cursors").remove("chatCursor").commit()
         clearMessages()
         context.stopService(Intent(context, OwnerNoticeService::class.java))
     }
     fun cursors() = JSONObject(prefs.getString("cursors", "{}") ?: "{}")
+    fun pollArgs()=obj("includeChats" to true,"cursors" to cursors(),"waitMs" to 25000).apply{
+        val cursor=prefs.getLong("chatCursor",-1);if(cursor>=0)put("chatCursor",cursor)
+    }
     fun seen(bot: String, cursor: Long) {
         if (subscription == null || bot.isEmpty()) return
         manager.cancel(bot, 1)
@@ -81,6 +85,27 @@ internal class OwnerAlerts(private val context: Context) {
     // Notification id and channel are scoped to a bot. A retry replaces its existing row.
     fun deliver(id: String, batch: JSONObject) {
         if (subscription != id || !permitted()) return
+        if(batch.has("cursor")){
+            val after=prefs.getLong("chatCursor",-1)
+            for(item in batch.rows("items")){
+                if(item.getLong("cursor")<=after)continue
+                val kind=item.str("kind");val target=item.str("target")
+                if(kind !in setOf("group","private","owner")||target.isBlank())continue
+                val tap=Intent(context,MainActivity::class.java).setAction(OPEN_CHAT)
+                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    .setData(Uri.Builder().scheme("starpost").authority("chat").appendPath(id).appendPath(kind).appendPath(target).build())
+                val pending=PendingIntent.getActivity(context,0,tap,PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+                val hidden=Notification.Builder(context,MESSAGE_CHANNEL).setSmallIcon(R.drawable.ic_owner_notice)
+                    .setContentTitle("星邮").setContentText("收到新的聊天消息").build()
+                val message=Notification.Builder(context,MESSAGE_CHANNEL).setSmallIcon(R.drawable.ic_owner_notice)
+                    .setContentTitle(item.str("title")).setContentText(item.str("preview"))
+                    .setCategory(Notification.CATEGORY_MESSAGE).setVisibility(Notification.VISIBILITY_PRIVATE)
+                    .setPublicVersion(hidden).setAutoCancel(true).setContentIntent(pending).build()
+                manager.notify("$kind:$target",1,message)
+            }
+            prefs.edit().putLong("chatCursor",maxOf(after,batch.getLong("cursor"))).apply()
+            return
+        }
         val previous = cursors()
         val next = batch.getJSONObject("cursors")
         previous.keys().forEach { bot ->
@@ -110,7 +135,7 @@ class OwnerNoticeService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         alerts.channels()
-        startForeground(OwnerAlerts.SERVICE_ID, alerts.connection("正在接收我的 bot 消息"))
+        startForeground(OwnerAlerts.SERVICE_ID, alerts.connection("正在接收聊天消息"))
         val subscription = alerts.subscription
         if (subscription == null || !alerts.permitted()) { alerts.disable(); stopSelf(); return START_NOT_STICKY }
         if (job?.isActive != true) job = scope.launch { listen(subscription) }
@@ -130,7 +155,7 @@ class OwnerNoticeService : Service() {
             if (alerts.subscription != subscription) return
             if (saved == null || !alerts.matches(subscription, saved.str("token")) ||
                 saved.optLong("expiresAt") <= System.currentTimeMillis() || !alerts.permitted()) { alerts.disable(); return }
-            val args = obj("cursors" to alerts.cursors(), "waitMs" to 25000)
+            val args = alerts.pollArgs()
             val body = obj("action" to "owner.notifications", "args" to args)
             try {
                 val reply = withContext(Dispatchers.IO) {
@@ -142,7 +167,7 @@ class OwnerNoticeService : Service() {
                 }
                 if (alerts.subscription != subscription) return
                 alerts.deliver(subscription, reply)
-                showStatus("正在接收我的 bot 消息")
+                showStatus("正在接收聊天消息")
                 retry = 2000L
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {

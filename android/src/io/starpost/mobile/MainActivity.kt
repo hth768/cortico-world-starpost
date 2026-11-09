@@ -11,7 +11,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 class MainActivity: ComponentActivity() {
@@ -47,18 +46,18 @@ class MainActivity: ComponentActivity() {
         setContent {
             val state by client.state.collectAsStateWithLifecycle()
             StarpostTheme(state.theme,state.dynamicColor) {
-                CompositionLocalProvider(LocalAppUpdater provides updater.controller) {
-                    StarpostApp(client,state)
-                    AppUpdateHost(updater.controller)
-                }
+                StarpostApp(client,state)
+                AppUpdateHost(updater.controller)
             }
         }
     }
     private fun openNoticeIfReady(state: ClientState) {
-        if (intent?.action != OwnerAlerts.OPEN || state.starting || state.working || state.account.str("humanId").isEmpty()) return
+        val action=intent?.action
+        if (action !in listOf(OwnerAlerts.OPEN,OwnerAlerts.OPEN_CHAT) || state.starting || state.working || state.account.str("humanId").isEmpty()) return
         val path = intent.data?.pathSegments
         setIntent(Intent(this, MainActivity::class.java))
-        if (path?.size == 2) client.openOwnerAlert(path[0], path[1])
+        if (action==OwnerAlerts.OPEN && path?.size == 2) client.openOwnerAlert(path[0], path[1])
+        if (action==OwnerAlerts.OPEN_CHAT && path?.size == 3) client.openChatAlert(path[0],path[1],path[2])
     }
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -66,5 +65,6 @@ class MainActivity: ComponentActivity() {
         openNoticeIfReady(client.state.value)
     }
     override fun onStart(){super.onStart();client.foreground(true);updater.controller.foreground(true)}
+    override fun onResume(){super.onResume();UpdateRestart.visible(this)}
     override fun onStop(){client.foreground(false);updater.controller.foreground(false);super.onStop()}
 }

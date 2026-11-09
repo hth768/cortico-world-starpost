@@ -40,9 +40,10 @@ internal data class AndroidRelease(val code:Long, val name:String, val minSdk:In
     }
 }
 
-internal fun updateDay(at:Long):String = Instant.ofEpochMilli(at).atZone(ZoneId.of("Asia/Shanghai")).toLocalDate().toString()
-internal fun checkUpdateAllowed(now:Long,last:Long,ignoredDay:String,manual:Boolean):Boolean =
-    manual || (ignoredDay!=updateDay(now) && (last==0L || now<last || now-last>=6*60*60*1000L))
+private val beijing=ZoneId.of("Asia/Shanghai")
+internal fun updateDay(at:Long):String = Instant.ofEpochMilli(at).atZone(beijing).toLocalDate().toString()
+internal fun untilUpdateMidnight(at:Long):Long = Instant.ofEpochMilli(at).atZone(beijing).toLocalDate()
+    .plusDays(1).atStartOfDay(beijing).toInstant().toEpochMilli()-at
 
 internal fun verifyUpdateIdentity(release:AndroidRelease, packageName:String?, code:Long, name:String?, currentCode:Long, installedSigners:Set<String>, archiveSigners:Set<String>) {
     require(packageName==BuildConfig.APPLICATION_ID && code==release.code && name==release.name && code>currentCode) { "安装包版本或包名不匹配" }

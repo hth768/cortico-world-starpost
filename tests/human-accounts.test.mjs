@@ -81,6 +81,43 @@ test('通知只读取已绑定 bot 的新专属消息，等待提交后返回，
   } finally { await f.close(); }
 });
 
+test('聊天通知逐条隔离私聊、群聊与专属频道；免打扰只放行真实的个人 @',async()=>{
+  const f=await fixture();
+  try{
+    const a=await f.claim('10001','chat-a@example.com'),b=await f.register('chat-b@example.com'),c=await f.register('chat-c@example.com');
+    const call=async(user,action,args)=>{const r=await f.rpc(user.accessToken,action,args);assert.equal(r.ok,true,r.error);return r.result};
+    f.app.store.befriend(a.humanId,b.humanId);f.app.store.befriend(b.humanId,c.humanId);
+    const {id:g}=await call(b,'social.group.create',{name:'群通知测试',members:[a.humanId,c.humanId]});
+    const notice=(user,cursor,waitMs=0)=>call(user,'owner.notifications',{includeChats:true,chatCursor:cursor,waitMs});
+    const set=(kind,target,flags)=>call(a,'chat.preferences',{kind,target,...flags});
+    const send=(kind,target,text,extra={})=>call(b,'social.message.send',{kind,target,text,...extra});
+    const start=(await notice(a)).cursor;
+    await set('group',g,{muted:true,pinned:true});
+    const group=(await call(a,'social.overview')).conversations.find(x=>x.target===g);
+    assert.equal(group.pinned,true);assert.equal(group.muted,true);
+    assert.equal((await call(b,'social.history',{kind:'group',target:g})).preferences.muted,false);
+    const pending=notice(a,start,4000);
+    await send('group',g,'假的 @相同昵称');await send('group',g,'只点别人',{mentions:[c.humanId]});
+    await send('group',g,'全体',{mentionAll:true});await send('group',g,'点你',{mentions:[a.humanId]});
+    const first=await pending;assert.deepEqual(first.items.map(x=>[x.kind,x.target,x.mentioned]),[['group',g,true]]);
+    const early=await send('private',a.humanId,'随后撤回');
+    await call(b,'social.message.recall',{kind:'private',target:a.humanId,messageId:early.id});
+    await send('private',a.humanId,'第一条');await send('private',a.humanId,'第二条');
+    await call(a,'social.message.send',{kind:'private',target:b.humanId,text:'自己的回复'});
+    await f.bot('10001','owner.send',{text:'专属消息'});
+    f.app.store.befriend('10001','10002');await f.bot('10002','message.send',{kind:'private',target:'10001',text:'旁观的 bot 私聊'});
+    const second=await notice(a,first.cursor);
+    assert.deepEqual(second.items.map(x=>[x.kind,x.preview]),[['private','第一条'],['private','第二条'],['owner','专属消息']]);
+    assert.deepEqual((await notice(a,second.cursor)).items,[]);
+    await set('owner','10001',{muted:true});await f.bot('10001','owner.send',{text:'专属频道静音'});
+    await set('private',b.humanId,{muted:true});await send('private',a.humanId,'普通私聊静音');
+    assert.deepEqual((await notice(a,second.cursor)).items,[]);
+    assert.equal((await f.rpc(c.accessToken,'chat.preferences',{kind:'owner',target:'10001',muted:true})).status,403);
+    await set('group',g,{muted:false});await send('group',g,'重新开启');assert.equal((await notice(a,second.cursor)).items.length,1);
+    await call(a,'social.group.leave',{groupId:g});assert.deepEqual((await notice(a,second.cursor)).items,[]);
+  }finally{await f.close()}
+});
+
 test('主人专属发言重置对应私聊静默时间，连发限制与专属回复入口仍有效', async () => {
   const f=await fixture();try{
     const owner=await f.claim('10001','owner-reply@example.com');

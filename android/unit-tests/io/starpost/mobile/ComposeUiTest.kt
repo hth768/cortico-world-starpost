@@ -28,6 +28,17 @@ import java.io.File
 @Config(sdk=[35],qualifiers="w412dp-h892dp-xhdpi")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ComposeUiTest {
+    @Test fun chatMenuExposesDistinctGroupAndPrivateActions(){
+        val ui=UiActions(client())
+        val route=mutableStateOf(Route("socialHistory","10002H"))
+        compose.setContent{StarpostTheme("light",false){ChatMenu(ui,ClientState(account=account,route=route.value,data=obj("preferences" to obj("pinned" to true,"muted" to false))))}}
+        compose.onNodeWithContentDescription("聊天设置").performClick()
+        compose.onNodeWithText("取消置顶").assertExists();compose.onNodeWithText("开启消息免打扰").assertExists()
+        compose.onNodeWithText("举报账号").assertExists();compose.onNodeWithText("拉黑账号").assertExists()
+        compose.runOnIdle{route.value=Route("socialHistory","room","group")}
+        compose.onNodeWithContentDescription("聊天设置").performClick()
+        compose.onNodeWithText("拉黑账号").assertDoesNotExist();compose.onNodeWithText("邀请好友").assertExists();compose.onNodeWithText("退出群聊").assertExists()
+    }
     @get:Rule val compose=createComposeRule()
     private fun client()=StarpostClient(ApplicationProvider.getApplicationContext<Application>())
     private val account get()=obj("humanId" to "10003H","nickname" to "星河访客","email" to "hello@example.com","botId" to "10001","bots" to JSONArray().put(obj("botId" to "10001","nickname" to "陈玥汐")))
@@ -105,13 +116,41 @@ class ComposeUiTest {
         val state=mutableStateOf(ClientState(starting=false,signedIn=true,account=account,route=Route("game","watch-room"),data=obj("game" to game,"messages" to messages)))
         compose.setContent{StarpostTheme(if(dark.value)"dark" else "light",false){WatchGame(UiActions(vm),state.value)}}
         compose.onNodeWithText("1号 · 星河").assertExists();compose.onNodeWithText("10001").assertDoesNotExist()
-        compose.onNodeWithText("私密",useUnmergedTree=true).performClick();compose.onNodeWithText("查验结果").assertExists();compose.onNodeWithText("1号 · 星河").assertDoesNotExist()
+        compose.onNodeWithText("搜索本页昵称或内容").assertDoesNotExist()
+        compose.onNodeWithText("筛选").performClick()
+        compose.onNodeWithText("私密",useUnmergedTree=true).performClick();compose.onNodeWithText("查看 1 条记录").performClick()
+        compose.onNodeWithText("查验结果").assertExists();compose.onNodeWithText("1号 · 星河").assertDoesNotExist()
+        compose.onNodeWithText("筛选 (1)").performClick()
         compose.onNodeWithText("全部",useUnmergedTree=true).performClick();compose.onNodeWithText("搜索本页昵称或内容").performTextInput("星河")
+        compose.onNodeWithText("查看 1 条记录").performClick()
         compose.runOnIdle{state.value=state.value.copy(data=obj("game" to game,"messages" to messages,"serverNow" to "2026-11-04T06:32:00Z"));dark.value=true}
         compose.onNodeWithText("1号 · 星河").assertExists();compose.onNodeWithText("查验结果").assertDoesNotExist();shot("android-watch-timeline-dark")
         compose.onNodeWithText("玩家牌桌",useUnmergedTree=true).performClick();compose.onNodeWithText("狼人",useUnmergedTree=true).assertDoesNotExist()
         compose.onNodeWithText("显示身份").performClick();compose.onNodeWithText("狼人",useUnmergedTree=true).assertExists();compose.onNodeWithText("1号",useUnmergedTree=true).assertExists();shot("android-watch-board-dark")
         compose.runOnIdle{dark.value=false};shot("android-watch-board-light")
+    }
+    @Test fun longReplayScrollsOverviewOutAndKeepsControlsAndPaginationReachable() {
+        val vm = client()
+        val game = obj("title" to "天台的狼人杀", "status" to "day", "day" to 1, "viewLabel" to "我的 bot 对局 · 全知视角")
+        val messages = JSONArray().apply {
+            for (i in 1..50) put(obj("id" to "msg-$i", "sender" to "system", "kind" to "chat",
+                "display" to obj("round" to "第一天", "body" to "第 ${i} 条对局记录", "speaker" to "星邮法官")))
+        }
+        val s = ClientState(starting=false, signedIn=true, account=account, route=Route("game","long-replay"),
+            data=obj("game" to game, "messages" to messages, "nextBefore" to 51))
+        compose.setContent { StarpostTheme("light",false) { StarpostApp(vm,s) } }
+        compose.onNodeWithText("第 3 条对局记录").assertIsDisplayed()
+        compose.onNodeWithText("展开详情").performClick()
+        compose.onNodeWithText("收起详情").assertIsDisplayed()
+        val list = compose.onNode(hasScrollToIndexAction())
+        list.performTouchInput { swipeUp() }
+        compose.onNodeWithText("收起详情").assertIsNotDisplayed()
+        compose.onNodeWithContentDescription("返回").assertIsNotDisplayed()
+        compose.onNodeWithText("筛选").assertIsDisplayed()
+        list.performScrollToIndex(0)
+        compose.onNodeWithText("页尾").performClick()
+        compose.onNodeWithText("更早记录").assertIsDisplayed()
+        compose.onNodeWithText("第 50 条对局记录").assertIsDisplayed()
     }
     @Test fun capsuleComposerKeepsDraftAndSupportsCustomTimeAndThreePhotos(){
         val vm=client();val ready=mutableStateOf(false);val dark=mutableStateOf(false)
@@ -283,11 +322,13 @@ class ComposeUiTest {
         val social=obj("friendProfiles" to JSONArray().put(friend))
         val data=obj("messages" to JSONArray().put(obj("id" to "remark-message","sender" to "10005H","senderNickname" to "公开昵称","text" to "你好","at" to "2026-11-02T10:00:00Z")))
         compose.setContent{StarpostTheme("light",false){StarpostApp(vm,ClientState(starting=false,signedIn=true,account=account,social=social,data=data,route=Route("socialHistory","10005H")))}}
-        compose.onNodeWithText("修改备注名").assertExists()
+        compose.onNodeWithText("暂不开启").performClick()
         compose.onNodeWithText("私人备注").assertExists()
         compose.onNodeWithText("私",useUnmergedTree=true).performTouchInput{longClick()}
         compose.onNodeWithText("@公开昵称 ").assertExists()
         org.junit.Assert.assertEquals(listOf("10005H"),vm.mentionIds("@公开昵称 "))
+        compose.onNodeWithContentDescription("聊天设置").performClick()
+        compose.onNodeWithText("设置备注名").assertIsEnabled()
     }
     @Test fun avatarSingleDoubleAndLongPressDoNotTriggerEachOther() {
         var opened=0;var mentioned=0;var poked=0
@@ -391,15 +432,15 @@ class ComposeUiTest {
     @Test fun updateDialogOffersDownloadAndPersistentSnooze(){
         var updated=0;var ignored=0
         val release=AndroidRelease(BuildConfig.VERSION_CODE.toLong()+1,"1.3.1",26,5_000_000,"a".repeat(64),"${UPDATE_REPO}download/v0.21.0/starpost-android.apk","• 支持搜索自己并打开个人主页\n• 游戏成员可以邀请好友\n• 新增手机一键更新")
-        compose.setContent{StarpostTheme("light",false){AppUpdateDialog(AppUpdateState(UpdateStage.AVAILABLE,release,visible=true),{updated++},{ignored++},{},{},{})}}
+        compose.setContent{StarpostTheme("light",false){AppUpdateDialog(AppUpdateState(UpdateStage.AVAILABLE,release,visible=true),{updated++},{ignored++},{},{})}}
         compose.onNodeWithText("发现星邮新版本").assertExists()
-        compose.onNodeWithText("立即更新").performClick();compose.onNodeWithText("今日不提醒").performClick()
+        compose.onNodeWithText("立即更新").performClick();compose.onNodeWithText("今天不再提示").performClick()
         compose.runOnIdle{org.junit.Assert.assertEquals(1,updated);org.junit.Assert.assertEquals(1,ignored)}
         shot("android-update-light")
     }
     @Test fun updateDownloadShowsProgressAndCancel(){
         var canceled=false
-        compose.setContent{StarpostTheme("dark",false){AppUpdateDialog(AppUpdateState(UpdateStage.DOWNLOADING,visible=true,progress=0.42f,message="正在下载更新"),{},{},{},{canceled=true},{})}}
+        compose.setContent{StarpostTheme("dark",false){AppUpdateDialog(AppUpdateState(UpdateStage.DOWNLOADING,visible=true,progress=0.42f,message="正在下载更新"),{},{},{},{canceled=true})}}
         compose.onNodeWithText("42% · 可在后台继续下载，返回星邮后安装").assertExists()
         compose.onNodeWithText("后台下载").assertExists();compose.onNodeWithText("取消下载").performClick()
         compose.runOnIdle{org.junit.Assert.assertTrue(canceled)}
@@ -526,7 +567,8 @@ class ComposeUiTest {
     @Test fun mysteryViewerShowsProgressWithoutHumanActions(){
         val vm=client();val g=obj("title" to "午夜列车","gameType" to "mystery","status" to "active","phase" to "clues","seats" to JSONArray().put(obj("id" to "10002","nickname" to "小夏","number" to 1,"alive" to true)))
         compose.setContent{StarpostTheme("dark",false){StarpostApp(vm,ClientState(starting=false,signedIn=true,account=account,route=Route("game","mystery"),data=obj("game" to g,"messages" to JSONArray())))}}
-        compose.onNodeWithText("搜集线索").assertExists();compose.onNodeWithText("确认行动").assertDoesNotExist();compose.onNodeWithContentDescription("发送消息").assertDoesNotExist();compose.onNodeWithText("搜索本页昵称或内容").assertExists()
+        compose.onNodeWithText("搜集线索").assertExists();compose.onNodeWithText("确认行动").assertDoesNotExist();compose.onNodeWithContentDescription("发送消息").assertDoesNotExist()
+        compose.onNodeWithText("筛选").performClick();compose.onNodeWithText("搜索本页昵称或内容").assertExists()
         compose.onNodeWithText("狼人").assertDoesNotExist();compose.onNodeWithText("私密").assertExists()
         shot("android-mystery-arena")
     }

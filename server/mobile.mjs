@@ -1,4 +1,5 @@
 import { presentGamePage } from './game-presentation.mjs';
+import { enqueueChatNotice } from './chat-notices.mjs';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 const digest = value => createHash('sha256').update(value).digest('hex');
 const fail = (message, status = 400) => { const e = new Error(message); e.status = status; throw e; };
@@ -60,7 +61,7 @@ export class MobileAccess {
     if (direction === 'human') this.store.emit([who], 'owner.message', this.messageActions.view(saved), message.at);
     else {
       const humanId = this.messageActions.owner(who);
-      if (humanId) this.store.wakeAfterCommit('owner-notices:' + humanId);
+      if (humanId) {enqueueChatNotice(this.store,humanId,'owner',who,saved);this.store.wakeAfterCommit('owner-notices:' + humanId);}
     }
     return { id: message.id };
   }

@@ -14,6 +14,25 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class OwnerAlertsTest {
+    @Test fun socialPrivateGroupAndOwnerNotificationsKeepSeparateTapTargetsAndResumeWithoutRepeats(){
+        val app=ApplicationProvider.getApplicationContext<Application>();val alerts=OwnerAlerts(app)
+        val manager=app.getSystemService(NotificationManager::class.java);alerts.enable("chat-token",obj(),100)
+        val sub=alerts.subscription!!
+        val items=org.json.JSONArray().apply {listOf("private" to "10001","group" to "room-1","owner" to "10001").forEachIndexed{i,(kind,target)->
+            put(obj("kind" to kind,"target" to target,"title" to "朋友","cursor" to 101+i,"preview" to (if(kind=="group")"[有人 @ 你] 新消息" else "新消息")))} }
+        val batch=obj("cursor" to 103,"items" to items);alerts.deliver(sub,batch)
+        assertEquals(setOf("private:10001","owner:10001","group:room-1"),manager.activeNotifications.map{it.tag}.toSet())
+        for(n in manager.activeNotifications){
+            val tap=shadowOf(n.notification.contentIntent).savedIntent
+            assertEquals(OwnerAlerts.OPEN_CHAT,tap.action)
+            assertEquals(listOf(sub)+n.tag.split(":"),tap.data!!.pathSegments)
+            assertEquals("收到新的聊天消息",n.notification.publicVersion.extras.getString(Notification.EXTRA_TEXT))
+        }
+        assertEquals(NotificationManager.IMPORTANCE_HIGH,manager.getNotificationChannel(OwnerAlerts.MESSAGE_CHANNEL).importance)
+        alerts.clearMessages()
+        OwnerAlerts(app).deliver(sub,batch);assertTrue(manager.activeNotifications.isEmpty())
+        assertEquals(103L,OwnerAlerts(app).pollArgs().getLong("chatCursor"));alerts.disable()
+    }
     @Test fun repliesOpenTheirOwnChatHideLockScreenTextAndSurviveReconnect() {
         val app = ApplicationProvider.getApplicationContext<Application>()
         val alerts = OwnerAlerts(app)

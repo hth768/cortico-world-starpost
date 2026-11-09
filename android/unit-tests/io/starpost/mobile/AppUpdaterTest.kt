@@ -53,16 +53,18 @@ class AppUpdaterTest {
         assertThrows(Exception::class.java){verify(signers=setOf("other"))}
         assertThrows(Exception::class.java){verify(signers=emptySet())}
     }
-    @Test fun todaySuppressionSurvivesRestartAndManualCheckBypassesIt()=runTest {
+    @Test fun snoozeSurvivesRestartAndExpiresAtBeijingMidnightWhileOpen()=runTest {
         val backend=FakeBackend(release)
-        fun controller()=UpdateController(prefs,backend,this,{clock},11,35,StandardTestDispatcher(testScheduler))
-        val updater=controller();updater.check();runCurrent()
+        val beforeMidnight=Instant.parse("2026-11-02T15:59:58Z").toEpochMilli()
+        fun controller()=UpdateController(prefs,backend,this,{beforeMidnight+testScheduler.currentTime},11,35,StandardTestDispatcher(testScheduler))
+        val updater=controller();updater.foreground(true);runCurrent()
         assertTrue(updater.state.value.visible);assertEquals(1,backend.checks)
         updater.ignoreToday();assertFalse(updater.state.value.visible)
-        val restarted=controller();clock+=7*60*60*1000L // 03:00 Beijing next day, past the normal check interval.
-        restarted.check();runCurrent();assertTrue(restarted.state.value.visible)
-        restarted.ignoreToday();val again=controller();again.check();runCurrent();assertEquals(2,backend.checks)
-        again.check(true);runCurrent();assertEquals(3,backend.checks);assertTrue(again.state.value.visible)
+        updater.foreground(false)
+        val restarted=controller();restarted.foreground(true);runCurrent()
+        advanceTimeBy(1999);runCurrent();assertFalse(restarted.state.value.visible);assertEquals(1,backend.checks)
+        advanceTimeBy(1);runCurrent();assertTrue(restarted.state.value.visible);assertEquals(2,backend.checks)
+        restarted.foreground(false)
     }
     @Test fun autoCheckIsThrottledAndDoesNotInterruptWhenOfflineOrCurrent()=runTest {
         val backend=FakeBackend(release.copy(code=11))
@@ -71,7 +73,9 @@ class AppUpdaterTest {
         updater.check();runCurrent();assertEquals(1,backend.checks)
         backend.latestError=true;clock+=6*60*60*1000L
         updater.check();runCurrent();assertFalse(updater.state.value.visible)
-        updater.check(true);runCurrent();assertEquals("网络不可用",updater.state.value.message);assertTrue(updater.state.value.visible)
+        backend.latestError=false;backend.release=release
+        clock+=4*60_000;updater.check(true);runCurrent();assertFalse(updater.state.value.visible);assertEquals(2,backend.checks)
+        clock+=60_000;updater.check();runCurrent();assertTrue(updater.state.value.visible);assertEquals(3,backend.checks)
     }
     @Test fun downloadRequiresClickAndHandsOffOnlyAfterVerification()=runTest {
         val backend=FakeBackend(release)
@@ -84,7 +88,14 @@ class AppUpdaterTest {
         assertFalse(updater.state.value.autoInstall);assertFalse(prefs.getBoolean("autoInstall",true))
         assertEquals(2,backend.verifications) // Revalidate just before granting the URI.
         updater.installerOpened();assertFalse(updater.state.value.visible)
-        updater.check(true);assertTrue(updater.state.value.visible);assertFalse(updater.state.value.autoInstall)
+        updater.installerReturned();assertTrue(updater.state.value.visible);assertFalse(updater.state.value.autoInstall)
+        updater.ignoreToday();updater.foreground(true);runCurrent();assertFalse(updater.state.value.visible)
+        val next=UpdateController(prefs,backend,this,{clock},11,35,StandardTestDispatcher(testScheduler))
+        next.foreground(true);runCurrent();assertEquals(UpdateStage.READY,next.state.value.stage)
+        assertFalse(next.state.value.autoInstall);assertFalse(next.state.value.visible)
+        next.foreground(false);updater.foreground(false);clock+=86_400_000
+        next.foreground(true);runCurrent();assertTrue(next.state.value.visible);assertFalse(next.state.value.autoInstall)
+        next.foreground(false)
     }
     @Test fun badDownloadedApkCannotReachInstallerAndCanBeRetried()=runTest {
         val backend=FakeBackend(release).apply{corrupt=true}
@@ -122,6 +133,6 @@ class AppUpdaterTest {
         val backend=FakeBackend(release.copy(minSdk=36))
         val updater=UpdateController(prefs,backend,this,{clock},11,35,StandardTestDispatcher(testScheduler))
         updater.check(true);runCurrent();updater.download();runCurrent()
-        assertEquals(UpdateStage.ERROR,updater.state.value.stage);assertNull(updater.state.value.release);assertEquals(0,backend.starts)
+        assertFalse(updater.state.value.visible);assertNull(updater.state.value.release);assertEquals(0,backend.starts)
     }
 }

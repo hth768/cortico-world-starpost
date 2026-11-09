@@ -1,3 +1,4 @@
+import { enqueueChatNotice } from './chat-notices.mjs';
 import { GamePrivacy, gamePrivacy } from './game-privacy.mjs';
 import http from 'node:http';
 import { avatarImage } from './avatars.mjs';
@@ -690,13 +691,14 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
           if (store.count('messages', 'scope=? AND owner=? AND at>?', [scope, who, new Date(now - windowSec * 1000).toISOString()]) >= max) fail('群聊发言频率已达上限');
         }
         if (isHumanId(who) && store.count('messages', 'owner=? AND at>?', [who, new Date(now - 60000).toISOString()]) >= 30) fail('发送过快，每分钟最多 30 条', 429);
-        const m = { id: randomUUID(), kind, target, sender: who, senderType: isHumanId(who) ? 'human' : 'bot', senderNickname: profile(who).nickname, text, emoji, image: picture, ...content, mentions, at: new Date(now).toISOString() };
+        const m = { id: randomUUID(), kind, target, sender: who, senderType: isHumanId(who) ? 'human' : 'bot', senderNickname: profile(who).nickname, text, emoji, image: picture, ...content, mentions, ...(args.mentionAll?{mentionAll:true}:{}), at: new Date(now).toISOString() };
         const saved = store.put('messages', m.id, m);
         achievements.record(who,'message',now);
         const messageCursor = store.statement("SELECT rowid FROM documents WHERE collection='messages' AND key=?").get(m.id).rowid;
         const delivered = { ...messageActions.view(saved), cursor: messageCursor };
         if (!isHumanId(who)) quotas.record(who, quota);
         for (const recipient of g ? g.members.filter(x => x !== who) : [target]) {
+          enqueueChatNotice(store,recipient,kind,g?target:who,saved);
           if (store.get('gameBusy', recipient)) deferChat(recipient, delivered, saved.at);
           else emit([recipient], 'message', delivered);
         }
@@ -717,6 +719,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         const text=`${fromProfile.nickname||who}戳了戳${toProfile.nickname||to}${toProfile.pokeText||''}`;
         const m={id:randomUUID(),kind:g?'group':'private',target:g?g.id:to,sender:who,senderType:isHumanId(who)?'human':'bot',senderNickname:fromProfile.nickname,text,mentions:[],interaction:'poke',pokeTarget:to,at:new Date(now).toISOString()};
         const saved=store.put('messages',m.id,m);
+        for(const recipient of g?g.members:[to])enqueueChatNotice(store,recipient,m.kind,g?g.id:who,saved);
         const cursor=store.statement("SELECT rowid FROM documents WHERE collection='messages' AND key=?").get(m.id).rowid;
         if(store.get('gameBusy',to))deferChat(to,{...saved,cursor},m.at);
         else emit([to],'poke',{from:who,to,groupId,text,fromNickname:fromProfile.nickname,toNickname:toProfile.nickname});
@@ -934,7 +937,9 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
           });
           let result = read();
           const wait = number(input.args?.waitMs, 0, 0, 25000);
-          if (wait && !result.items.length && Object.keys(result.cursors).every(id => Object.hasOwn(input.args?.cursors ?? {}, id))) {
+          const caughtUp = result.cursor!==undefined ? result.cursor===input.args?.chatCursor :
+            Object.keys(result.cursors).every(id => Object.hasOwn(input.args?.cursors ?? {}, id));
+          if (wait && !result.items.length && caughtUp) {
             await waitForEvents('owner-notices:' + humanId, res, wait);
             if (res.destroyed) return;
             result = read();

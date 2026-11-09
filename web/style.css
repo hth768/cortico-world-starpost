@@ -87,3 +87,8 @@ input,textarea,select{color:var(--ink);background:var(--lowest);border:1px solid
 .account-title[data-title-fill=outline]{border-width:2px;box-shadow:none;border-radius:999px}
 .arena-seat .account-title{margin:3px 0;font-size:11px;padding:2px 4px;flex-shrink:1}
 .watch-message-head{flex-wrap:wrap}
+.chat-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.chat-heading .pane-title{margin-block:.4em;overflow-wrap:anywhere}
+.chat-more{flex:none;min-width:44px;font-size:1.4rem;line-height:1}
+.chat-options{display:grid;gap:8px;max-height:80dvh;overflow-y:auto}
+.chat-options>button{text-align:start}

@@ -103,8 +103,8 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
         mutable.update { it.copy(working = true) }
         viewModelScope.launch {
             try {
-                val baseline = rpc("owner.notifications")
-                if (epoch == sessionEpoch) ownerAlerts.enable(token, baseline.getJSONObject("cursors"))
+                val baseline = rpc("owner.notifications",obj("includeChats" to true))
+                if (epoch == sessionEpoch) ownerAlerts.enable(token,baseline.optJSONObject("cursors")?:obj(),baseline.optLong("cursor",-1))
             } catch (e: Exception) {
                 if (epoch == sessionEpoch) handle(e)
             } finally { mutable.update { it.copy(working = false) } }
@@ -116,6 +116,11 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
         if (!Regex("[0-9]{5,12}").matches(botId)) return
         if (state.value.account.str("botId") == botId) navigate(Route("owner"))
         else perform("account.select", obj("botId" to botId), Route("owner"))
+    }
+    fun openChatAlert(subscription:String,kind:String,target:String){
+        if(!ownerAlerts.matches(subscription,token)||state.value.activeGame.isNotEmpty())return
+        if(kind=="owner")openOwnerAlert(subscription,target)
+        else if(kind in listOf("group","private") && target.length in 1..100)navigate(Route("socialHistory",target,kind))
     }
 
     private fun expire() {
@@ -215,6 +220,10 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
         if(!background)mutable.update{it.copy(loading=true,error="")}
         try {
             val cursor=obj("before" to route.before)
+            if(route.page=="socialHistory" && state.value.social.length()==0){
+                val overview=rpc("social.overview");if(epoch!=sessionEpoch)return
+                mutable.update{it.copy(social=overview)}
+            }
             val result=when(route.page){
                 "social","contacts","groupCreate","invite"->rpc("social.overview").also { if(epoch==sessionEpoch)mutable.update { s->s.copy(social=it) } }
                 "socialHistory","blockedHistory"->rpc("social.history",obj("kind" to route.kind,"target" to route.id,"limit" to 30,"before" to route.before))

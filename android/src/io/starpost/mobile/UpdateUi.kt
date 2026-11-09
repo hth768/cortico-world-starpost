@@ -23,8 +23,6 @@ import androidx.lifecycle.compose.currentStateAsState
 import kotlinx.coroutines.launch
 import java.util.Locale
 
-internal val LocalAppUpdater=staticCompositionLocalOf<UpdateController?>{null}
-
 @Composable internal fun AppUpdateHost(updater:UpdateController) {
     val s by updater.state.collectAsStateWithLifecycle()
     val context=LocalContext.current
@@ -34,8 +32,9 @@ internal val LocalAppUpdater=staticCompositionLocalOf<UpdateController?>{null}
     var launching by remember{mutableStateOf(false)}
     var permissionPending by rememberSaveable{mutableStateOf(false)}
     val installer=rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        // Cancellation is normal. Keep the verified package for a later manual attempt, without reopening the installer.
         launching=false
+        if(it.resultCode==android.app.Activity.RESULT_CANCELED)UpdateRestart.cancel(context)
+        updater.installerReturned()
     }
     fun installVerified() {
         if(launching)return
@@ -46,11 +45,13 @@ internal val LocalAppUpdater=staticCompositionLocalOf<UpdateController?>{null}
             if(owner.lifecycle.currentState!=Lifecycle.State.RESUMED){launching=false;updater.installWhenReady();return@launch}
             try {
                 val uri=FileProvider.getUriForFile(context,"${context.packageName}.updates",apk)
+                check(UpdateRestart.expect(context,requireNotNull(updater.state.value.release).code))
                 installer.launch(Intent(Intent.ACTION_VIEW).setDataAndType(uri,APK_MIME)
+                    .putExtra(Intent.EXTRA_RETURN_RESULT,true)
                     .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     .apply{clipData=ClipData.newRawUri("星邮更新",uri)})
                 updater.installerOpened()
-            } catch(error:Exception) { launching=false;updater.installProblem("无法打开安装界面，请检查系统安装权限后重试") }
+            } catch(error:Exception) { UpdateRestart.cancel(context);launching=false;updater.installProblem("无法打开安装界面，请检查系统安装权限后重试") }
         }
     }
     val permission=rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
@@ -71,12 +72,12 @@ internal val LocalAppUpdater=staticCompositionLocalOf<UpdateController?>{null}
         if(s.autoInstall && s.stage==UpdateStage.READY && lifecycle==Lifecycle.State.RESUMED)requestInstall()
     }
     AppUpdateDialog(s,onUpdate={if(s.stage==UpdateStage.READY)requestInstall() else updater.download()},
-        onIgnore=updater::ignoreToday,onDismiss=updater::dismiss,onCancel=updater::cancelDownload,onCheck={updater.check(true)})
+        onIgnore=updater::ignoreToday,onDismiss=if(s.stage in listOf(UpdateStage.AVAILABLE,UpdateStage.READY))updater::ignoreToday else updater::dismiss,onCancel=updater::cancelDownload)
 }
 
 class StarpostUpdateProvider:FileProvider()
 
-@Composable internal fun AppUpdateDialog(s:AppUpdateState,onUpdate:()->Unit,onIgnore:()->Unit,onDismiss:()->Unit,onCancel:()->Unit,onCheck:()->Unit) {
+@Composable internal fun AppUpdateDialog(s:AppUpdateState,onUpdate:()->Unit,onIgnore:()->Unit,onDismiss:()->Unit,onCancel:()->Unit) {
     if(!s.visible)return
     val busy=s.stage in listOf(UpdateStage.DOWNLOADING,UpdateStage.VERIFYING)
     AlertDialog(
@@ -94,18 +95,18 @@ class StarpostUpdateProvider:FileProvider()
             }
             if(s.message.isNotBlank())Text(s.message,color=if(s.stage==UpdateStage.ERROR)MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
             if(s.stage==UpdateStage.DOWNLOADING)Text("${(s.progress*100).toInt()}% · 可在后台继续下载，返回星邮后安装")
-            if(s.stage in listOf(UpdateStage.AVAILABLE,UpdateStage.READY))Text("下载使用当前网络。首次安装可能需要允许星邮安装未知应用；最后请在系统界面确认安装。",style=MaterialTheme.typography.bodySmall)
+            if(s.stage in listOf(UpdateStage.AVAILABLE,UpdateStage.READY))Text("下载完成后会打开系统安装界面，请确认安装。选择今天不再提示，将在北京时间明天 0 点恢复提醒。",style=MaterialTheme.typography.bodySmall)
         }},
         confirmButton={when(s.stage){
             UpdateStage.AVAILABLE->TextButton(onClick=onUpdate){Text("立即更新")}
             UpdateStage.READY->TextButton(onClick=onUpdate){Text("继续安装")}
-            UpdateStage.ERROR->TextButton(onClick=if(s.release!=null)onUpdate else onCheck){Text("重试")}
+            UpdateStage.ERROR->TextButton(onClick=onUpdate){Text("重试下载")}
             else->TextButton(onClick=onDismiss){Text(if(busy)"后台下载" else "关闭")}
         }},
         dismissButton={when{
-            s.stage==UpdateStage.AVAILABLE->TextButton(onClick=onIgnore){Text("今日不提醒")}
+            s.stage in listOf(UpdateStage.AVAILABLE,UpdateStage.READY)->TextButton(onClick=onIgnore){Text("今天不再提示")}
             busy->TextButton(onClick=onCancel){Text("取消下载")}
-            s.stage in listOf(UpdateStage.READY,UpdateStage.ERROR)->TextButton(onClick=onDismiss){Text("稍后")}
+            s.stage==UpdateStage.ERROR->TextButton(onClick=onDismiss){Text("稍后")}
         }},
     )
 }

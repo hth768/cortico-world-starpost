@@ -11,6 +11,9 @@
     <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
       <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
     </activity>
+    <receiver android:name=".UpdateReplacedReceiver" android:exported="false">
+      <intent-filter><action android:name="android.intent.action.MY_PACKAGE_REPLACED" /></intent-filter>
+    </receiver>
     <service android:name=".OwnerNoticeService" android:exported="false" android:foregroundServiceType="specialUse">
       <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled persistent connection for incoming private companion messages from a self-hosted Starpost relay" />
     </service>

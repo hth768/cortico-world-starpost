@@ -1,5 +1,6 @@
 import { hashToken } from './email-auth.mjs';
 import { HumanCommunity } from './human-community.mjs';
+import { chatFlags, setChatFlags, readChatNotices } from './chat-notices.mjs';
 const fail = (text, status = 403) => { const error = new Error(text); error.status = status; throw error; };
 
 export class HumanAccess {
@@ -31,7 +32,7 @@ export class HumanAccess {
     if (action === 'account.info') {
       const botId = session.human ? session.selectedBotId : session.owner;
       const info=this.accounts.info(humanId);
-      return { ...info, safety:this.safety.status(humanId), bots:info.bots.map(p=>this.withRemark(humanId,p)), botId, address: botId ? this.store.get('mobileProfile', botId)?.address ?? '' : '', legacy: !session.human };
+      return { ...info, safety:this.safety.status(humanId), bots:info.bots.map(p=>({...this.withRemark(humanId,p),...chatFlags(this.store,humanId,"owner",p.botId)})), botId, address: botId ? this.store.get('mobileProfile', botId)?.address ?? '' : '', legacy: !session.human };
     }
     if (['capsule.create','capsule.list','capsule.read','capsule.delete','capsule.status'].includes(action)) return this.rpc(humanId, action, args);
     if (action === 'logout') { this.store.remove(session.human ? 'humanSessions' : 'mobileSessions', session.key); return { loggedOut: true }; }
@@ -41,7 +42,9 @@ export class HumanAccess {
       return this.mobile.call(session, action, args);
     }
     this.accounts.mustClaim(humanId);
+    if(action==='chat.preferences')return setChatFlags(this.store,humanId,args);
     if (action === 'owner.notifications') {
+      if(args.includeChats===true)return readChatNotices(this.store,humanId,args.chatCursor);
       const after = args.cursors === undefined ? {} : args.cursors;
       if (!after || typeof after !== 'object' || Array.isArray(after)) fail('通知游标不合法', 400);
       const cursors = {}, items = [];
@@ -61,7 +64,7 @@ export class HumanAccess {
           WHERE collection='ownerMessages' AND owner=? AND rowid>? AND kind='bot'
           AND json_extract(data,'$.recalled') IS NOT 1 ORDER BY rowid DESC LIMIT 1`).get(botId, cursor);
         cursors[botId] = row?.cursor ?? cursor;
-        if (row) items.push({ botId, cursor: row.cursor, nickname: this.contactRemark(humanId, botId) || nickname || botId,
+        if (row && !chatFlags(this.store,humanId,'owner',botId).muted) items.push({ botId, cursor: row.cursor, nickname: this.contactRemark(humanId, botId) || nickname || botId,
           preview: (row.text || row.emoji || (row.image ? '[图片]' : row.forwarded ? '[聊天记录]' : '新消息')).slice(0, 100) });
       }
       return { cursors, items };
@@ -99,8 +102,17 @@ export class HumanAccess {
     }
     if (action === 'account.approvals') return { items: this.social.status(humanId) };
     if (action === 'account.decide') return this.social.decide(humanId, args);
-    if (action === 'social.overview') { const value=this.snapshot(humanId,true,true);return {...value,friendProfiles:value.friendProfiles.map(p=>this.withRemark(humanId,p))}; }
-    if (action === 'social.history') return this.history(humanId, args);
+    if (action === 'social.overview') {
+      const value=this.snapshot(humanId,true,true);
+      const conversations=value.conversations.map(c=>({...c,...chatFlags(this.store,humanId,c.kind,c.target)}));
+      const ownerChats=this.accounts.bots(humanId).map(p=>{
+        const m=this.store.list('ownerMessages','owner=?',[p.botId],{limit:1,reverse:true})[0];
+        return {kind:'owner',target:p.botId,name:this.contactRemark(humanId,p.botId)||p.nickname||p.botId,...chatFlags(this.store,humanId,'owner',p.botId),
+          latest:m?{at:m.at,text:m.recalled?'该消息已撤回':m.text||(m.image?'[图片]':m.forward?'[聊天记录]':'')}:null};
+      });
+      return {...value,conversations,ownerChats,friendProfiles:value.friendProfiles.map(p=>this.withRemark(humanId,p))};
+    }
+    if (action === 'social.history') return {...this.history(humanId, args),preferences:chatFlags(this.store,humanId,args.kind,args.target)};
     if (action === 'social.search') return { items: this.rpc(humanId, 'directory.search', { ...args, limit: 50 }) };
     if (action === 'social.profile' || action === 'game.record') {
       const readAction=action==='game.record'?'game.record':'profile.read';
@@ -147,6 +159,7 @@ export class HumanAccess {
     // These actions are the existing read-only bot viewer and owner channel.
     // They never expose a bot's write RPC to a human session.
     const value=this.mobile.call({ owner: botId || humanId, key: session.key, humanViewer: true }, action, args);
+    if(action==='owner.history')return {...value,preferences:chatFlags(this.store,humanId,'owner',botId)};
     return action==='profile'&&(!args.section||args.section==='basic')?this.withRemark(humanId,value):value;
   }
 }

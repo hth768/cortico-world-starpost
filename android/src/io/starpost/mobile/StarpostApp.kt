@@ -54,6 +54,7 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
 
 @Composable internal fun StarpostApp(vm:StarpostClient,state:ClientState) {
     val ui=remember(vm){UiActions(vm)}
+    OfferChatAlerts(ui,state)
     LaunchedEffect(state.working,ui.pendingBoundBot,state.signedIn){
         if(!state.signedIn){ui.pendingBoundBot=null;return@LaunchedEffect}
         val bound=ui.pendingBoundBot
@@ -92,11 +93,14 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
                 if(wide&&state.activeGame.isEmpty())NavigationRail(containerColor=MaterialTheme.colorScheme.surfaceContainerLow,modifier=Modifier.fillMaxHeight().navigationBarsPadding(),header={Spacer(Modifier.height(20.dp));Glyph("spark",modifier=Modifier.size(36.dp),color=MaterialTheme.colorScheme.primary);Spacer(Modifier.height(24.dp))}){
                     rootPages.forEachIndexed { i,page -> NavigationRailItem(selected=state.route.page==page,onClick={ui.go(page)},icon={Glyph(listOf("chat","people","explore","person")[i])},label={Text(pageNames.getValue(page))}) }
                 }
-                Scaffold(modifier=Modifier.weight(1f),containerColor=Color.Transparent,snackbarHost={SnackbarHost(snackbar)},
+                val readingBar = if (state.activeGame.isEmpty() && state.route.page in listOf("game", "featured"))
+                    key(state.route.page, state.route.id) { TopAppBarDefaults.enterAlwaysScrollBehavior() } else null
+                val shell = if (readingBar != null) Modifier.nestedScroll(readingBar.nestedScrollConnection) else Modifier
+                Scaffold(modifier=shell.weight(1f),containerColor=Color.Transparent,snackbarHost={SnackbarHost(snackbar)},
                     topBar={TopAppBar(title={Column{Text(pageTitle,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis);if(state.route.page in rootPages)Text("STARPOST · ${state.account.str("nickname")}",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)}},
                         navigationIcon={if(state.route.page !in rootPages&&state.activeGame.isEmpty())IconButton(onClick={vm.back()}){Glyph("back","返回")}},
-                        actions={if(state.activeGame.isEmpty()){IconButton(onClick={ui.miniAppsOpen=true}){Glyph("game","游戏小程序")};IconButton(onClick={ui.modal=Modal.More}){Glyph("add","更多功能")}}},
-                        colors=TopAppBarDefaults.topAppBarColors(containerColor=MaterialTheme.colorScheme.background))},
+                        actions={if(state.activeGame.isEmpty() && state.route.page in listOf("socialHistory","owner"))ChatMenu(ui,state) else if(state.activeGame.isEmpty()){IconButton(onClick={ui.miniAppsOpen=true}){Glyph("game","游戏小程序")};IconButton(onClick={ui.modal=Modal.More}){Glyph("add","更多功能")}}},
+                        scrollBehavior=readingBar,colors=TopAppBarDefaults.topAppBarColors(containerColor=MaterialTheme.colorScheme.background))},
                     bottomBar={
                         if(!wide && state.route.page in rootPages && state.activeGame.isEmpty()) {
                             NavigationBar(containerColor=MaterialTheme.colorScheme.surfaceContainerLow) {

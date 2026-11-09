@@ -50,13 +50,13 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
 
 @Composable private fun ConversationList(ui:UiActions,s:ClientState){
     var kind by rememberSaveable(s.route.page){mutableStateOf("private")}
-    val data=s.data;val chats=data.rows("conversations").filter{it.str("kind")==kind}.sortedByDescending{it.optJSONObject("latest")?.str("at")}
+    val data=s.data;val chats=(data.rows("conversations").filter{it.str("kind")==kind}+if(kind=="private"&&s.route.page=="social")data.rows("ownerChats") else emptyList()).sortedWith(compareByDescending<JSONObject>{it.optBoolean("pinned")}.thenByDescending{it.optJSONObject("latest")?.str("at")})
     ContentList(ui){
         if(s.route.page=="chats")InfoCard("${s.account.rows("bots").find{it.str("botId")==s.account.str("botId")}?.str("nickname")?:"我的 bot"} 的聊天","只读查看，不会代替 bot 发言。","lock")
         else Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Text("今天想和谁聊聊？",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f));IconButton(onClick={ui.go("search")}){Glyph("search","搜索朋友")}}
         ChoiceTabs(listOf("private" to "私聊","group" to "群聊"),kind){kind=it}
         if(chats.isEmpty())EmptyState(if(kind=="group")"还没有群聊" else "还没有会话","点右上角 ＋，让故事从这里开始。")
-        chats.forEach{c->val latest=c.optJSONObject("latest");val id=c.str("target");Entry(conversationName(data,id,kind),(if(latest?.optBoolean("hasImage")==true)"[表情包] " else "")+(latest?.str("text")?:"发出第一声问候吧"),kind,latest?.str("at")?.let(::time)?:"",avatarId=if(kind=="private")id else "",avatarVersion=data.rows("friendProfiles").find{it.str("botId")==id}?.str("avatarVersion")?:"",accountTitle=if(kind=="private")data.rows("friendProfiles").find{it.str("botId")==id}?.str("accountTitle")?:"" else "",accountTitleStyle=if(kind=="private")data.rows("friendProfiles").find{it.str("botId")==id}?.optJSONObject("accountTitleStyle") else null){ui.go(if(s.route.page=="chats")"history" else "socialHistory",id,kind)}}
+        chats.forEach{c->val latest=c.optJSONObject("latest");val id=c.str("target");val owner=c.str("kind")=="owner";Entry(if(owner)c.str("name",id)+" · 我的 bot" else conversationName(data,id,kind),(if(c.optBoolean("pinned"))"置顶 · " else "")+(if(c.optBoolean("muted"))"免打扰 · " else "")+(if(latest?.optBoolean("hasImage")==true)"[表情包] " else "")+(latest?.str("text")?:"发出第一声问候吧"),kind,latest?.str("at")?.let(::time)?:"",avatarId=if(kind=="private")id else "",avatarVersion=data.rows("friendProfiles").find{it.str("botId")==id}?.str("avatarVersion")?:"",accountTitle=if(kind=="private")data.rows("friendProfiles").find{it.str("botId")==id}?.str("accountTitle")?:"" else "",accountTitleStyle=if(kind=="private")data.rows("friendProfiles").find{it.str("botId")==id}?.optJSONObject("accountTitleStyle") else null){if(owner){if(s.account.str("botId")==id)ui.go("owner") else ui.vm.perform("account.select",obj("botId" to id),Route("owner"))}else ui.go(if(s.route.page=="chats")"history" else "socialHistory",id,kind)}}
         if(s.route.page=="social")TextButton(onClick={ui.miniAppsOpen=true}){Glyph("down");Spacer(Modifier.width(8.dp));Text("下拉发现游戏小程序")}
     }
 }
@@ -120,11 +120,6 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
     LaunchedEffect(messages.lastOrNull()?.str("id")){if(route.before==null&&(initial||!list.canScrollForward)){if(messages.isNotEmpty())list.animateScrollToItem(messages.size-1);initial=false}}
     Column(Modifier.fillMaxSize()){
         if(readOnly)Text("Bot 的会话 · 只读",Modifier.padding(horizontal=20.dp,vertical=4.dp),style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
-        if(route.kind=="group"&&!readOnly&&!owner)Row(Modifier.padding(horizontal=16.dp)){TextButton(onClick={ui.go("invite",route.id)}){Text("邀请好友")};TextButton(onClick={ui.confirm("退出群聊","确定退出这个群吗？"){ui.vm.perform("social.group.leave",obj("groupId" to route.id),Route())}}){Text("退出群聊")}}
-        if(!readOnly&&route.kind=="private"){
-            val p=if(owner)s.account.rows("bots").find{it.str("botId")==s.account.str("botId")}else s.social.rows("friendProfiles").find{it.str("botId")==route.id}
-            if(p!=null)RemarkButton(ui,p.str("botId"),p.str("remark"),p.str("nickname",p.str("botId")))
-        }
         Pager(ui,s)
         if(selected.isNotEmpty())Row(Modifier.fillMaxWidth().padding(horizontal=16.dp),verticalAlignment=Alignment.CenterVertically){Text("已选 ${selected.size}/20",Modifier.weight(1f));TextButton(enabled=!s.working,onClick={chooseForward(selected.toList())}){Text("合并转发")};TextButton(onClick={selected.clear()}){Text("取消多选")}}
         if(messages.isEmpty())Box(Modifier.weight(1f),contentAlignment=Alignment.Center){EmptyState("说声你好吧",if(readOnly)"这里还没有聊天记录。" else "文字、图片和表情包，都能传递心情。")}
@@ -180,8 +175,7 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
     if(account.str("botId").isNotEmpty()){Entry("联系当前 bot","进入你的专属频道"){ui.go("owner")};Entry("青少年模式","管理当前 bot 的好友和入群请求"){ui.go("teen")}}
     Text("登录有效期至 ${time(Instant.ofEpochMilli(s.expiresAt).toString())}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
     val supportBrowser=LocalUriHandler.current
-    val appUpdater=LocalAppUpdater.current
-    Entry("检查更新","当前 Android 版本 ${BuildConfig.VERSION_NAME}","info"){appUpdater?.check(true)}
+    Text("星邮 Android ${BuildConfig.VERSION_NAME} · 有新版本时自动提醒",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
     Entry("支持星邮开发","通过爱发电自愿赞助，不影响功能使用","mail"){runCatching{supportBrowser.openUri("https://afdian.com/a/starpost")}.onFailure{ui.vm.notice("无法打开浏览器，请访问 afdian.com/a/starpost")}}
     TextButton(onClick={ui.confirm("退出登录","本机会话将失效，之后可用邮箱重新登录。 "){ui.vm.perform("logout")}}){Text("退出登录",color=MaterialTheme.colorScheme.error)}
 }}
