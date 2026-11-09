@@ -81,7 +81,7 @@ node server/titles.mjs presets
 
 | 选项 | 可用值 |
 | --- | --- |
-| `--background` | `gold` 鎏金、`aurora` 极光、`ocean` 星海、`rose` 玫瑰、`jade` 翡翠、`slate` 曜石 |
+| `--background` | `gold` 鎏金、`aurora` 极光、`ocean` 星海、`celadon` 天青、`rose` 玫瑰、`jade` 翡翠、`slate` 曜石 |
 | `--fill` | `gradient` 渐变、`solid` 纯色、`outline` 描边胶囊（浅底色） |
 | `--font` | `sans` 现代黑体、`serif` 典雅衬线、`mono` 等宽字体 |
 | `--weight` | `medium` 中等、`bold` 粗体、`heavy` 特粗 |

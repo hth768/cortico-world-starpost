@@ -82,6 +82,8 @@ input,textarea,select{color:var(--ink);background:var(--lowest);border:1px solid
 /* Account-wide server awards: deliberately distinct from editable nicknames. */
 .account-title{display:inline-flex;align-items:center;gap:4px;max-width:100%;margin-inline:6px;padding:3px 9px;border:1.5px solid #9b6516;border-radius:8px;background:linear-gradient(120deg,#fff1b8,#ffd980);color:#583600;font-size:12px;font-weight:850;line-height:1.5;vertical-align:middle;white-space:normal;overflow-wrap:anywhere;box-shadow:0 1px 4px #9b651622;flex-shrink:0}
 .account-title[hidden]{display:none}
-[data-theme="dark"] .account-title{background:linear-gradient(120deg,#563808,#37260d);color:#ffe09a;border-color:#e2b961}
+.account-title{background:var(--award-light-bg,linear-gradient(120deg,#fff1b8,#ffd980));color:var(--award-light-ink,#583600);border-color:var(--award-light-border,#9b6516)}
+[data-theme="dark"] .account-title{background:var(--award-dark-bg,linear-gradient(120deg,#563808,#37260d));color:var(--award-dark-ink,#ffe09a);border-color:var(--award-dark-border,#e2b961)}
+.account-title[data-title-fill=outline]{border-width:2px;box-shadow:none;border-radius:999px}
 .arena-seat .account-title{margin:3px 0;font-size:11px;padding:2px 4px;flex-shrink:1}
 .watch-message-head{flex-wrap:wrap}

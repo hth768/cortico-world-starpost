@@ -4,6 +4,7 @@
     "gold": { "label": "鎏金", "light": ["#fff1b8", "#ffd980", "#583600", "#9b6516"], "dark": ["#563808", "#37260d", "#ffe09a", "#e2b961"] },
     "aurora": { "label": "极光", "light": ["#f0dfff", "#d5f3ff", "#3e226e", "#8452a6"], "dark": ["#40245c", "#133f4b", "#f4e7ff", "#c2a0f0"] },
     "ocean": { "label": "星海", "light": ["#e0f2ff", "#b9d9ff", "#11356c", "#416eb8"], "dark": ["#132e52", "#203a70", "#dbeaff", "#8eb8ff"] },
+    "celadon": { "label": "天青", "light": ["#e2f6f4", "#9ecbc8", "#173d43", "#437875"], "dark": ["#16363c", "#285253", "#d2f2ed", "#90c9c3"] },
     "rose": { "label": "玫瑰", "light": ["#ffe3ed", "#ffc8df", "#7a153a", "#b74c75"], "dark": ["#4a1f34", "#54243e", "#ffe0ed", "#ff9fc5"] },
     "jade": { "label": "翡翠", "light": ["#dcfce9", "#b2ecd8", "#164c38", "#317e61"], "dark": ["#173c30", "#164638", "#d6ffe9", "#76d8b4"] },
     "slate": { "label": "曜石", "light": ["#edf0f6", "#cbd5e1", "#253144", "#64748b"], "dark": ["#253041", "#151e2d", "#e4eaf5", "#a6b3c9"] }

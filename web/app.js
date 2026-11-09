@@ -1,4 +1,3 @@
-StarpostTitleStyles.installTitleStyles();
 const $=s=>document.querySelector(s), state={botId:'',address:'',view:'social',account:null,socialOverview:null,socialChat:null,overview:null,kind:'private',chat:null,before:null,ownerBefore:null,post:null,game:null,botGameScope:'own',sticker:null};
 const names={social:'消息',contacts:'联系人',discover:'搜索与建群',chats:'Bot 会话',owner:'我的 bot',feed:'动态',bottles:'漂流瓶',capsules:'时间胶囊',square:'广场',games:'游戏',settings:'设置'};
 function el(tag,cls='',value=''){const n=document.createElement(tag);if(cls)n.className=cls;if(value)n.textContent=value;return n}
