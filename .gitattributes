@@ -1,1 +1,2 @@
 android/gradlew text eol=lf
+src/ENV_PROMPT.md text eol=lf

@@ -8,7 +8,47 @@ import { createStarpostServer } from '../server/server.mjs';
 import { STARPOST_DEFAULTS } from '../src/config.ts';
 import { StarpostWorld } from '../src/world.ts';
 import { familyTool } from './tool-invoke.ts';
+import { WakeBus } from 'cortico/core/bus.ts';
 const image = { mime: 'image/png', base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lX8AAAAASUVORK5CYII=' };
+
+test('专属消息按 Cortico 闹钟的唤醒词放行，之后到达的普通聊天重新计时', async () => {
+  const f = await fixture();
+  const bus = new WakeBus({ quietGapMs: 300, minBatchAgeMs: 0, maxBatchAgeMs: 1000, maxBatchSize: 20 });
+  const world = new StarpostWorld({
+    ...structuredClone(STARPOST_DEFAULTS), enabled: true, botId: '10001', serverUrl: f.base, pollIntervalMs: 300000,
+  }, f.dir, f.dir, f.dir, 'Asia/Shanghai', () => f.keys[10001], () => f.now);
+  const poll = () => (world as unknown as { poll(): Promise<void> }).poll();
+  let cursor = 0, hits = 0;
+  try {
+    await world.start({
+      pushEvent: async (event: any, opts: any) => {
+        const envelope = { ...event, cursor: ++cursor };
+        bus.push({ event: envelope }, opts);
+        return envelope;
+      },
+      promotePending: async (id: number, trigger: 'flush') => bus.promote(item => item.event?.cursor === id, trigger),
+    } as never);
+    bus.drainPending(() => true);
+    bus.setDeliveryGate({ id: 'alarm', keyword: '星星醒醒', overflowLimit: 100,
+      onKeyword() { hits++; bus.clearDeliveryGate('alarm', false); }, onOverflow() { assert.fail('不应触发溢出'); } });
+    const batch = bus.nextBatch();
+    const token = (await f.login('10001', f.keys[10001])).result.accessToken;
+    assert.ok((await f.phone(token, 'owner.address', { address: '主人' })).ok);
+    assert.ok((await f.phone(token, 'owner.send', { text: '留给醒来后的你' })).ok);
+    await poll();
+    assert.equal(hits, 0); assert.equal(bus.pending(), 1);
+    assert.ok((await f.phone(token, 'owner.send', { text: '星星醒醒' })).ok);
+    assert.ok((await f.rpc(10002, 'message.send', { kind: 'private', target: '10001', text: '随后的一条私聊' })).ok);
+    await poll();
+    assert.equal(hits, 1);
+    assert.deepEqual((await batch).map(item => item.event?.type), ['starpost.owner_message', 'starpost.owner_message']);
+    assert.equal(bus.pending(), 1);
+    const following = bus.nextBatch();
+    f.time = f.now + 19999; await poll(); assert.equal(bus.pending(), 1);
+    f.time = f.now + 1; await poll(); assert.equal(bus.pending(), 0);
+    assert.deepEqual((await following).map(item => item.event?.type), ['starpost.message']);
+  } finally { await world.stop(); await f.close(); }
+});
 
 async function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'starpost-mobile-'));
@@ -127,14 +167,17 @@ test('手机消息立即唤醒并合批积压、重置计时，来图自动收�
     const token = (await f.login('10001', f.keys[10001])).result.accessToken;
     await f.phone(token, 'owner.address', { address: '星星' });
     await f.phone(token, 'owner.send', { text: '马上看', image }); await poll();
-    assert.equal(promotions.length, 1);
+    assert.equal(promotions.length, 0);
     const message = events.find(event => event.type === 'starpost.owner_message');
+    assert.equal(message.trigger, 'flush');
     assert.equal(message.origin, 'external'); assert.match(message.text, /^以下消息为星星通过星邮向你发送的消息\n马上看/); assert.ok(message.blobs?.length);
     assert.match(message.text, /family="mobile"，action="send"/);assert.match(message.text,/无需 target/);
-    assert.ok(events.some(event => event.type === 'starpost.notification_digest'));
+    const digest = events.find(event => event.type === 'starpost.notification_digest');
+    assert.equal(digest?.trigger, 'piggyback');
+    assert.ok(events.indexOf(digest) < events.indexOf(message));
     const state = JSON.parse(readFileSync(join(f.dir, 'starpost-cursor.json'), 'utf8'));
     assert.equal(state.pendingSinceMs, null); assert.equal(state.pendingCoreCursor, null);
-    f.time = f.now + 20000; await poll(); assert.equal(promotions.length, 1);
+    f.time = f.now + 20000; await poll(); assert.equal(promotions.length, 0);
     const stats: any = await familyTool(world, 'sticker').handler({ action: 'stats' }, {} as never);
     assert.equal(typeof stats, 'string', stats?.text);
     assert.equal(JSON.parse(String(stats)).total, 1);

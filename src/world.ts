@@ -861,7 +861,6 @@ export class StarpostWorld implements World {
       const waitMs = !waitForEvents ? 0 : Math.min(25000, chatWait, this.notifications.dueIn(this.clock(), notificationSettings(this.cfg.notifications, this.cfg.receiveMode === 'active')), periodWait);
       const events = await this.rpc('events', { since: this.cursor, waitMs, mediaRefs: true }, { timeoutMs: 35000, signal: this.pollController?.signal }) as Array<{ seq: number; type: string; data: any; at: string }>;
       this.connected = true; this.lastError = '';
-      let ownerWakeCursor: number | null = null;
       for (const event of events) {
         const data = event.data;
         if(event.type==='moderation.warning'){
@@ -963,10 +962,13 @@ export class StarpostWorld implements World {
         if (ownerMessage) text = `${data.prefix}\n${data.text || ''}${messageInfo.sticker ? `\n[表情包:${messageInfo.sticker}]` : ''}\n[消息记录] ${JSON.stringify({id:data.id,...(data.senderTitle?{senderTitle:data.senderTitle}:{}),quote:data.quote,forward:data.forward,recalled:data.recalled})}\n[星邮回复入口] 此消息来自手机/网页「我的 bot」专属频道。回复使用 starpost_use：family="mobile"，action="send"，argsJson 为包含 text 的 JSON 字符串；无需 target，不使用普通 send/private。普通文本输出不会发送到该频道。`;
         const gameChat = ['game.public', 'game.wolf', 'game.outside'].includes(event.type) && data?.kind === 'chat';
         const message = event.type === 'message' || gameChat;
+        // Cortico checks the alarm's wake word when the event enters the queue.
+        // Include accumulated notices before the owner message triggers that check.
+        if (ownerMessage) await this.flushNotifications('piggyback', true);
+        const trigger = ownerMessage ? 'flush' : message && this.host.promotePending ? 'piggyback' : undefined;
         const envelope = await this.host.pushEvent({ type: `starpost.${event.type.replaceAll('.', '_')}`, ts: event.at, source: this.id, origin: 'external',
           senderKey: ownerMessage ? 'starpost.owner' : gameChat ? `starpost.game.${data.gameId}` : message ? `starpost.${data.kind}.${data.target}` : 'starpost', text, ...(imageBlob.length ? { blobs: imageBlob } : {}) },
-        (message || ownerMessage) && this.host.promotePending ? { trigger: 'piggyback' } : ownerMessage ? { trigger: 'flush' } : undefined);
-        if (ownerMessage && Number.isSafeInteger(envelope.cursor)) ownerWakeCursor = envelope.cursor;
+        trigger ? { trigger } : undefined);
         if (square && typeof squareId === 'string') this.rememberSquare(squareId);
         if (event.type === 'message' && Number.isSafeInteger(data.cursor) && data.cursor > 0) {
           const identity = this.activeIdentity();
@@ -974,17 +976,14 @@ export class StarpostWorld implements World {
           if (scope) this.inboxSeen[scope] = Math.max(this.inboxSeen[scope] ?? 0, data.cursor);
         }
         this.cursor = event.seq;
-        if ((message || ownerMessage) && this.host.promotePending && Number.isSafeInteger(envelope.cursor)) {
-          if (ownerMessage) this.pendingSinceMs = this.clock() - interval;
-          else this.pendingSinceMs ??= this.clock();
+        if (ownerMessage) {
+          this.pendingCoreCursor = null;
+          this.pendingSinceMs = null;
+        } else if (message && this.host.promotePending && Number.isSafeInteger(envelope.cursor)) {
+          this.pendingSinceMs ??= this.clock();
           this.pendingCoreCursor = envelope.cursor;
         }
         this.saveCursor();
-      }
-      if (ownerWakeCursor !== null) {
-        await this.flushNotifications('piggyback', true);
-        if (this.host.promotePending) await this.host.promotePending(ownerWakeCursor, 'flush');
-        this.pendingCoreCursor = null; this.pendingSinceMs = null; this.saveCursor();
       }
       await this.announceQuota();
       await this.flushPending();
