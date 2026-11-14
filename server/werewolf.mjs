@@ -38,7 +38,8 @@ const RULEBOOK = {
   protection: '守护或解药任一生效即可挡住狼刀，二者同时生效仍存活；毒药不受守护和解药影响。',
   victory: '狼人全部出局则好人获胜；存活狼人数达到其余存活人数则狼人获胜。最多 12 天，连续 3 天无人出局则平局。',
   attendance: '开局前 3 分钟报到。缺席者不占人数、不扣次数；自动规则按实际报到人数分配，自定义规则只减少平民，无法形成合法配置则取消。',
-  immediate: '公开局可设 startMode=full：加入即准备，人满立即开局，不需要预约时间或另行报到。match 按 maxPlayers=6/8/10/12/16/20 与人类或 bot 实时匹配，使用程序法官和标准身份配置，operation=join/status/leave 加入/查看/退出匹配；一次只能等待一局。两种模式都遵守账号的每日局数上限和开局时段限制；默认 5 局，bot 上限由人类在扩展设置调整，当前额度见 rules。保持客户端在线，断连超过 2 分钟自动释放等待席位；满员前退出不扣次数。匹配局公开可观战。',
+  participation: '新开局记录 bot 的发言、投票与行动。有行动阶段超时且整局无任何行动时，赛后提醒本人和房主；主动弃票、结束发言与跳过技能均算参与。无行动机会即出局者不提示，旧局不追溯。仅记录并提醒，不自动禁赛；断线或唤醒失败也可能导致无行动。',
+  immediate: '公开局可设 startMode=full：加入即准备，人满立即开局，不需要预约时间或另行报到。match 按 maxPlayers=6/8/10/12/16/20 与人类或 bot 实时匹配，使用程序法官和标准身份配置，operation=join/status/leave 加入/查看/退出匹配；一次只能等待一局。人类不限每日局数；bot 默认每日 5 局，由人类在扩展设置调整，当前额度见 rules。两种模式仍遵守开局时段限制。保持客户端在线，断连超过 2 分钟自动释放等待席位；满员前退出不扣次数。匹配局公开可观战。',
   judge: 'bot 法官不作为玩家，负责主持，主持与参赛共用账号的每日局数额度；程序始终校验身份行动、结算和超时。法官缺席或次数用尽时改为程序法官，手工分发超时 2 分钟则随机分发。',
   addressing: '发言必须用昵称或本局座位号称呼玩家，不要念账号 ID；重名时使用座位号。开局消息和 read 返回 seats 对照，座位开局后固定。匿名玩家仅显示座位号，不展示账号或房主信息；行动的 target、botId 等参数使用返回的 seat:N 引用（非匿名玩家可沿用 ID）。不能凭座位查询个人资料。整局匿名优先；privacy 设置个人匿名，生效于之后加入的两种游戏。',
   room: '白天在公共频道讨论和公投，夜晚公共频道禁言；狼人夜间频道只向存活狼人开放。每人每分钟最多 6 条，单条 1000 字，不计普通消息额度。游戏结束后开放 2 分钟复盘，再关闭聊天室并保留只读记录。exit 离开房间：开局前退出预约，开局后弃权且不返还次数，不触发猎人开枪；法官离开由程序接管。离场向房内成员公告，停止后续房间事件，恢复普通聊天。',
@@ -74,10 +75,13 @@ export class WerewolfGames {
   rules(who) {
     const dailyLimit = this.dailyLimit(who), usedToday = this.participation(who, this.clock()).length;
     return { presets: PRESETS, customPlayers: '6–20 人，每种神职最多一位，狼人少于半数且至少一位平民',
-      rulebook: RULEBOOK, matchSizes: MATCH_SIZES, dailyLimit, usedToday, remainingToday: Math.max(0, dailyLimit - usedToday),
+      rulebook: RULEBOOK, matchSizes: MATCH_SIZES, dailyLimit: Number.isFinite(dailyLimit) ? dailyLimit : null, usedToday,
+      remainingToday: Number.isFinite(dailyLimit) ? Math.max(0, dailyLimit - usedToday) : null,
       timezone: 'Asia/Shanghai', startWindows: WEEKDAY_GAME_WINDOWS, weekendStartWindows: WEEKEND_GAME_WINDOWS };
   }
   dailyLimit(who) {
+    // H identities come from authenticated human sessions, never client-supplied limits.
+    if (who?.endsWith('H')) return Infinity;
     const limit = this.store.get('limits', who)?.maxWerewolfGamesPerDay;
     return Number.isInteger(limit) && limit >= 0 && limit <= 1000 ? limit : DEFAULT_DAILY_GAMES;
   }
@@ -127,7 +131,8 @@ export class WerewolfGames {
       checkedInSelf: who ? game.checkedIn.includes(who) : undefined,
       rules: game.rules, participant: who ? game.joined.includes(who) : undefined, canInvite: who ? this.canInvite(game, who) : false,
       judge: who ? game.judgeBotId === who : undefined, phaseDeadlineAt: game.deadlineAt,
-      winner: game.winner ?? null, public: Boolean(game.public), published: Boolean(game.published), spectators: (game.spectators ?? []).length };
+      winner: game.winner ?? null, public: Boolean(game.public), published: Boolean(game.published), spectators: (game.spectators ?? []).length,
+      ...(who === game.creator && game.activity?.report ? { activityNotice: game.activity.report.message } : {}) };
   }
   canView(game, who) {
     if (!game.public && game.creator !== who && game.judgeBotId !== who && !game.formerJudgeBotIds?.includes(who) && !game.invited.includes(who) && !game.joined.includes(who)) fail('无权查看此局游戏', 403);
@@ -516,6 +521,9 @@ export class WerewolfGames {
     game.playerNames ??= Object.fromEntries(game.participants.map(id=>[id,this.nickname(id)]));
     game.roles = roles; game.forfeited ??= [...(game.left??[])]; game.alive = game.participants.filter(who => !game.left?.includes(who)); game.day = 1;
     game.uses = Object.fromEntries(game.participants.map(who => [who, { save: false, poison: false, shot: false }]));
+    // Only complete, newly started games can be assessed; old games have no reliable counters.
+    game.activity = { version: 1, players: Object.fromEntries(game.participants.filter(id => !id.endsWith('H'))
+      .map(id => [id, { messages: 0, votes: 0, actions: 0, timedOutPhases: 0 }])) };
     game.status = 'night_wolf'; game.deadlineAt = iso(this.clock() + 3 * 60000);
     this.save(game);
     this.public(game, { kind: 'started', rules: game.rules, participants: game.participants, seats:gameSeats(game,this.nickname),
@@ -584,6 +592,7 @@ export class WerewolfGames {
     const count = this.store.count('gameMessages', "scope=? AND owner=? AND at>=?", [game.id, who, iso(now - 60000)]);
     if (count >= 6) fail('游戏室每分钟最多发 6 条消息', 429);
     const recipients = channel === 'wolf' ? game.alive.filter(id => game.roles[id] === 'wolf') : [...game.participants, ...(game.judgeBotId ? [game.judgeBotId] : [])];
+    if (game.status !== 'finished') this.recordActivity(game, who, 'messages');
     const entry = this.emit(game, channel, recipients, { kind: 'chat', text: content }, who);
     return { gameId: game.id, messageId: entry.id, channel };
   }
@@ -596,6 +605,7 @@ export class WerewolfGames {
     if (action === 'end_speech') {
       if (game.status !== 'day' || !game.alive.includes(who)) fail('仅存活玩家可在白天结束发言', 403);
       if (!game.dayDone?.includes(who)) {
+        this.recordActivity(game, who, 'actions');
         game.dayDone = [...(game.dayDone ?? []), who]; this.save(game);
       }
       this.advanceCompleted(game);
@@ -604,7 +614,7 @@ export class WerewolfGames {
     if (['night_wolf', 'night_gods'].includes(game.status) && game.night.passed?.includes(who)) fail('本夜已跳过行动');
     if (action === 'skip' && (game.status === 'night_wolf' && role === 'wolf' || game.status === 'night_gods' && ['seer', 'guard', 'witch'].includes(role))) {
       if (game.night.wolfVotes?.[who] || role === 'seer' && game.night.seerTarget || role === 'guard' && game.night.guardTarget || role === 'witch' && game.night.witchActed) fail('本夜已经行动');
-      game.night.passed = [...(game.night.passed ?? []), who]; this.save(game); this.advanceCompleted(game); return { gameId: game.id, action, status: game.status };
+      game.night.passed = [...(game.night.passed ?? []), who]; this.recordActivity(game, who, 'actions'); this.save(game); this.advanceCompleted(game); return { gameId: game.id, action, status: game.status };
     }
     const target = args.target == null || args.target === '' ? null : checkedId(args.target);
     if (target && !game.alive.includes(target)) fail('目标不是存活玩家');
@@ -634,34 +644,59 @@ export class WerewolfGames {
       if (game.uses[who].shot) fail('猎人已经开枪');
       game.uses[who].shot = true;
       game.pendingHunter = null;
+      this.recordActivity(game, who, 'actions');
       if (target) game.alive = game.alive.filter(id => id !== target);
       if (target) game.roundDeaths = (game.roundDeaths ?? 0) + 1;
       this.public(game, { kind: 'hunter_shot', hunter: who, target });
       this.afterElimination(game, game.hunterResume === 'day' ? 'day' : 'night');
       return { gameId: game.id, action, target };
     } else fail('当前阶段或身份不能执行此操作', 403);
+    this.recordActivity(game, who, 'actions');
     this.save(game); this.advanceCompleted(game);
     return { gameId: game.id, action, target, status: game.status };
   }
   checkPhase(game, phase) {
     if (phase !== undefined && (!phase || typeof phase !== 'object' || phase.status !== game.status || phase.day !== game.day || phase.deadlineAt !== game.deadlineAt)) fail('阶段已变化，请重新读取后行动', 409);
   }
-  phaseComplete(game) {
+  recordActivity(game, who, kind) {
+    const row = game.activity?.players?.[who];
+    if (row) row[kind]++;
+  }
+  pendingActors(game) {
     const passed = id => game.night.passed?.includes(id);
     if (game.status === 'night_wolf') return game.alive.filter(id => game.roles[id] === 'wolf')
-      .every(id => passed(id) || Object.hasOwn(game.night.wolfVotes ?? {}, id));
-    if (game.status === 'night_gods') return game.alive.every(id => {
-      if (passed(id)) return true;
-      if (game.roles[id] === 'seer') return Boolean(game.night.seerTarget) || game.alive.length < 2;
-      if (game.roles[id] === 'guard') return Boolean(game.night.guardTarget) || !game.alive.some(target => target !== game.lastGuard);
-      if (game.roles[id] === 'witch') return Boolean(game.night.witchActed)
-        || !(!game.uses[id].save && game.night.victim && (game.day > 1 || game.night.victim !== id))
-          && (game.uses[id].poison || !game.alive.some(target => target !== id));
-      return true;
+      .filter(id => !passed(id) && !Object.hasOwn(game.night.wolfVotes ?? {}, id));
+    if (game.status === 'night_gods') return game.alive.filter(id => {
+      if (passed(id)) return false;
+      if (game.roles[id] === 'seer') return !game.night.seerTarget && game.alive.length >= 2;
+      if (game.roles[id] === 'guard') return !game.night.guardTarget && game.alive.some(target => target !== game.lastGuard);
+      if (game.roles[id] === 'witch') return !game.night.witchActed && Boolean(
+        !game.uses[id].save && game.night.victim && (game.day > 1 || game.night.victim !== id)
+        || !game.uses[id].poison && game.alive.some(target => target !== id));
+      return false;
     });
-    if (game.status === 'day') return game.alive.length > 0 && game.alive.every(id => game.dayDone?.includes(id));
-    if (game.status === 'vote') return game.alive.length > 0 && game.alive.every(id => Object.hasOwn(game.votes, id));
-    return false;
+    if (game.status === 'day') return game.alive.filter(id => !game.dayDone?.includes(id));
+    if (game.status === 'vote') return game.alive.filter(id => !Object.hasOwn(game.votes, id));
+    if (game.status === 'hunter') return game.pendingHunter ? [game.pendingHunter] : [];
+    return [];
+  }
+  phaseComplete(game) {
+    return ['night_wolf', 'night_gods', 'day', 'vote'].includes(game.status)
+      && (game.status.startsWith('night') || game.alive.length > 0) && this.pendingActors(game).length === 0;
+  }
+  reportInactivity(game) {
+    if (!game.activity || game.activity.report) return;
+    const ids = Object.entries(game.activity.players).filter(([id, row]) => row.timedOutPhases > 0
+      && row.messages + row.votes + row.actions === 0
+      && ![...(game.left ?? []), ...(game.kicked ?? []), ...(game.forfeited ?? [])].includes(id)).map(([id]) => id);
+    const seats = gameSeats(game, this.nickname).filter(seat => ids.includes(seat.id)).map(seat => `${seat.number}号`);
+    const explanation = '此记录不能判断是否挂机，可能与断线或唤醒失败有关，请检查连接和游戏消息接收；本次仅提醒，不自动禁赛。';
+    game.activity.report = { at: iso(this.clock()), players: ids,
+      message: ids.length ? `参赛情况提醒：${seats.join('、')}有行动阶段超时，整局未发言、投票或执行行动。${explanation}` : '' };
+    this.save(game);
+    for (const id of ids.filter(id => id !== game.creator)) this.private(game, id, { kind: 'participation_notice',
+      text: `本局有等待你行动的阶段超时，但未记录到你的发言、投票或行动（主动弃票、跳过技能也算行动）。${explanation}` });
+    if (ids.length) this.private(game, game.creator, { kind: 'participation_notice', text: game.activity.report.message });
   }
   advanceCompleted(game, now = this.clock()) {
     // A phase with no eligible actions (e.g. all gods dead) must not hold the room.
@@ -677,7 +712,7 @@ export class WerewolfGames {
     const target = args.target === 'abstain' ? 'abstain' : checkedId(args.target);
     if (target !== 'abstain' && !game.alive.includes(target)) fail('只能投给存活玩家');
     if (Object.hasOwn(game.votes, who)) fail('本轮已经投票');
-    game.votes[who] = target; this.save(game);
+    game.votes[who] = target; this.recordActivity(game, who, 'votes'); this.save(game);
     this.public(game, { kind: 'vote', voter: who, target });
     if (Object.keys(game.votes).length === game.alive.length) this.resolveVote(game);
     return { gameId: game.id, voted: true };
@@ -699,12 +734,14 @@ export class WerewolfGames {
     return wolves === 0 ? 'village' : wolves >= game.alive.length - wolves ? 'wolves' : null;
   }
   finish(game, winner) {
+    if (['finished', 'closed'].includes(game.status)) return;
     game.status = 'finished'; game.winner = winner; game.finishedAt = iso(this.clock()); game.deadlineAt = iso(this.clock() + 2 * 60000); this.save(game);
     for (const who of [...game.participants, ...(game.judgeBotId ? [game.judgeBotId] : [])].filter(id => !game.left?.includes(id))) {
       if (this.store.get('gameBusy', who)?.gameId === game.id) this.store.remove('gameBusy', who);
       this.resumeChat(who);
     }
     this.public(game, { kind: 'finished', winner, roles: game.roles, closeAt: game.deadlineAt });
+    this.reportInactivity(game);
     this.onFinished(game);
   }
   afterElimination(game, resume = 'night') {
@@ -728,6 +765,9 @@ export class WerewolfGames {
     this.public(game, { kind: 'hunter_wait', botId: who, deadlineAt: game.deadlineAt });
   }
   nextPhase(game, now) {
+    if (game.activity && now >= Date.parse(game.deadlineAt)) {
+      for (const id of this.pendingActors(game)) this.recordActivity(game, id, 'timedOutPhases');
+    }
     if (game.status === 'scheduled') return this.beginAtAppointment(game, now);
     if (game.status === 'assigning') { game.assignmentMode = 'random'; this.start(game); return; }
     if (game.status === 'night_wolf') {

@@ -98,6 +98,35 @@ for(const transport of ['mobile','web'])test(`${transport} 人类可与 bot 匹�
   }finally{await f.close()}
 });
 
+for (const transport of ['mobile', 'web']) for (const mode of ['scheduled', 'full', 'match'])
+test(`${transport} 人类已玩五局仍可通过 ${mode} 开局，计数持久化且不改变 bot 额度`, async () => {
+  const f = await fixture(); try {
+    const human = await f.human('10024', transport);
+    f.app.store.put('gameParticipation', '10024H:2026-11-01', { owner:'10024H', day:'2026-11-01', games:['a','b','c','d','e'] });
+    f.app.store.put('limits', '10024', { maxWerewolfGamesPerDay: 0 });
+    // Even a legacy stored H cap must not impose a daily limit on humans.
+    f.app.store.put('limits', '10024H', { maxWerewolfGamesPerDay: 5 });
+    const args = { maxPlayers:6, public:true, startMode:mode === 'scheduled' ? 'scheduled' : 'full', scheduledAt:new Date(f.now+240000).toISOString() };
+    const result = await f.ok(human(mode === 'match' ? 'human.match' : 'human.schedule', mode === 'match' ? {operation:'join',maxPlayers:6} : args));
+    const gameId = mode === 'match' ? result.game.gameId : result.gameId;
+    for (const who of f.ids.slice(0,5)) await f.ok(f.rpc(who, mode === 'match' ? 'game.match' : 'game.join', mode === 'match' ? {operation:'join',maxPlayers:6} : {gameId}));
+    if (mode === 'scheduled') {
+      f.set(f.now+60000);
+      await f.ok(human('human.checkin', {gameId}));
+      for (const who of f.ids.slice(0,5)) await f.ok(f.rpc(who,'game.checkin',{gameId}));
+      f.set(Date.parse(args.scheduledAt));
+    }
+    assert.equal(f.app.store.get('games',gameId).status,'night_wolf');
+    assert.ok(f.app.store.get('games',gameId).participants.includes('10024H'));
+    assert.equal(f.app.store.get('games',gameId).activity.players['10024H'],undefined,'本轮无行动提醒仅统计 bot');
+    await f.restart();
+    const status=await f.ok(human('human.status'));
+    assert.deepEqual([status.rules.usedToday,status.rules.dailyLimit,status.rules.remainingToday],[6,null,null]);
+    assert.equal((await f.ok(f.rpc('10024','game.rules'))).dailyLimit,0);
+    assert.equal((await human('human.match',{operation:'join',maxPlayers:6})).ok,false,'仍不允许同时参加多局');
+  } finally { await f.close(); }
+});
+
 test('等待席位持久化，普通连接续期不唤醒 bot，掉线自动离场且不扣次数',async()=>{
   const f=await fixture();try{
     const m=await f.ok(f.rpc('10001','game.match',{operation:'join',maxPlayers:6}));

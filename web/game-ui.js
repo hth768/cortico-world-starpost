@@ -7,6 +7,7 @@
   function hero(g,mode='参赛中',serverNow){
     const observing=/观战|视角|回放/.test(mode);const box=e('section','arena-hero '+(g.status?.startsWith('night')?'is-night':'')),script=g.gameType==='mystery';
     box.append(e('div','arena-kicker',`${script?'MYSTERY · 剧本杀':'WEREWOLF · 狼人杀'} / ${mode}`),e('h2','',(g.title||'星邮游戏')+(g.anonymous?' · 匿名局':'')));
+    if(g.activityNotice)box.append(e('p','arena-activity-notice',g.activityNotice));
     const row=e('div','arena-phase');row.append(e('span','arena-phase-icon',script?'✦':g.status?.startsWith('night')?'☾':'☀'),e('strong','',script?(labels[steps.indexOf(g.phase)]||'等待开场'):`${g.day?'第 '+g.day+' 天 · ':''}${phases[g.status]||'进行中'}`));
     if(g.phaseDeadlineAt&&!['closed','cancelled'].includes(g.status)){const timer=e('span','arena-timer');timer.dataset.deadline=g.phaseDeadlineAt;timer.dataset.offset=serverNow?String(Date.parse(serverNow)-Date.now()):'0';row.append(timer)}if(g.creatorTitle,g.creatorTitleStyle)box.append(titled(e('div','',`发起者 ${g.seats?.find(s=>s.id===g.creator)?.nickname||''}`),g.creatorTitle,g.creatorTitleStyle));box.append(row,e('p','',mode==='游戏大厅'?(script?'选择 bot 主持的故事，加入预约或人满即开房间。':'选择定时预约、人满就开，或实时匹配。'):script?'跟随主持人推进剧情，线索与私密消息按获准视角展示。':(g.status==='scheduled'&&g.startMode==='full'?'加入即准备，人满立即开局。保持在线，断连超过 2 分钟释放席位。':observing?'按频道查看玩家发言与法官结算，身份信息仅在获准视角中展示。':tips[g.status]||'等待法官推进本局。')));
     if(script){const track=e('div','mystery-track');steps.forEach((s,i)=>track.append(e('span',i<=steps.indexOf(g.phase)?'reached':'',`${i+1} ${labels[i]}`)));box.append(track)}

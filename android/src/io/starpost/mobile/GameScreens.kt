@@ -42,6 +42,10 @@ internal fun gameText(m:JSONObject):String {m.optJSONObject("display")?.let{d->r
     else->m.str("text").ifBlank{"第 ${m.optInt("day")} 天 · ${gameStates[kind]?:"游戏状态更新"}"}
 }}
 private fun rulesText(game:JSONObject):String=roleSummary(game.optJSONObject("rules"))+"\n"+(game.optJSONObject("rulebook")?.let{r->r.keys().asSequence().flatMap{key->val v=r.opt(key);if(v is JSONObject)v.keys().asSequence().map{v.str(it)}else sequenceOf(v.toString())}.joinToString("\n")}?:"")
+internal fun humanGameQuotaLabel(rules:JSONObject):String {
+    val used=rules.optInt("usedToday")
+    return if(rules.has("dailyLimit") && rules.isNull("dailyLimit")) "$used 局 · 不限局数" else "$used/${rules.optInt("dailyLimit",5)} 局"
+}
 internal fun gameStartLabel(g:JSONObject)=if(g.str("startMode")=="full")(if(g.optBoolean("matching"))"实时匹配 · 人满就开" else "人满就开")+" · 加入即准备，请保持在线" else "集合时间：${time(g.str("scheduledAt"))} · 开局前 3 分钟报到"
 @Composable internal fun PublicGameJoin(ui:UiActions,s:ClientState,g:JSONObject){
     if(!g.optBoolean("public")||!g.optBoolean("published")||g.str("status")!="scheduled")return
@@ -60,7 +64,7 @@ internal fun gameStartLabel(g:JSONObject)=if(g.str("startMode")=="full")(if(g.op
             ChoiceTabs(listOf("werewolf" to "狼人杀","mystery" to "剧本杀"),if(mystery)"mystery" else "werewolf"){ui.vm.navigate(Route("games",kind=it),false)}
             GameBanner(obj("title" to if(mystery)"一起走进故事里" else "今夜，来一场推理","gameType" to if(mystery)"mystery" else "werewolf","status" to "scheduled"),"游戏大厅")
             Entry("我的 bot 对局","包含加入其他 bot 的预约、私密局与历史局"){ui.go("botGames",kind="own")}
-            val rules=s.data.optJSONObject("rules")?:JSONObject();SectionTitle(if(mystery)"剧本杀广场" else "狼人杀广场","${s.data.str("nickname")} · ${s.data.str("humanId")}"+(if(mystery)" · bot 主持，共同推理" else " · 今日 ${rules.optInt("usedToday")}/${rules.optInt("dailyLimit",5)} 局"))
+            val rules=s.data.optJSONObject("rules")?:JSONObject();SectionTitle(if(mystery)"剧本杀广场" else "狼人杀广场","${s.data.str("nickname")} · ${s.data.str("humanId")}"+(if(mystery)" · bot 主持，共同推理" else " · 今日 ${humanGameQuotaLabel(rules)}"))
             val moderation=s.data.optJSONObject("moderation")?:JSONObject();if(moderation.str("message").isNotEmpty())Text(moderation.str("message"),color=MaterialTheme.colorScheme.error)
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){if(!mystery&&!moderation.optBoolean("banned"))Button(onClick={ui.go("schedule")}){Text("发起预约")};TextButton(onClick={ui.form("设置人类昵称",listOf(TextFieldSpec("nickname","昵称",s.data.str("nickname")))){ui.vm.perform("human.profile",obj("nickname" to it["nickname"]))}}){Text("修改昵称")}}
             Row(verticalAlignment=Alignment.CenterVertically){Text("个人匿名 · 两种游戏共用",Modifier.weight(1f));Switch(s.data.optJSONObject("privacy")?.optBoolean("anonymous")==true,{ui.vm.perform("human.privacy",obj("anonymous" to it))},enabled=!s.working)};Text("对之后加入的局生效；匿名局覆盖个人设置。",style=MaterialTheme.typography.bodySmall)
@@ -164,7 +168,7 @@ internal fun gameStartLabel(g:JSONObject)=if(g.str("startMode")=="full")(if(g.op
         Row(verticalAlignment=Alignment.CenterVertically){Text("匹配匿名局",Modifier.weight(1f));Switch(if(waiting)game.optBoolean("anonymous")else anonymous,{anonymous=it},enabled=!waiting&&!s.working)}
         ChoiceTabs(listOf(6,8,10,12,16,20).map{it.toString() to "$it 人"},if(waiting)game.optInt("maxPlayers").toString()else count){if(!waiting)count=it}
         Text(if(waiting)"正在匹配 ${game.optInt("maxPlayers")} 人局 · 已就位 ${game.optInt("joined")}/${game.optInt("maxPlayers")} 人" else "与选择相同人数的人类和 bot 匹配，满员立即开局。")
-        Text("标准身份配置与程序法官。保持在线，断连超过 2 分钟释放席位；每日 5 局和开局时段限制仍适用。",style=MaterialTheme.typography.bodySmall)
+        Text("标准身份配置与程序法官。保持在线，断连超过 2 分钟释放席位；人类不限每日局数，开局时段和禁赛限制仍适用。",style=MaterialTheme.typography.bodySmall)
         if(waiting)OutlinedButton(enabled=!s.working,onClick={ui.vm.perform("human.match",obj("operation" to "leave"),Route("games"))}){Text("退出匹配")}
         else Button(enabled=!s.working&&!banned,onClick={ui.confirm("开始匹配","以自己的人类身份匹配 $count 人局？匹配满员立即开局。"){ui.vm.perform("human.match",obj("operation" to "join","maxPlayers" to count.toInt(),"anonymous" to anonymous),Route("games"))}}){Text("开始匹配")}
     }
@@ -181,7 +185,7 @@ internal fun gameStartLabel(g:JSONObject)=if(g.str("startMode")=="full")(if(g.op
         Row(verticalAlignment=Alignment.CenterVertically){Text("公开并公告到广场",Modifier.weight(1f));Switch(public,{public=it},modifier=Modifier.semantics{contentDescription="公开并公告到广场"},enabled=startMode!="full")}
         Row(verticalAlignment=Alignment.CenterVertically){Text("整局匿名（覆盖个人设置）",Modifier.weight(1f));Switch(anonymous,{anonymous=it},modifier=Modifier.semantics{contentDescription="整局匿名"})}
         OutlinedTextField(custom,{custom=it},Modifier.fillMaxWidth(),label={Text("自定义身份（选填）")},supportingText={Text("狼,巫,预,守,猎,民，例如 2,1,1,0,0,4")})
-        Text("每天最多 5 局。北京时间周末全天可开局，工作日 06–09、12–14、18–24；私密预约可通过自己的 bot 邀请朋友。",style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("人类不限每日局数。北京时间周末全天可开局，工作日 06–09、12–14、18–24；私密预约可通过自己的 bot 邀请朋友。",style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
         Button(enabled=!s.working,onClick={runCatching{
             val players=count.toInt();require(players in 6..20){"人数须在 6–20 之间"}
             val args=obj("title" to title.ifBlank{"一起玩狼人杀"},"startMode" to startMode,"scheduledAt" to (if(startMode=="scheduled")Instant.ofEpochMilli(at).toString()else null),"maxPlayers" to players,"public" to public,"anonymous" to anonymous)

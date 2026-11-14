@@ -34,6 +34,7 @@ export function presentGamePage(source, page, nickname, { omniscient=false, labe
     let body=m.text??'',title=PHASES[m.kind]||(mystery?'剧情通知':'法官消息'),votes=[],reveals=[];
     if(!mystery)switch(m.kind){
       case 'chat':case 'left':break;
+      case 'participation_notice':title='参赛情况提醒';break;
       case 'role':title='私密身份';body=`${name(m.to)}的身份：${ROLE_LABELS[m.role]??'未知'}${m.teammates?.length?'；狼人队友：'+list(m.teammates):''}`;break;
       case 'assignments':title='法官身份表';body='仅获准的观战视角显示身份表。';reveals=roles(m.roles);break;
       case 'started':body=Object.entries(m.rules??{}).filter(([,n])=>Number.isInteger(n)&&n>0).map(([r,n])=>`${ROLE_LABELS[r]||r} ${n}人`).join(' · ');break;

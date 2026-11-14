@@ -51,6 +51,78 @@ async function fixture(count = 10) {
     close: async () => { await app.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
+test('完整无行动局记录并提醒，匿名房主按座位查看，重启不重复提醒也不自动禁赛', async () => {
+  const f = await fixture(); try {
+    const players = f.ids.slice(0,6), gameId = await f.reserve(players,{roles:{wolf:1,villager:5},anonymous:true});
+    f.advance(gameId); await f.restart();
+    for(let i=0;i<20 && f.app.store.get('games',gameId).status!=='finished';i++) f.advance(gameId);
+    const game=f.app.store.get('games',gameId);
+    assert.equal(game.status,'finished');
+    assert.deepEqual(game.activity.report.players.sort(),[...players].sort());
+    const host=await f.ok('10001','game.read',{gameId});
+    assert.match(host.game.activityNotice,/1号.*6号.*不自动禁赛/);
+    assert.doesNotMatch(JSON.stringify(host),/1000[1-6]/);
+    assert.equal(host.messages.filter(m=>m.kind==='participation_notice').length,1);
+    const other=await f.ok('10002','game.read',{gameId});
+    assert.equal(other.game.activityNotice,undefined);
+    assert.equal(other.messages.filter(m=>m.kind==='participation_notice').length,1);
+    const count=f.app.store.count('gameMessages',"scope=? AND json_extract(data,'$.kind')='participation_notice'",[gameId]);
+    assert.equal(count,6);
+    await f.restart();f.advance(gameId);
+    assert.equal(f.app.store.count('gameMessages',"scope=? AND json_extract(data,'$.kind')='participation_notice'",[gameId]),count);
+    await f.ok('10002','game.schedule',{maxPlayers:6,scheduledAt:new Date(f.now+240000).toISOString(),sourceKind:'square',public:true});
+  } finally { await f.close(); }
+});
+
+test('首夜死亡不误报，发言、结束发言、主动弃票、技能行动均算参与，超时无行动才提醒', async () => {
+  const f = await fixture(); try {
+    const players=f.ids.slice(0,6),gameId=await f.reserve(players,{roles:{wolf:1,villager:5}});
+    const wolf=players.find(id=>f.app.store.get('games',gameId).roles[id]==='wolf');
+    const killed=players.find(id=>id!==wolf&&id!=='10001');
+    const villagers=players.filter(id=>id!==wolf&&id!==killed);
+    const idle=villagers.find(id=>id!=='10001'),[speaker,done,abstain]=villagers.filter(id=>id!==idle);
+    await f.ok(wolf,'game.act',{gameId,action:'attack',target:killed});
+    assert.equal(f.app.store.get('games',gameId).status,'day');
+    await f.ok(speaker,'game.message',{gameId,channel:'public',text:'先听听大家的推理。'});
+    await f.ok(done,'game.act',{gameId,action:'end_speech'});
+    assert.equal((await f.rpc(idle,'game.act',{gameId,action:'attack',target:wolf})).ok,false,'无效调用不算行动');
+    await f.restart();f.advance(gameId);
+    for(const id of [speaker,done])await f.ok(id,'game.vote',{gameId,target:wolf});
+    for(const id of [wolf,abstain])await f.ok(id,'game.vote',{gameId,target:'abstain'});
+    f.advance(gameId);
+    const game=f.app.store.get('games',gameId);
+    assert.equal(game.status,'finished');assert.deepEqual(game.activity.report.players,[idle]);
+    assert.equal(game.activity.players[killed].timedOutPhases,0);
+    assert.equal(game.activity.players[wolf].actions,1);
+    assert.equal(game.activity.players[speaker].messages,1);
+    assert.equal(game.activity.players[done].actions,1);
+    assert.equal(game.activity.players[abstain].votes,1);
+  } finally { await f.close(); }
+});
+
+test('明确跳过技能不算无行动，离场成员不误报，旧局缺少完整计数时不追溯判断', async () => {
+  const f=await fixture();try{
+    const players=f.ids.slice(0,6),gameId=await f.reserve(players,{roles:{wolf:1,seer:1,villager:4}});
+    const roles=f.app.store.get('games',gameId).roles;
+    const wolf=players.find(id=>roles[id]==='wolf'),seer=players.find(id=>roles[id]==='seer');
+    const leaving=players.find(id=>roles[id]==='villager'&&id!=='10001');
+    await f.ok(wolf,'game.act',{gameId,action:'skip'});
+    await f.ok(seer,'game.act',{gameId,action:'skip'});
+    f.advance(gameId);
+    await f.ok(leaving,'game.exit',{gameId});
+    for(let i=0;i<20&&f.app.store.get('games',gameId).status!=='finished';i++)f.advance(gameId);
+    const game=f.app.store.get('games',gameId);
+    for(const id of [wolf,seer,leaving])assert.ok(!game.activity.report.players.includes(id));
+    assert.equal(game.activity.players[wolf].actions,1);assert.equal(game.activity.players[seer].actions,1);
+    f.advance(gameId);
+    const legacyId=await f.reserve(players,{roles:{wolf:1,villager:5}}),legacy=f.app.store.get('games',legacyId);
+    delete legacy.activity;f.app.store.put('games',legacyId,legacy);
+    for(let i=0;i<20&&f.app.store.get('games',legacyId).status!=='finished';i++)f.advance(legacyId);
+    assert.equal(f.app.store.get('games',legacyId).activity,undefined);
+    assert.equal(f.app.store.count('gameMessages',"scope=? AND json_extract(data,'$.kind')='participation_notice'",[legacyId]),0);
+  }finally{await f.close()}
+});
+
 test('公开全知观战与局外讨论隔离，只有观众发言扣额度，对局期间聊天暂存并在结束后补投', async () => {
   const f = await fixture();
   try {

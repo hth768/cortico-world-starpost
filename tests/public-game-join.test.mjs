@@ -88,7 +88,7 @@ for (const family of ['game', 'mystery']) test(`${family} 公开加入保留人�
   } finally { await f.close(); }
 });
 
-for (const transport of ['mobile', 'web']) test(`${transport} 人类从广场免邀请加入，仅使用本人身份并保留禁赛和五局限制`, async () => {
+for (const transport of ['mobile', 'web']) test(`${transport} 人类从广场免邀请加入，不限每日局数但保留本人身份和禁赛检查`, async () => {
   const f = await fixture();
   try {
     const human = await f.human('10003', transport), denied = await f.human('10004', transport);
@@ -106,12 +106,14 @@ for (const transport of ['mobile', 'web']) test(`${transport} 人类从广场免
     assert.equal((await denied('human.join', args)).status, 403);
     f.app.store.remove('humanConduct', '10004');
     f.app.store.put('gameParticipation', '10004H:2026-11-02', { owner: '10004H', day: '2026-11-02', games: ['1', '2', '3', '4', '5'] });
-    assert.match((await denied('human.join', args)).error, /5\/5 局.*每日上限/);
-    f.app.store.remove('gameParticipation', '10004H:2026-11-02');
     stored = f.app.store.get('games', g.gameId); stored.kicked = ['10004H']; f.app.store.put('games', g.gameId, stored);
     assert.equal((await denied('human.join', args)).status, 403);
     assert.equal(f.app.store.get('games', g.gameId).invited.includes('10004H'), false);
     assert.equal(f.app.store.get('gameAccess', `10004H:${g.gameId}`), undefined);
+    stored.kicked = []; f.app.store.put('games', g.gameId, stored);
+    await f.ok(denied('human.join', args));
+    assert.ok(f.app.store.get('games', g.gameId).joined.includes('10004H'));
+    assert.equal((await f.ok(denied('human.status'))).rules.dailyLimit, null);
   } finally { await f.close(); }
 });
 

@@ -127,6 +127,6 @@ test('扩展人类配置同步上限，规则及面板返回真实额度，bot �
     const login = await f.ok(Promise.resolve(await loginResponse.json()));
     const status = await fetch(f.base() + '/mobile/rpc', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${login.accessToken}` }, body: JSON.stringify({ action: 'human.status', limits: { maxWerewolfGamesPerDay: 999 } }) });
     const human = await f.ok(Promise.resolve(await status.json()));
-    assert.equal(human.rules.dailyLimit, 5); assert.equal(human.rules.usedToday, 0);
+    assert.equal(human.rules.dailyLimit, null); assert.equal(human.rules.remainingToday, null); assert.equal(human.rules.usedToday, 0);
   } finally { await world.stop(); await f.close(); }
 });

@@ -28,8 +28,8 @@ android {
         applicationId = "io.starpost.mobile"
         minSdk = 26
         targetSdk = 35
-        versionCode = 24
-        versionName = "1.10.3"
+        versionCode = 25
+        versionName = "1.11.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     sourceSets {

@@ -92,7 +92,7 @@ const STARPOST_FAMILY_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
   { name: 'starpost_group_manage', description: '统一群管理工具：info 查看；admin 设置管理员（仅群主）；mute/unmute 禁言/解禁；quiet 每日北京时间禁言时段；mention_all @全体；announce 群公告；title 成员头衔；kick 移出成员。普通管理员不能管理群主或其他管理员。公告和全体消息计入聊天额度。', tags: ['read', 'write'], parameters: params({
     action: { type: 'string', enum: ['info', 'admin', 'mute', 'unmute', 'quiet', 'mention_all', 'announce', 'title', 'kick'] }, groupId: s('群 ID'), botId: s('目标成员 ID'), enabled: { type: 'boolean', description: 'admin：设为或撤销管理员' }, minutes: { type: 'integer', minimum: 1, maximum: 43200 }, text: s('公告或 @全体的文字'), title: s('头衔，最多 32 字，空字符串清除'), windows: { type: 'array', maxItems: 8, items: { type: 'object', additionalProperties: false, properties: { start: { type: 'string', description: 'HH:mm' }, end: { type: 'string', description: 'HH:mm，可跨午夜' } }, required: ['start', 'end'] }, description: 'quiet：空数组清除时段' },
   }, ['action', 'groupId']) },
-  { name: 'starpost_werewolf', description: 'schedule/match 可设 anonymous=true 整局匿名；privacy 设置或查看个人 anonymous（两种游戏共用，仅影响之后加入的局）。匿名行动用返回的 seat:N，不猜测身份。 狼人杀统一入口。record 按目标ID和section=record/recent查看战绩或最近3场；rules 查规则；schedule 的 startMode=scheduled 定时预约（提前3分钟报到），full 公开人满即开（加入即准备）；match 按 maxPlayers=6/8/10/12/16/20 与人类或 bot 实时匹配，operation=join/status/leave；等待时保持连接，断连2分钟释放席位；schedule 可从私聊或群聊邀请；invite：已加入的成员可在开局前邀请自己的好友/群成员，私密局也可；join 可凭广场 gameId 直接加入已公告的公开预约，无需邀请；私密局仍需邀请，指定法官用 join 接受邀请；checkin 在开局前 3 分钟报到；leave 退出预约；exit 离开房间并公告，开局后视为弃权、次数不退、猎人不触发技能，法官离开由程序接管；list/read 查看；message 游戏室发言；act 身份行动或 move=end_speech 结束白天发言，全员完成立即推进，原计时兜底；vote 公投；assign 为 bot 法官分发身份；cancel 取消预约；report 举报有权查看的人类消息，交管理员复核。H 后缀表示人类玩家。游戏消息不扣普通聊天额度；每日局数默认 5，由人类在扩展设置调整，rules 返回已用、上限和剩余次数；bot 不能通过工具修改额度。', tags: ['read', 'write'], parameters: params({
+  { name: 'starpost_werewolf', description: 'schedule/match 可设 anonymous=true 整局匿名；privacy 设置或查看个人 anonymous（两种游戏共用，仅影响之后加入的局）。匿名行动用返回的 seat:N，不猜测身份。 狼人杀统一入口。record 按目标ID和section=record/recent查看战绩或最近3场；rules 查规则；schedule 的 startMode=scheduled 定时预约（提前3分钟报到），full 公开人满即开（加入即准备）；match 按 maxPlayers=6/8/10/12/16/20 与人类或 bot 实时匹配，operation=join/status/leave；等待时保持连接，断连2分钟释放席位；schedule 可从私聊或群聊邀请；invite：已加入的成员可在开局前邀请自己的好友/群成员，私密局也可；join 可凭广场 gameId 直接加入已公告的公开预约，无需邀请；私密局仍需邀请，指定法官用 join 接受邀请；checkin 在开局前 3 分钟报到；leave 退出预约；exit 离开房间并公告，开局后视为弃权、次数不退、猎人不触发技能，法官离开由程序接管；list/read 查看；message 游戏室发言；act 身份行动或 move=end_speech 结束白天发言，全员完成立即推进，原计时兜底；vote 公投；assign 为 bot 法官分发身份；cancel 取消预约；report 举报有权查看的人类消息，交管理员复核。H 后缀表示人类玩家。游戏消息不扣普通聊天额度；bot 每日局数默认 5，由人类在扩展设置调整，人类玩家不限每日局数；rules 返回实际额度与已用次数，bot 不能通过工具修改额度。', tags: ['read', 'write'], parameters: params({
     action: { type: 'string', enum: ['privacy', 'rules', 'schedule', 'invite', 'join', 'checkin', 'leave', 'exit', 'list', 'browse', 'read', 'message', 'act', 'vote', 'assign', 'cancel', 'visibility', 'publish', 'watch', 'unwatch', 'report', 'record', 'match'] },
     botId: s('record：目标账号ID，省略查看自己'), section: {type:'string',enum:['record','recent'],description:'record：战绩或最近3场，默认record'},
     messageId: s('report：举报当前有权查看的人类聊天消息 ID'), reason: { type: 'string', enum: ['sexual', 'abuse', 'injection', 'other'], description: 'report：色情、辱骂、注入或其他违规，提交管理员复核' }, note: s('report：补充说明，最多300字；举报不是处罚判定'),
@@ -166,6 +166,7 @@ export class StarpostWorld implements World {
   private host: WorldHost | null = null;
   private timer: NodeJS.Timeout | null = null;
   private pollController: AbortController | null = null;
+  private readonly backgroundWork = new Set<Promise<unknown>>();
   private busy = false;
   private connected = false;
   private lastError = '';
@@ -321,7 +322,7 @@ export class StarpostWorld implements World {
   private stickerStore(): StarpostStickerStore {
     return this.stickers ??= new StarpostStickerStore(resolve(this.cfg.emojiDir || DEFAULT_EMOJI_DIR),
       join(this.dataDir, 'starpost-sticker-index.json'), this.cfg.sticker?.qqIndexFile
-        ? resolve(this.botDir, this.cfg.sticker.qqIndexFile) : join(this.dataDir, 'sticker-index.json'),
+        ? resolve(this.botDir, this.cfg.sticker.qqIndexFile) : '',
       this.cfg.sticker?.maxFiles ?? 10000, this.clock);
   }
   private rememberSquare(id: string): void {
@@ -755,10 +756,19 @@ export class StarpostWorld implements World {
     }
     this.notifications.applySettings(notificationSettings(this.cfg.notifications, this.cfg.receiveMode === 'active'));
     if (this.cfg.receiveMode === 'passive' && this.inboxCheckAt) { this.inboxCheckAt = 0; this.saveCursor(); }
-    await this.poll();
-    this.timer = setInterval(() => { void this.poll(true); void this.checkInboxReminder(); }, Math.max(1000, this.cfg.pollIntervalMs));
+    await this.trackWork(this.poll());
+    if (this.host !== host) return;
+    this.timer = setInterval(() => { void this.trackWork(this.poll(true)); void this.trackWork(this.checkInboxReminder()); }, Math.max(1000, this.cfg.pollIntervalMs));
   }
-  async stop(): Promise<void> { if (this.timer) clearInterval(this.timer); this.timer = null; this.pollController?.abort(); this.pollController = null; this.host = null; }
+  private async trackWork(work: Promise<unknown>): Promise<void> {
+    this.backgroundWork.add(work);
+    try { await work; } finally { this.backgroundWork.delete(work); }
+  }
+  async stop(): Promise<void> {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null; this.pollController?.abort(); this.pollController = null; this.host = null;
+    await Promise.allSettled([...this.backgroundWork]);
+  }
   private saveCursor(): void {
     mkdirSync(this.dataDir, { recursive: true });
     const temp = `${this.cursorFile}.${process.pid}.tmp`;

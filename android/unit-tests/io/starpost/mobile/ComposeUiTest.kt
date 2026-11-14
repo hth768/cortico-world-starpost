@@ -28,6 +28,17 @@ import java.io.File
 @Config(sdk=[35],qualifiers="w412dp-h892dp-xhdpi")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ComposeUiTest {
+    @Test fun humanGameQuotaAndParticipationNoticeAreReadable(){
+        val rules=obj("usedToday" to 6,"dailyLimit" to JSONObject.NULL)
+        val notice="参赛情况提醒：2号有行动阶段超时。本次仅提醒，不自动禁赛。"
+        compose.setContent{StarpostTheme("light",false){Column{
+            Text(humanGameQuotaLabel(rules))
+            GameBanner(obj("status" to "finished","activityNotice" to notice),"我的参赛视角")
+        }}}
+        compose.onNodeWithText("6 局 · 不限局数").assertExists()
+        compose.onNodeWithText(notice).assertExists()
+        org.junit.Assert.assertEquals("3/5 局",humanGameQuotaLabel(obj("usedToday" to 3,"dailyLimit" to 5)))
+    }
     @Test fun chatMenuExposesDistinctGroupAndPrivateActions(){
         val ui=UiActions(client())
         val route=mutableStateOf(Route("socialHistory","10002H"))
