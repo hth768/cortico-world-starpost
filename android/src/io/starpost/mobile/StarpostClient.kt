@@ -166,6 +166,18 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
         }catch(e:CancellationException){throw e}catch(e:Exception){null}
     }
     private suspend fun rpc(action: String,args: JSONObject = obj())=request("/mobile/rpc",obj("action" to action,"args" to args))
+    internal suspend fun readChatHistory(action:String,args:JSONObject):JSONObject {
+        require(action in listOf("owner.search","owner.context","history.search","history.context","social.history.search","social.history.context"))
+        val epoch=sessionEpoch
+        try {
+            val result=rpc(action,args)
+            if(epoch!=sessionEpoch)throw CancellationException("登录已切换")
+            return result
+        } catch(e:ApiError) {
+            if(epoch==sessionEpoch&&e.status in listOf(401,423))handle(e)
+            throw e
+        }
+    }
     private suspend fun handle(error: Throwable,allowExpiry:Boolean=true) {
         if(error is CancellationException)throw error
         if(error is ApiError && error.status==401 && allowExpiry){expire();notice("登录已过期，请重新登录")}

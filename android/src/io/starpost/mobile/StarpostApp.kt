@@ -99,7 +99,7 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
                 Scaffold(modifier=shell.weight(1f),containerColor=Color.Transparent,snackbarHost={SnackbarHost(snackbar)},
                     topBar={TopAppBar(title={Column{Text(pageTitle,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis);if(state.route.page in rootPages)Text("STARPOST · ${state.account.str("nickname")}",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)}},
                         navigationIcon={if(state.route.page !in rootPages&&state.activeGame.isEmpty())IconButton(onClick={vm.back()}){Glyph("back","返回")}},
-                        actions={if(state.activeGame.isEmpty() && state.route.page in listOf("socialHistory","owner"))ChatMenu(ui,state) else if(state.activeGame.isEmpty()){IconButton(onClick={ui.miniAppsOpen=true}){Glyph("game","游戏小程序")};IconButton(onClick={ui.modal=Modal.More}){Glyph("add","更多功能")}}},
+                        actions={if(state.activeGame.isEmpty() && state.route.page in listOf("socialHistory","owner","history","blockedHistory"))ChatMenu(ui,state) else if(state.activeGame.isEmpty()){IconButton(onClick={ui.miniAppsOpen=true}){Glyph("game","游戏小程序")};IconButton(onClick={ui.modal=Modal.More}){Glyph("add","更多功能")}}},
                         scrollBehavior=readingBar,colors=TopAppBarDefaults.topAppBarColors(containerColor=MaterialTheme.colorScheme.background))},
                     bottomBar={
                         if(!wide && state.route.page in rootPages && state.activeGame.isEmpty()) {

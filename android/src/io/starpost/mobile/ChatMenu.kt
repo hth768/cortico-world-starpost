@@ -12,6 +12,7 @@ import androidx.compose.ui.unit.dp
     val kind=if(s.route.page=="owner")"owner" else s.route.kind
     val target=if(kind=="owner")s.account.str("botId") else s.route.id
     var open by remember(kind,target){mutableStateOf(false)}
+    var search by remember(kind,target){mutableStateOf(false)}
     var members by remember(kind,target){mutableStateOf(false)}
     val flags=s.data.optJSONObject("preferences")
     val contacts=s.social.rows("friendProfiles")+s.account.rows("bots")
@@ -22,6 +23,8 @@ import androidx.compose.ui.unit.dp
         IconButton(onClick={open=true}){Glyph("more","聊天设置")}
         DropdownMenu(expanded=open,onDismissRequest={open=false}){
             @Composable fun item(label:String,enabled:Boolean=true,act:()->Unit){DropdownMenuItem(text={Text(label)},enabled=enabled&&!s.working,onClick={open=false;act()})}
+            item("查找聊天记录"){search=true}
+            if(s.route.page !in listOf("history","blockedHistory")){
             item(if(flags?.optBoolean("pinned")==true)"取消置顶" else "置顶聊天",flags!=null){toggle("pinned")}
             item(if(flags?.optBoolean("muted")==true)"关闭消息免打扰" else "开启消息免打扰",flags!=null){toggle("muted")}
             HorizontalDivider()
@@ -38,8 +41,10 @@ import androidx.compose.ui.unit.dp
                     item("删除好友"){ui.confirm("删除好友","确定解除好友关系吗？"){ui.vm.perform("social.friend.remove",obj("botId" to target),Route())}}
                 }
             }
+            }
         }
     }
+    if(search) ChatHistorySearchDialog(ui,s,onDismiss={search=false})
     if(members && group!=null) AlertDialog(onDismissRequest={members=false},title={Text("群成员 · "+group.strings("members").size)},text={
         Column(Modifier.heightIn(max=400.dp).verticalScroll(rememberScrollState())){
             for(id in group.strings("members"))TextButton(onClick={members=false;ui.go("profile",id,"social")}){Text(if(id==s.account.str("humanId"))s.account.str("nickname",id)+"（我）" else contactName(contacts.find{it.str("botId")==id},id))}

@@ -40,7 +40,7 @@ for(const client of ['mobile','web'])test(`${client} 人类参加剧本杀：自
     let room=await f.ok(f.player('human.room',{gameId:id}));
     assert.equal(room.game.gameType,'mystery');assert.equal(room.humanId,'10002H');assert.equal(room.activeGameId,id);
     assert.deepEqual(room.channels,['public','private']);assert.deepEqual(room.options,[]);assert.equal(room.game.seats.length,6);
-    for(const action of ['owner.send','owner.history','game','social.post.list','human.schedule','human.join'])
+    for(const action of ['owner.send','owner.history','owner.search','owner.context','history.search','history.context','social.history.search','social.history.context','game','social.post.list','human.schedule','human.join'])
       assert.equal((await f.player(action,{gameId:id,text:'不能绕过聊天室'})).status,423,action);
     assert.equal((await f.bot('10002','owner.send',{text:'不能通过自己的 bot 作弊'})).status,423);
     const personal=await f.ok(f.bot('10001','mystery.message',{gameId:id,channel:'private',toBotId:'10002H',text:'你的角色是钟表匠，线索是停摆的钟。'}));

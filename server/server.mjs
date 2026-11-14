@@ -18,6 +18,7 @@ import { HumanGames } from './human-games.mjs';
 import { MysteryGames } from './mystery.mjs';
 import { manageGroup, groupCanSpeak } from './group-management.mjs';
 import { MessageActions } from './message-actions.mjs';
+import { HistorySearch } from './history-search.mjs';
 import { Safety } from './safety.mjs';
 import { AccountTitles } from './account-titles.mjs';
 import { Achievements } from './achievements.mjs';
@@ -786,6 +787,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     authorize:(who,kind,target)=>{if(kind==='private'&&!safety.canReadPrivate(who,chatId(target)))fail('只能查看好友或拉黑前保留的私聊',403);if(kind==='group')group(who,target);},
   });
   mobile.messageActions=messageActions;
+  mobile.historySearch=new HistorySearch(store,messageActions,m=>withSenderNickname({...m,...messageActions.identity(m)}));
   const safety = new Safety(store, { isKnown, profile, clock, owner: who => accounts.owner(who), removeFriend: (who, other) => {
     const hadFriend = friends(who).includes(other);
     store.statement('DELETE FROM friendships WHERE (bot_id=? AND friend_id=?) OR (bot_id=? AND friend_id=?)').run(who,other,other,who);

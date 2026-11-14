@@ -28,6 +28,33 @@ import java.io.File
 @Config(sdk=[35],qualifiers="w412dp-h892dp-xhdpi")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ComposeUiTest {
+    @Test fun historySearchKeepsQueryAndPagesAndOpensContext(){
+        val ui=UiActions(client());val calls=mutableListOf<Pair<String,JSONObject>>()
+        val m=obj("id" to "found","sender" to "10001","senderNickname" to "陈玥汐","direction" to "bot","text" to "一起去海边","at" to "2026-11-14T12:30:00Z")
+        compose.setContent{StarpostTheme("light",false){ChatHistorySearchDialog(ui,ClientState(account=account,route=Route("owner")),onDismiss={},read={action,args->
+            calls.add(action to args)
+            if(action.endsWith("context"))obj("messages" to JSONArray().put(m),"anchorId" to "found")
+            else obj("messages" to if(args.has("before"))JSONArray()else JSONArray().put(m),"nextBefore" to if(args.has("before"))JSONObject.NULL else 120L)
+        })}}
+        compose.onNodeWithText("关键词").performTextInput("海边")
+        compose.onNodeWithText("按日期筛选").performClick()
+        compose.onNodeWithText("开始日期").performTextInput("2026-11-14")
+        compose.onNodeWithText("搜索",useUnmergedTree=true).performClick()
+        compose.waitForIdle()
+        org.junit.Assert.assertEquals("owner.search",calls.first().first)
+        org.junit.Assert.assertEquals("10001",calls.first().second.str("target"))
+        org.junit.Assert.assertEquals("10001",calls.first().second.str("viewerBotId"))
+        org.junit.Assert.assertEquals("2026-11-14",calls.first().second.str("startDate"))
+        compose.onNodeWithText("2026-11-14 20:30").assertExists()
+        compose.onNodeWithText("一起去海边").performClick();compose.waitForIdle()
+        compose.onNodeWithText("消息上下文").assertExists();compose.onNodeWithText("定位消息").assertExists()
+        compose.onNodeWithContentDescription("返回搜索结果").performClick()
+        compose.onNodeWithText("海边").assertExists()
+        compose.onNodeWithText("继续搜索更早记录").performScrollTo().performClick();compose.waitForIdle()
+        org.junit.Assert.assertEquals(120L,calls.last().second.optLong("before"))
+        compose.onNodeWithText("已搜索完符合条件的保留记录").assertExists()
+        shot("android-history-search-light")
+    }
     @Test fun humanGameQuotaAndParticipationNoticeAreReadable(){
         val rules=obj("usedToday" to 6,"dailyLimit" to JSONObject.NULL)
         val notice="参赛情况提醒：2号有行动阶段超时。本次仅提醒，不自动禁赛。"

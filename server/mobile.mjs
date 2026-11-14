@@ -128,6 +128,15 @@ export class MobileAccess {
         return presentGamePage(game,{serverNow:new Date(this.clock()).toISOString(),game:{...this.games.summary(game,who),alive:game.alive,day:game.day},messages:page.map(row=>({...JSON.parse(row.data),cursor:row.rowid})),nextBefore:rows.length>50?page[0].rowid:null},this.games.nickname,{omniscient:true,label:own?'我的 bot 对局 · 全知视角':'公开对局 · 全知观战'});
       }
       case 'owner.history': return this.ownerHistory(who, args.before);
+      case 'history.search': case 'history.context':
+      case 'owner.search': case 'owner.context': {
+        if (args.viewerBotId !== undefined && args.viewerBotId !== who) fail('当前 bot 已切换，请重新打开聊天记录搜索', 409);
+        const owner = action.startsWith('owner.');
+        if (owner && args.target !== undefined && args.target !== who) fail('只能查看当前 bot 的专属频道', 403);
+        if (!owner && !['private','group'].includes(args.kind)) fail('消息类型不合法');
+        const input = owner ? {...args,kind:'owner',target:who} : args;
+        return this.historySearch[action.endsWith('.search')?'search':'context'](who,input);
+      }
       case 'owner.address': {
         const address = short(args.address, 32);
         if (!/^[\p{L}\p{N}\p{M} _.-]{1,32}$/u.test(address)) fail('称呼须为 1–32 个字母、汉字、数字、空格或 _.-');

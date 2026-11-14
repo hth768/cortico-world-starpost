@@ -92,3 +92,11 @@ input,textarea,select{color:var(--ink);background:var(--lowest);border:1px solid
 .chat-more{flex:none;min-width:44px;font-size:1.4rem;line-height:1}
 .chat-options{display:grid;gap:8px;max-height:80dvh;overflow-y:auto}
 .chat-options>button{text-align:start}
+.history-search{width:min(760px,100%);max-height:90dvh;display:flex;flex-direction:column;gap:12px;overflow:hidden}
+.history-search h2{margin:0}.history-search-form{display:grid;gap:10px}.history-search-form [hidden],.history-search [hidden]{display:none!important}
+.history-search-form summary{cursor:pointer;color:var(--primary);padding-block:6px}.history-date-range{display:flex;gap:12px}.history-date-range>*{min-width:0;flex:1}.history-search-form input{width:100%;min-width:0;box-sizing:border-box}
+.history-search-results,.history-search-context{min-height:0;overflow:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:12px}
+.history-search-result,.history-context-message{display:flex;flex-direction:column;gap:8px;text-align:start;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid var(--border);border-radius:20px;background:var(--low);padding:16px;flex:none}
+.history-search-preview{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}.history-open{color:var(--primary)}
+.history-context-message.anchor{border:2px solid var(--primary)}.history-context-message p{margin:0}.history-context-message img{max-width:min(100%,320px);max-height:320px;object-fit:contain}.history-search [role=status]:empty{display:none}
+@media(max-width:600px){.dialog:has(.history-search){padding:10px}.history-search{max-height:94dvh;padding:16px}.history-search h2{font-size:21px}}

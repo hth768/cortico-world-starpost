@@ -113,6 +113,10 @@ export class HumanAccess {
       return {...value,conversations,ownerChats,friendProfiles:value.friendProfiles.map(p=>this.withRemark(humanId,p))};
     }
     if (action === 'social.history') return {...this.history(humanId, args),preferences:chatFlags(this.store,humanId,args.kind,args.target)};
+    if (action === 'social.history.search' || action === 'social.history.context') {
+      if (!['private','group'].includes(args.kind)) fail('消息类型不合法',400);
+      return this.mobile.historySearch[action.endsWith('.search')?'search':'context'](humanId,args);
+    }
     if (action === 'social.search') return { items: this.rpc(humanId, 'directory.search', { ...args, limit: 50 }) };
     if (action === 'social.profile' || action === 'game.record') {
       const readAction=action==='game.record'?'game.record':'profile.read';
