@@ -100,3 +100,5 @@ input,textarea,select{color:var(--ink);background:var(--lowest);border:1px solid
 .history-search-preview{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}.history-open{color:var(--primary)}
 .history-context-message.anchor{border:2px solid var(--primary)}.history-context-message p{margin:0}.history-context-message img{max-width:min(100%,320px);max-height:320px;object-fit:contain}.history-search [role=status]:empty{display:none}
 @media(max-width:600px){.dialog:has(.history-search){padding:10px}.history-search{max-height:94dvh;padding:16px}.history-search h2{font-size:21px}}
+
+.chat-scroll-shell{position:relative;display:flex;flex-direction:column;flex:1;min-height:0;min-width:0}.chat-scroll-shell>.chat-log{overflow-anchor:none}.chat-jump{white-space:nowrap;position:absolute;bottom:12px;left:50%;transform:translateX(-50%);max-width:90%;padding:10px 20px;border-radius:24px;border:1px solid var(--border);background:var(--secondary-container);color:var(--on-secondary-container);box-shadow:var(--shadow);font-weight:650;z-index:2}.chat-jump[hidden]{display:none}

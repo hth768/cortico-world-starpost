@@ -102,29 +102,28 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
 }}
 
 @Composable private fun ChatScreen(ui:UiActions,s:ClientState){
-    val route=s.route;val botReadOnly=route.page=="history";val readOnly=botReadOnly||route.page=="blockedHistory";val owner=route.page=="owner";val messages=s.data.rows("messages");val list=rememberLazyListState();val key=ui.vm.draftKey
+    val route=s.route;val botReadOnly=route.page=="history";val readOnly=botReadOnly||route.page=="blockedHistory";val owner=route.page=="owner";val messages=s.data.rows("messages");val key="${s.account.str("humanId")}:${s.account.str("botId")}:${route.page}:${route.kind}:${route.id}"
     var draft by rememberSaveable(key){mutableStateOf(ui.vm.draft())};var quote by remember(key){mutableStateOf<JSONObject?>(null)}
     var menu by remember(key){mutableStateOf<JSONObject?>(null)};val selected=remember(key){mutableStateListOf<String>()}
     var forwardIds by remember(key){mutableStateOf<List<String>>(emptyList())};var targets by remember(key){mutableStateOf<JSONObject?>(null)};var record by remember(key){mutableStateOf<JSONObject?>(null)}
-    val composerFocus=remember{androidx.compose.ui.focus.FocusRequester()};var initial by remember(route.page,route.id){mutableStateOf(true)}
+    val composerFocus=remember{androidx.compose.ui.focus.FocusRequester()};var sent by remember(key){mutableStateOf(0)}
     fun source()=obj("kind" to if(owner)"owner" else route.kind,"target" to if(owner)s.account.str("botId") else route.id)
     fun request(m:JSONObject)=source().put("messageId",m.str("id"))
     fun toggle(id:String){if(id in selected)selected.remove(id)else if(selected.size<20)selected.add(id)else ui.vm.notice("最多选择 20 条消息")}
     fun chooseForward(ids:List<String>){if(s.working)return;forwardIds=ids;ui.vm.perform("social.overview"){targets=it}}
     fun send(destination:Route,payload:JSONObject,done:()->Unit={}){
-        if(destination.page=="owner"&&s.account.str("address").isEmpty())ui.form("桌宠怎样称呼你？",listOf(TextFieldSpec("address","例如：主人")),"保存称呼后发送当前消息。"){v->ui.vm.sendChatPayload(destination,payload,v["address"],done=done)}
-        else ui.vm.sendChatPayload(destination,payload,done=done)
+        val completed={ done(); if(destination.page==route.page&&destination.kind==route.kind&&destination.id==route.id)sent++ }
+        if(destination.page=="owner"&&s.account.str("address").isEmpty())ui.form("桌宠怎样称呼你？",listOf(TextFieldSpec("address","例如：主人")),"保存称呼后发送当前消息。"){v->ui.vm.sendChatPayload(destination,payload,v["address"],done=completed)}
+        else ui.vm.sendChatPayload(destination,payload,done=completed)
     }
     fun sendImage(image:JSONObject){val quoted=quote?.str("id");send(route,obj("text" to "","image" to image,"replyTo" to quoted)){if(quote?.str("id")==quoted)quote=null}}
     LaunchedEffect(messages.toString()){if(quote!=null&&messages.any{it.str("id")==quote?.str("id")&&it.optBoolean("recalled")})quote=null;selected.removeAll{old->messages.any{it.str("id")==old&&it.optBoolean("recalled")}}}
-    LaunchedEffect(messages.lastOrNull()?.str("id")){if(route.before==null&&(initial||!list.canScrollForward)){if(messages.isNotEmpty())list.animateScrollToItem(messages.size-1);initial=false}}
     Column(Modifier.fillMaxSize()){
         if(readOnly)Text("Bot 的会话 · 只读",Modifier.padding(horizontal=20.dp,vertical=4.dp),style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
         Pager(ui,s)
         if(selected.isNotEmpty())Row(Modifier.fillMaxWidth().padding(horizontal=16.dp),verticalAlignment=Alignment.CenterVertically){Text("已选 ${selected.size}/20",Modifier.weight(1f));TextButton(enabled=!s.working,onClick={chooseForward(selected.toList())}){Text("合并转发")};TextButton(onClick={selected.clear()}){Text("取消多选")}}
         if(messages.isEmpty())Box(Modifier.weight(1f),contentAlignment=Alignment.Center){EmptyState("说声你好吧",if(readOnly)"这里还没有聊天记录。" else "文字、图片和表情包，都能传递心情。")}
-        else LazyColumn(state=list,modifier=Modifier.weight(1f).fillMaxWidth(),contentPadding=PaddingValues(20.dp),verticalArrangement=Arrangement.spacedBy(16.dp)){
-            items(messages,key={it.str("id",it.toString())}){m->val self=if(owner)m.str("direction")=="human" else m.str("sender")==if(readOnly)s.account.str("botId")else s.account.str("humanId")
+        else ChatTimeline(key,route.before,messages,sent,Modifier.weight(1f).fillMaxWidth(),latest={ui.vm.navigate(route.copy(before=null),false)}){m->val self=if(owner)m.str("direction")=="human" else m.str("sender")==if(readOnly)s.account.str("botId")else s.account.str("humanId")
                 Row(verticalAlignment=Alignment.CenterVertically){
                 if(selected.isNotEmpty()&&!m.optBoolean("recalled"))Checkbox(checked=m.str("id") in selected,onCheckedChange={toggle(m.str("id"))})
                 Box(Modifier.weight(1f)){Bubble(ui,m,self,label=if(owner){if(self)"我 · ${m.str("address")}" else contactName(s.account.rows("bots").find{it.str("botId")==s.account.str("botId")},"我的 bot")}else if(!readOnly&&route.kind=="private"&&!self)contactName(s.social.rows("friendProfiles").find{it.str("botId")==m.str("sender")},m.str("senderNickname",m.str("sender")))else m.str("senderNickname",m.str("sender")),
@@ -133,7 +132,6 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
                     onLongClick={menu=m},onClick={if(selected.isNotEmpty()&&!m.optBoolean("recalled"))toggle(m.str("id"))},selected=m.str("id") in selected,
                     onForward={if(selected.isNotEmpty())toggle(m.str("id"))else ui.vm.perform(if(owner)"owner.read" else if(botReadOnly)"message.read" else "social.message.read",request(m)){record=it}}
                 )}}
-            }
         }
         if(!readOnly)Surface(color=MaterialTheme.colorScheme.surfaceContainer,shape=RoundedCornerShape(topStart=28.dp,topEnd=28.dp)){
             Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){

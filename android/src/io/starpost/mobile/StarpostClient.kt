@@ -278,7 +278,7 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
         viewModelScope.launch{try{
             if(route.page=="owner"&&address!=null){rpc("owner.address",obj("address" to address));val info=rpc("account.info");if(epoch!=sessionEpoch)return@launch;mutable.update{it.copy(account=info)}}
             rpc(if(route.page=="owner")"owner.send" else "social.message.send",JSONObject(payload.toString()).put("kind",route.kind).put("target",route.id))
-            if(epoch==sessionEpoch){done();notice(noticeText);refreshNow()}
+            if(epoch==sessionEpoch){done();notice(noticeText);val current=state.value.route;if(current.page==route.page&&current.kind==route.kind&&current.id==route.id&&current.before!=null)mutable.update{it.copy(route=current.copy(before=null))};refreshNow()}
         }catch(e:Exception){handle(e)}finally{mutable.update{it.copy(working=false)}}}
     }
     fun perform(action:String,args:JSONObject=obj(),next:Route?=null,done:(JSONObject)->Unit={}) {
