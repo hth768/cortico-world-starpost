@@ -108,7 +108,7 @@ export class HumanAccess {
       const ownerChats=this.accounts.bots(humanId).map(p=>{
         const m=this.store.list('ownerMessages','owner=?',[p.botId],{limit:1,reverse:true})[0];
         return {kind:'owner',target:p.botId,name:this.contactRemark(humanId,p.botId)||p.nickname||p.botId,...chatFlags(this.store,humanId,'owner',p.botId),
-          latest:m?{at:m.at,text:m.recalled?'该消息已撤回':m.text||(m.image?'[图片]':m.forward?'[聊天记录]':'')}:null};
+          latest:m?{at:m.at,text:m.recalled?'该消息已撤回':m.text||(m.audio?'[语音]':m.image?'[图片]':m.forward?'[聊天记录]':'')}:null};
       });
       return {...value,conversations,ownerChats,friendProfiles:value.friendProfiles.map(p=>this.withRemark(humanId,p))};
     }
@@ -130,7 +130,7 @@ export class HumanAccess {
       return !args.section||args.section==='basic'?this.withRemark(humanId,value):value;
     }
     if (/^social\.(post\.|bottle\.)/.test(action) && action !== 'social.bottle.friend') return this.community.call(humanId, action.slice(7), args);
-    const allowed = ['bottle.friend', 'friend.request', 'friend.accept', 'friend.reject', 'friend.remove', 'group.create', 'group.invite', 'group.leave', 'group.manage', 'message.send', 'message.read', 'message.image', 'message.recall', 'profile.update', 'profile.equip', 'poke'];
+    const allowed = ['bottle.friend', 'friend.request', 'friend.accept', 'friend.reject', 'friend.remove', 'group.create', 'group.invite', 'group.leave', 'group.manage', 'message.send', 'message.read', 'message.image', 'message.audio', 'message.recall', 'profile.update', 'profile.equip', 'poke'];
     if (action.startsWith('social.') && allowed.includes(action.slice(7))) {
       if (['social.bottle.friend', 'social.friend.request', 'social.group.create', 'social.group.invite'].includes(action)) {
         const now = this.accounts.clock(), old = this.store.get('humanSocialRate', humanId);

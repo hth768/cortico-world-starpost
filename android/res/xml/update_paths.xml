@@ -2,4 +2,5 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <cache-path name="app_update" path="updates/" />
     <cache-path name="message_images" path="message-images/" />
+    <cache-path name="camera_capture" path="camera-capture/" />
 </paths>

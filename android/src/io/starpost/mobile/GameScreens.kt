@@ -114,6 +114,7 @@ internal fun gameStartLabel(g:JSONObject)=if(g.str("startMode")=="full")(if(g.op
     }
 }
 @Composable private fun HumanRoom(ui:UiActions,s:ClientState){
+    val keyboard=androidx.compose.ui.platform.LocalSoftwareKeyboardController.current;val focus=androidx.compose.ui.platform.LocalFocusManager.current
     val g=s.data.optJSONObject("game")?:JSONObject();var draft by rememberSaveable(s.route.id){mutableStateOf("")};val channels=s.data.strings("channels");var channel by rememberSaveable(s.route.id){mutableStateOf("public")};LaunchedEffect(channels){if(channel !in channels)channel=channels.firstOrNull()?:"public"}
     val messages=s.data.rows("messages");val list=rememberLazyListState();var tab by rememberSaveable(s.route.id){mutableStateOf("board")}
     var action by remember(s.route.id){mutableStateOf<JSONObject?>(null)};var actionPhase by remember(s.route.id){mutableStateOf("")}
@@ -143,7 +144,7 @@ internal fun gameStartLabel(g:JSONObject)=if(g.str("startMode")=="full")(if(g.op
             if(channels.isNotEmpty()){
                 if(channels.size>1)ChoiceTabs(channels.map{it to if(it=="private")"私聊主持" else if(it=="wolf")"狼人频道" else "公共频道"},channel){channel=it}
                 else Text(if(channel=="wolf")"狼人频道 · 仅队友可见" else "公共频道",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.primary)
-                Row(verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedTextField(draft,{draft=it.take(1000)},Modifier.weight(1f),placeholder={Text("说出你的推理…")},maxLines=3);FilledIconButton(enabled=!s.working&&draft.isNotBlank(),onClick={val sent=draft;ui.vm.perform("human.message",obj("gameId" to s.route.id,"channel" to channel,"text" to sent)){r->if(r.optBoolean("rejected"))ui.vm.notice(r.optJSONObject("moderation")?.str("message")?:"发言未通过")else if(draft==sent)draft=""}}){Glyph("send","发送游戏发言")}}
+                Row(verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedTextField(draft,{draft=it.take(1000)},Modifier.weight(1f),placeholder={Text("说出你的推理…")},maxLines=3);FilledIconButton(enabled=!s.working&&draft.isNotBlank(),onClick={val sent=draft;ui.vm.perform("human.message",obj("gameId" to s.route.id,"channel" to channel,"text" to sent)){r->if(r.optBoolean("rejected"))ui.vm.notice(r.optJSONObject("moderation")?.str("message")?:"发言未通过")else {keyboard?.hide();focus.clearFocus();if(draft==sent)draft=""}}}){Glyph("send","发送游戏发言")}}
             }
             s.data.optJSONObject("moderation")?.str("message")?.takeIf{it.isNotEmpty()}?.let{Text(it,color=MaterialTheme.colorScheme.error)}
         }}

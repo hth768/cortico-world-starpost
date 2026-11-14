@@ -1,9 +1,10 @@
+import { AUDIO_EXTENSIONS } from './audio.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync, chmodSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 
-const extensions = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
+const extensions = { ...AUDIO_EXTENSIONS, 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
 
 // SQL stores small records and image references. Immutable image bytes live outside SQLite.
 export class StarpostStorage {
@@ -259,7 +260,7 @@ export class StarpostStorage {
           this.pendingMedia?.push(path);
         } finally { if (existsSync(temp)) unlinkSync(temp); }
       }
-      return { mime: value.mime, mediaId };
+      return { mime: value.mime, mediaId, ...(AUDIO_EXTENSIONS[value.mime]?{durationMs:value.durationMs??0,bytes:bytes.length}:{}) };
     }
     return Array.isArray(value) ? value.map(item => this.externalize(item)) : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, this.externalize(item)]));
   }
@@ -270,7 +271,7 @@ export class StarpostStorage {
   hydrate(value, cache = new Map(), mediaRefs = false) {
     if (!value || typeof value !== 'object') return value;
     if (value.mediaId !== undefined) {
-      if (mediaRefs) { this.mediaPath(value); return { mime: value.mime, mediaId: value.mediaId }; }
+      if (mediaRefs || AUDIO_EXTENSIONS[value.mime]) { this.mediaPath(value); return { mime: value.mime, mediaId: value.mediaId, ...(AUDIO_EXTENSIONS[value.mime]?{durationMs:value.durationMs??0,bytes:value.bytes??0}:{}) }; }
       const path = this.mediaPath(value);
       if (!cache.has(path)) cache.set(path, readFileSync(path).toString('base64'));
       return { mime: value.mime, base64: cache.get(path) };

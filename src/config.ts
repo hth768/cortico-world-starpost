@@ -1,5 +1,6 @@
 import type { ConfigGroup } from 'cortico/core/types.ts';
 import { DEFAULT_NOTIFICATION_SETTINGS, type NotificationSettings } from './notifications.ts';
+import { SPEECH_DEFAULTS, type SpeechConfig } from './speech.ts';
 
 export function normalizeBotId(value: unknown): string | null {
   const id = (typeof value === 'string' ? value : typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : '')
@@ -26,6 +27,7 @@ export interface StarpostConfigSection {
   pollIntervalMs: number;
   deliveryIntervalMs: number;
   notifications: NotificationSettings;
+  speech: SpeechConfig;
 }
 
 export const STARPOST_DEFAULTS: StarpostConfigSection = {
@@ -39,11 +41,28 @@ export const STARPOST_DEFAULTS: StarpostConfigSection = {
   pollIntervalMs: 3000,
   deliveryIntervalMs: 20000,
   notifications: { ...DEFAULT_NOTIFICATION_SETTINGS },
+  speech: { ...SPEECH_DEFAULTS },
 };
 
 export const STARPOST_CONFIG_GROUP: ConfigGroup = {
   id: 'world:starpost', owner: 'world:starpost',
   schema: { type: 'object', title: '星邮', properties: {
+    ...Object.fromEntries([
+      ['audioDir','允许发送的语音文件夹','仅允许读取此目录内的音频，留空禁用文件发送。'],
+      ['asrUrl','ASR 完整接口地址','云端 HTTPS 或本机 HTTP 服务，如 http://127.0.0.1:8000/v1/audio/transcriptions；留空不自动转写。语音将发送给你指定的服务。'],
+      ['asrModel','ASR 模型','按服务要求填写模型名。'],
+      ['asrKeySecret','ASR 密钥环境变量名','只填写 .env 中的变量名，不填写密钥；本机免鉴权服务可留空。'],
+      ['ttsUrl','TTS 完整接口地址','云端 HTTPS 或本机 HTTP 服务，如 http://127.0.0.1:8000/v1/audio/speech；留空禁用合成。'],
+      ['ttsModel','TTS 模型','按服务要求填写模型名。'],
+      ['ttsVoice','TTS 音色','按服务要求填写音色。'],
+      ['ttsKeySecret','TTS 密钥环境变量名','只填写 .env 中的变量名，不填写密钥。'],
+      ['ffmpegPath','FFmpeg 程序绝对路径','可选；转写前转成单声道 WAV。只接受程序路径，不能填写命令参数。'],
+      ['silkPath','SILK 解码适配程序绝对路径','可选；固定调用：程序 decode 输入.silk 输出.wav。须使用符合此接口的可执行适配程序。'],
+      ['converterUrl','音频转换 HTTP 接口','可选；POST {audio:{mime,base64,durationMs},targetMime:"audio/wav"}，返回 {audio:{mime,base64,durationMs}}。优先于本机转换。'],
+      ['converterKeySecret','转换服务密钥环境变量名','仅填写变量名，免鉴权可留空。'],
+    ].map(([key,title,description])=>[`worlds.starpost.speech.${key}`,{type:'string',title,description:description+' 修改后重启 World。'}])),
+    'worlds.starpost.speech.asrProtocol': {type:'string',enum:['openai','json'],title:'ASR 接口协议',description:'openai：兼容 multipart file/model；json：POST {audio,model}。均返回 {text}。本机和云端均可。'},
+    'worlds.starpost.speech.ttsProtocol': {type:'string',enum:['openai','json'],title:'TTS 接口协议',description:'openai：POST input/model/voice/response_format，返回音频；json：POST text/model/voice，返回 {audio}。'},
     'worlds.starpost.receiveMode': { type: 'string', enum: ['active', 'passive', 'mixed'], title: '内容接收模式', description: 'active 日常内容只提醒，正文由 bot 主动查看；passive 在线聊天合批投递；mixed 两者均可（默认）。主动模式的广场、动态和观战更新只汇总数量与 ID，不含预览。所有模式离线积压聊天只提醒；参赛游戏和自己的手机/网页用户消息实时投递。修改后重启 World。' },
     'worlds.starpost.serverUrl': { type: 'string', title: '中转服务地址', description: '建议使用 HTTPS。修改后重启 World。' },
     'worlds.starpost.botId': { type: 'string', title: '旧版手工账号 ID（通常留空）', description: '仅用于最早期手工配置。重装或迁移请在星邮初始页选择“恢复已有账号”，填写原 ID 并粘贴原凭据或选择凭据文件；不需要在这里填 ID。已保存的凭据优先。' },

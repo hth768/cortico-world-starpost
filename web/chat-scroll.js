@@ -10,7 +10,7 @@ window.ChatScroll = (() => {
     const s = { following: true, page: undefined, tail: null, pending: false, rows: [], anchor: null, request: 0 };
     let interacting = false, expiry = 0, pointer = false, touchY = null, frame = 0;
     const nearBottom = () => log.scrollHeight - log.clientHeight - log.scrollTop <= 48;
-    function label() { jump.hidden = s.following && !s.page; jump.textContent = s.pending ? '有新消息 · 回到底部 ↓' : s.page ? '回到最新消息 ↓' : '回到底部 ↓'; }
+    function label() { jump.hidden = s.following && !s.page; jump.textContent = s.pending ? '新消息 ↓' : s.page ? '最新 ↓' : '到底部 ↓'; jump.setAttribute('aria-label',s.pending?'有新消息，回到底部':'回到最新消息'); }
     function anchor() {
       const top = log.getBoundingClientRect().top;
       const row = [...log.querySelectorAll('[data-message-id]')].find(n => n.getBoundingClientRect().bottom > top + 1);

@@ -98,7 +98,9 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
     private val ownerAlerts get() = OwnerAlerts(getApplication())
 
     fun enableOwnerAlerts() {
-        if (state.value.working) return
+        val current=state.value
+        if (current.working || current.starting || !current.signedIn || current.account.optBoolean("needsEmail") ||
+            current.account.str("humanId").isEmpty() || current.activeGame.isNotEmpty()) return
         val epoch = sessionEpoch
         mutable.update { it.copy(working = true) }
         viewModelScope.launch {
@@ -166,6 +168,13 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
         }catch(e:CancellationException){throw e}catch(e:Exception){null}
     }
     private suspend fun rpc(action: String,args: JSONObject = obj())=request("/mobile/rpc",obj("action" to action,"args" to args))
+    internal suspend fun readAudio(action:String,args:JSONObject):JSONObject {
+        require(action in listOf("owner.audio","message.audio","social.message.audio"))
+        val epoch=sessionEpoch;val bot=state.value.account.str("botId")
+        val result=rpc(action,args)
+        if(epoch!=sessionEpoch||bot!=state.value.account.str("botId"))throw CancellationException("账号已切换")
+        return result
+    }
     internal suspend fun readChatHistory(action:String,args:JSONObject):JSONObject {
         require(action in listOf("owner.search","owner.context","history.search","history.context","social.history.search","social.history.context"))
         val epoch=sessionEpoch

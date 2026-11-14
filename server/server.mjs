@@ -1,3 +1,4 @@
+import { audioPayload } from './audio.mjs';
 import { enqueueChatNotice } from './chat-notices.mjs';
 import { GamePrivacy, gamePrivacy } from './game-privacy.mjs';
 import http from 'node:http';
@@ -304,7 +305,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       ...store.groups(who).map(g => ({ kind: 'group', target: g.id, scope: `group:${g.id}` })),
     ].map(({ kind, target, scope }) => {
       const latest = store.list('messages', 'scope=?', [scope], { limit: 1, reverse: true })[0];
-      return { kind, target, latest: latest ? { sender: latest.sender, text: latest.recalled?'该消息已撤回':latest.text||(latest.forward?'[聊天记录]':''), emoji: latest.emoji, hasImage: Boolean(latest.image), at: latest.at } : null };
+      return { kind, target, latest: latest ? { sender: latest.sender, text: latest.recalled?'该消息已撤回':latest.text||(latest.audio?'[语音]':latest.forward?'[聊天记录]':''), emoji: latest.emoji, hasImage: Boolean(latest.image), at: latest.at } : null };
     });
     return { botId: who, profile: profile(who), messageQuota: isHumanId(who) ? null : messageQuota(who), friendProfiles: fs.map(profile), friends: fs, requests: store.list('requests', 'target=?', [who], { limit: -1 }), groups: store.groups(who),
       messages: omitMessages ? [] : store.messages(who).map(withSenderNickname), conversations, posts, bottles: omitCommunity ? [] : store.bottles(who), square: squareList() };
@@ -421,6 +422,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       case 'chat.history': return chatHistory(who, args);
       case 'message.read': return messageActions.read(who,args);
       case 'message.image': return messageActions.image(who,args);
+      case 'message.audio': return messageActions.audio(who,args);
       case 'message.recall': return messageActions.recall(who,args);
       case 'chat.image': {
         const kind = args.kind === 'private' ? 'private' : args.kind === 'group' ? 'group' : fail('消息类型不合法');
@@ -657,9 +659,10 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         if (kind === 'private' && !friends(who).includes(chatId(target))) fail('只能给好友发私聊');
         const g = kind === 'group' ? group(who, target) : null;
         if (g) groupCanSpeak(g, who, now);
-        const text = str(args.text, 3000).trim(), emoji = args.emoji == null ? '' : str(args.emoji, 40);
+        const text = str(args.text ?? '', 3000).trim(), emoji = args.emoji == null ? '' : str(args.emoji, 40);
+        const audio=audioPayload(args.audio); if(audio&&(args.image||args.forward))fail("语音不能与图片或合并记录同时发送");
         const picture = media(args.image), content = messageActions.prepare(who,kind,target,args);
-        if (!text && !emoji && !picture && !content.forward) fail('空消息');
+        if (!text && !emoji && !picture && !audio && !content.forward) fail('空消息');
         if (args.mentionAll && (!g || g.owner !== who && !(g.admins ?? []).includes(who))) fail('只有群主和管理员可 @全体成员', 403);
         const mentions = g && args.mentionAll ? g.members.filter(member => member !== who) : Array.isArray(args.mentions) ? [...new Set(args.mentions.map(chatId))] : [];
         if (mentions.some(x => !(g ? g.members : [who,target]).includes(x))) fail('@ 目标不在当前会话中');
@@ -692,7 +695,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
           if (store.count('messages', 'scope=? AND owner=? AND at>?', [scope, who, new Date(now - windowSec * 1000).toISOString()]) >= max) fail('群聊发言频率已达上限');
         }
         if (isHumanId(who) && store.count('messages', 'owner=? AND at>?', [who, new Date(now - 60000).toISOString()]) >= 30) fail('发送过快，每分钟最多 30 条', 429);
-        const m = { id: randomUUID(), kind, target, sender: who, senderType: isHumanId(who) ? 'human' : 'bot', senderNickname: profile(who).nickname, text, emoji, image: picture, ...content, mentions, ...(args.mentionAll?{mentionAll:true}:{}), at: new Date(now).toISOString() };
+        const m = { id: randomUUID(), kind, target, sender: who, senderType: isHumanId(who) ? 'human' : 'bot', senderNickname: profile(who).nickname, text, emoji, image: picture, audio, ...content, mentions, ...(args.mentionAll?{mentionAll:true}:{}), at: new Date(now).toISOString() };
         const saved = store.put('messages', m.id, m);
         achievements.record(who,'message',now);
         const messageCursor = store.statement("SELECT rowid FROM documents WHERE collection='messages' AND key=?").get(m.id).rowid;
@@ -882,9 +885,13 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       if (req.method !== 'POST' || !['/rpc', '/register', '/login', '/credential/claim', '/mobile/login', '/mobile/rpc', '/owner/control', '/web/login', '/web/rpc', '/web/auth', '/mobile/auth'].includes(req.url)) fail('未找到接口', 404);
       const who = ['/rpc', '/credential/claim', '/owner/control'].includes(req.url) ? auth(req) : null;
       const chunks = []; let length = 0;
-      for await (const chunk of req) { length += chunk.length; if (length > 4300000) fail('请求过大', 413); chunks.push(chunk); }
+      for await (const chunk of req) { length += chunk.length; if (length > 7200000) fail('请求过大', 413); chunks.push(chunk); }
       const raw = Buffer.concat(chunks).toString('utf8');
-      if (length > 1600000 && (!['/rpc','/web/rpc','/mobile/rpc'].includes(req.url) || JSON.parse(raw).action !== 'capsule.create')) fail('请求过大', 413);
+      if(length>1600000){
+        const request=JSON.parse(raw),chatAudio=['message.send','social.message.send','owner.send'].includes(request.action)&&request.args?.audio;
+        const limit=request.action==='capsule.create'?4300000:chatAudio?7200000:1600000;
+        if(!['/rpc','/web/rpc','/mobile/rpc'].includes(req.url)||length>limit)fail('请求过大',413);
+      }
       const remote = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) ? String(req.headers['x-real-ip'] ?? req.socket.remoteAddress) : req.socket.remoteAddress;
       if (req.url === '/web/auth' || req.url === '/mobile/auth') {
         if (raw.length > 8192) fail('账号请求过大', 413);

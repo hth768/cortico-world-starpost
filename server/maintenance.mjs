@@ -1,3 +1,4 @@
+import { AUDIO_EXTENSIONS } from './audio.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, statfsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve, sep } from 'node:path';
@@ -5,10 +6,10 @@ import { pathToFileURL } from 'node:url';
 import { backupStarpost } from './backup.mjs';
 import { StarpostStorage } from './storage.mjs';
 
-const IMAGE_NAME = /^[a-f0-9]{64}\.(?:png|jpg|gif|webp)$/;
+const IMAGE_NAME = /^[a-f0-9]{64}\.(?:png|jpg|gif|webp|mp3|wav|ogg|webm|m4a)$/;
 const AUTO_BACKUP = /^auto-(\d{4}-\d{2}-\d{2})$/;
 const DAY_MS = 86400000;
-const imageExtension = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
+const imageExtension = { ...AUDIO_EXTENSIONS, 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
 
 function safeDirectory(path) {
   const target = resolve(path);

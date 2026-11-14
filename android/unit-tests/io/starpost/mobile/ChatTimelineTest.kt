@@ -32,9 +32,12 @@ class ChatTimelineTest {
         compose.onNodeWithTag("chat-timeline").performTouchInput { swipeDown(durationMillis=500) }
         compose.waitForIdle()
         compose.onNodeWithTag("chat-jump").assertIsDisplayed()
+        val jumpBounds=compose.onNodeWithTag("chat-jump").fetchSemanticsNode().boundsInRoot
+        val messageBounds=compose.onNodeWithTag("chat-timeline").fetchSemanticsNode().boundsInRoot
+        org.junit.Assert.assertTrue("回到底部应放在消息区域之外",jumpBounds.top>=messageBounds.bottom)
         val before=compose.onAllNodes(hasText("消息 ",substring=true)).fetchSemanticsNodes().map { it.id }
         compose.runOnIdle { rows.value=messages(start=4,end=29) }
-        compose.onNodeWithText("有新消息 · 回到底部 ↓").assertIsDisplayed()
+        compose.onNodeWithText("新消息 ↓").assertIsDisplayed()
         compose.onNodeWithText("消息 29").assertDoesNotExist()
         org.junit.Assert.assertTrue(compose.onAllNodes(hasText("消息 ",substring=true)).fetchSemanticsNodes().any { it.id in before })
         compose.onNodeWithTag("chat-jump").performClick()
@@ -58,7 +61,7 @@ class ChatTimelineTest {
         compose.onNodeWithText("结尾 m25").assertIsDisplayed()
         compose.onNodeWithTag("chat-jump").assertDoesNotExist()
         compose.runOnIdle { page.value=123L;rows.value=messages(end=15) }
-        compose.onNodeWithText("回到最新消息 ↓").performClick()
+        compose.onNodeWithText("最新 ↓").performClick()
         org.junit.Assert.assertEquals(1,latestRequests)
         compose.runOnIdle { rows.value=messages() }
         compose.onNodeWithText("结尾 m25").assertIsDisplayed()

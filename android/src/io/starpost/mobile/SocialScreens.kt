@@ -106,13 +106,14 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
     var draft by rememberSaveable(key){mutableStateOf(ui.vm.draft())};var quote by remember(key){mutableStateOf<JSONObject?>(null)}
     var menu by remember(key){mutableStateOf<JSONObject?>(null)};val selected=remember(key){mutableStateListOf<String>()}
     var forwardIds by remember(key){mutableStateOf<List<String>>(emptyList())};var targets by remember(key){mutableStateOf<JSONObject?>(null)};var record by remember(key){mutableStateOf<JSONObject?>(null)}
+    val keyboard=androidx.compose.ui.platform.LocalSoftwareKeyboardController.current;val focus=androidx.compose.ui.platform.LocalFocusManager.current
     val composerFocus=remember{androidx.compose.ui.focus.FocusRequester()};var sent by remember(key){mutableStateOf(0)}
     fun source()=obj("kind" to if(owner)"owner" else route.kind,"target" to if(owner)s.account.str("botId") else route.id)
     fun request(m:JSONObject)=source().put("messageId",m.str("id"))
     fun toggle(id:String){if(id in selected)selected.remove(id)else if(selected.size<20)selected.add(id)else ui.vm.notice("最多选择 20 条消息")}
     fun chooseForward(ids:List<String>){if(s.working)return;forwardIds=ids;ui.vm.perform("social.overview"){targets=it}}
     fun send(destination:Route,payload:JSONObject,done:()->Unit={}){
-        val completed={ done(); if(destination.page==route.page&&destination.kind==route.kind&&destination.id==route.id)sent++ }
+        val completed={ keyboard?.hide();focus.clearFocus();done(); if(destination.page==route.page&&destination.kind==route.kind&&destination.id==route.id)sent++ }
         if(destination.page=="owner"&&s.account.str("address").isEmpty())ui.form("桌宠怎样称呼你？",listOf(TextFieldSpec("address","例如：主人")),"保存称呼后发送当前消息。"){v->ui.vm.sendChatPayload(destination,payload,v["address"],done=completed)}
         else ui.vm.sendChatPayload(destination,payload,done=completed)
     }
@@ -137,6 +138,7 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
             Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
                 quote?.let{q->Row(verticalAlignment=Alignment.CenterVertically){Text("引用 ${q.str("senderNickname",q.str("address"))}：${q.str("text").ifBlank{if(q.has("forward"))"[聊天记录]" else "[图片]"}}",Modifier.weight(1f),maxLines=2,style=MaterialTheme.typography.bodySmall);TextButton(onClick={quote=null}){Text("取消引用")}}}
                 Row(verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(2.dp)){
+                    key(key){RecordVoiceButton(ui,!s.working){audio,done->val quoted=quote?.str("id");send(route,obj("text" to "","audio" to audio,"replyTo" to quoted)){if(quote?.str("id")==quoted)quote=null;done()}}}
                     ChatPhotoButton(ui,!s.working,onSend=::sendImage)
                     IconButton(enabled=!s.working,onClick={ui.modal=Modal.Stickers(::sendImage)}){Glyph("sticker","选择表情包")}
                     OutlinedTextField(draft,{draft=it;ui.vm.draft(it)},Modifier.weight(1f).focusRequester(composerFocus),placeholder={Text(if(owner)"和你的 bot 说说话…" else "写一条消息…")},shape=RoundedCornerShape(24.dp),maxLines=5)

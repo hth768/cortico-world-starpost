@@ -15,6 +15,9 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -70,14 +73,15 @@ import org.json.JSONObject
     LaunchedEffect(sent) {
         if (sent > 0) { following = true; userScrolling = false; pending = false; if (page == null && buffered.isNotEmpty()) list.scrollToItem(0) }
     }
-    Box(modifier) {
+    Column(modifier) {
         LazyColumn(state = list, reverseLayout = true,
-            modifier = Modifier.fillMaxSize().nestedScroll(scroll).testTag("chat-timeline"),
+            modifier = Modifier.weight(1f).fillMaxWidth().nestedScroll(scroll).testTag("chat-timeline"),
             contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             items(buffered.asReversed(), key = { it.str("id", it.toString()) }) { content(it) }
         }
-        if (!following || page != null) FilledTonalButton(
-            modifier = Modifier.align(Alignment.BottomCenter).padding(8.dp).testTag("chat-jump"),
+        if (!following || page != null) Row(Modifier.fillMaxWidth().height(44.dp).padding(horizontal=12.dp),horizontalArrangement=Arrangement.End,verticalAlignment=Alignment.CenterVertically){FilledTonalButton(
+            modifier = Modifier.height(32.dp).testTag("chat-jump").semantics{contentDescription=if(pending)"有新消息，回到底部" else "回到最新消息"},
+            contentPadding = PaddingValues(horizontal=12.dp,vertical=0.dp),
             onClick = {
                 following = true; userScrolling = false; pending = false
                 if (page != null) latest() else {
@@ -85,6 +89,6 @@ import org.json.JSONObject
                     scope.launch { if (buffered.isNotEmpty()) list.scrollToItem(0) }
                 }
             }
-        ) { Text(if (pending) "有新消息 · 回到底部 ↓" else if (page != null) "回到最新消息 ↓" else "回到底部 ↓") }
+        ) { Text(if (pending) "新消息 ↓" else if (page != null) "最新 ↓" else "到底部 ↓",fontSize=12.sp) }}
     }
 }

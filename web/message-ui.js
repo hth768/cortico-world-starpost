@@ -38,8 +38,8 @@
   }
   function toggle(c,id){if(selected.has(id))selected.delete(id);else if(selected.size<20)selected.add(id);else notify('最多选择 20 条消息');selection(c)}
   function attach(row,bubble,m,c){
-    if(!c.detached)enter(c);row.dataset.messageId=m.id;
-    if(m.quote){const q=el('div','message-quote',`${m.quote.senderNickname||m.quote.sender}：${m.quote.text|| (m.quote.hasImage?'[图片]':'')}`);q.prepend(accountBadge(m.quote.senderTitle,m.quote.senderTitleStyle));bubble.prepend(q)}
+    if(!c.detached)enter(c);row.dataset.messageId=m.id;VoiceUI.attach(bubble,m,c);
+    if(m.quote){const q=el('div','message-quote',`${m.quote.senderNickname||m.quote.sender}：${m.quote.text|| (m.quote.hasImage?'[图片]':m.quote.hasAudio?'[语音]':'')}`);q.prepend(accountBadge(m.quote.senderTitle,m.quote.senderTitleStyle));bubble.prepend(q)}
     if(m.forward&&!m.recalled){const card=el('button','forward-card');card.type='button';card.append(el('strong','',`聊天记录 · ${m.forward.count} 条`));for(const line of m.forward.preview||[])card.append(el('span','',line));card.append(el('small','','查看完整聊天记录 →'));card.onclick=e=>{e.stopPropagation();if(selected.size&&c.mode!=='readonly')toggle(c,m.id);else void open(c,m).catch(e=>notify(e.message))};bubble.append(card)}
     if(m.recalled){row.classList.add('message-recalled');if(selected.delete(m.id))selection(c);}
     if(c.mode!=='readonly'&&!m.recalled){const check=el('input','message-checkbox');check.type='checkbox';check.setAttribute('aria-label','选择这条消息');check.hidden=!selected.size;check.checked=selected.has(m.id);check.onchange=()=>toggle(c,m.id);row.prepend(check)}
@@ -57,7 +57,7 @@
     const data=await rpc(apiAction(c,'read'),{...request(c),messageId:m.id});
     const overlay=el('div','dialog forward-dialog'),box=el('div','dialog-card');box.append(el('h2','','完整聊天记录'),el('p','muted','这是转发时保存的记录，保留原作者和发送时间。'));
     if(data.message.recalled)box.append(el('p','','该记录已撤回'));
-    for(const record of data.items||[]){const card=el('article','forward-entry');card.append(accountBadge(record.senderTitle,record.senderTitleStyle),el('small','',`${record.senderNickname||record.sender} · ${record.sender} · ${date(record.at)}`),el('p','',`${record.text||''}${record.emoji||''}`));const image=picture(record.image,false);if(image)card.append(image);attach(card,card,{...record,id:record.sourceMessageId},{...c,mode:'readonly',detached:true});box.append(card)}
+    for(const [itemIndex,record] of (data.items||[]).entries()){const card=el('article','forward-entry');card.append(accountBadge(record.senderTitle,record.senderTitleStyle),el('small','',`${record.senderNickname||record.sender} · ${record.sender} · ${date(record.at)}`),el('p','',`${record.text||''}${record.emoji||''}`));const image=picture(record.image,false);if(image)card.append(image);attach(card,card,{...record,id:record.sourceMessageId},{...c,mode:'readonly',detached:true,voiceMode:c.mode,voiceMessageId:m.id,voiceItemIndex:itemIndex});box.append(card)}
     box.append(button('关闭',()=>overlay.remove()));overlay.append(box);mountDialog(overlay);
   }
   async function forward(c,ids){

@@ -54,7 +54,7 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
 
 @Composable internal fun StarpostApp(vm:StarpostClient,state:ClientState) {
     val ui=remember(vm){UiActions(vm)}
-    OfferChatAlerts(ui,state)
+    OfferChatAlerts(state,vm::enableOwnerAlerts,vm::notice)
     LaunchedEffect(state.working,ui.pendingBoundBot,state.signedIn){
         if(!state.signedIn){ui.pendingBoundBot=null;return@LaunchedEffect}
         val bound=ui.pendingBoundBot
@@ -184,8 +184,9 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
         AccountTitleBadge(m.str("senderTitle"),style=m.optJSONObject("senderTitleStyle"))
         Surface(shape=RoundedCornerShape(topStart=22.dp,topEnd=22.dp,bottomStart=if(self)22.dp else 6.dp,bottomEnd=if(self)6.dp else 22.dp),color=if(self)MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,border=if(selected)androidx.compose.foundation.BorderStroke(2.dp,MaterialTheme.colorScheme.primary)else null,modifier=Modifier.widthIn(max=560.dp).then(if(onLongClick!=null)Modifier.combinedClickable(onClick={onClick?.invoke()},onLongClick=onLongClick)else Modifier)){
             Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
-                m.optJSONObject("quote")?.let{q->AccountTitleBadge(q.str("senderTitle"),style=q.optJSONObject("senderTitleStyle"));Surface(shape=RoundedCornerShape(12.dp),color=MaterialTheme.colorScheme.surfaceContainer){Text("${q.str("senderNickname",q.str("sender"))}：${q.str("text").ifEmpty{if(q.optBoolean("hasImage"))"[图片]" else ""}}",Modifier.padding(10.dp),style=MaterialTheme.typography.bodySmall)}}
+                m.optJSONObject("quote")?.let{q->AccountTitleBadge(q.str("senderTitle"),style=q.optJSONObject("senderTitleStyle"));Surface(shape=RoundedCornerShape(12.dp),color=MaterialTheme.colorScheme.surfaceContainer){Text("${q.str("senderNickname",q.str("sender"))}：${q.str("text").ifEmpty{if(q.optBoolean("hasImage"))"[图片]" else if(q.optBoolean("hasAudio"))"[语音]" else ""}}",Modifier.padding(10.dp),style=MaterialTheme.typography.bodySmall)}}
                 if(text.isNotEmpty()){if(onLongClick==null)androidx.compose.foundation.text.selection.SelectionContainer{Text(text,style=MaterialTheme.typography.bodyLarge)}else Text(text,style=if(m.optBoolean("recalled"))MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyLarge)}
+                VoiceButton(ui,m)
                 MessageImage(m.optJSONObject("image"),ui,onLongClick=onLongClick,onClick={onClick?.invoke()})
                 m.optJSONObject("forward")?.let{ForwardCard(it){onForward?.invoke()}}
             }

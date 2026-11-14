@@ -28,6 +28,11 @@ internal class OwnerAlerts(private val context: Context) {
     val prefs = context.getSharedPreferences("owner-alerts", Context.MODE_PRIVATE)
     private val manager = context.getSystemService(NotificationManager::class.java)
     val subscription get() = prefs.getString("subscription", null)
+    val shouldOffer get() = subscription == null && !prefs.getBoolean("offeredChats", false)
+    val pendingEnable get() = prefs.getBoolean("pendingChatEnable", false)
+    fun answerOffer(enable: Boolean) {
+        prefs.edit().putBoolean("offeredChats", true).putBoolean("pendingChatEnable", enable).apply()
+    }
     private fun fingerprint(token: String) = MessageDigest.getInstance("SHA-256")
         .digest(token.toByteArray()).joinToString("") { "%02x".format(it) }
 
@@ -47,6 +52,7 @@ internal class OwnerAlerts(private val context: Context) {
         prefs.edit().putString("session", fingerprint(token)).putString("subscription", UUID.randomUUID().toString())
             .putString("cursors", cursors.toString()).putLong("chatCursor",chatCursor?:-1).commit()
         try { resume() } catch (e: Exception) { disable(); throw e }
+        answerOffer(false)
     }
     fun resume() {
         if (subscription != null) context.startForegroundService(Intent(context, OwnerNoticeService::class.java))

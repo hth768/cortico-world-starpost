@@ -43,7 +43,7 @@ export class HistorySearch {
     const nextBefore = matches.length > PAGE_SIZE ? page.at(-1).rowid : rows.length === SCAN_SIZE ? rows.at(-1).rowid : null;
     return { messages: page.map(row => {
       const {image,quote,...message}=this.message(this.store.statement(`SELECT rowid,data FROM documents WHERE ${where} AND rowid=?`).get(...params, row.rowid));
-      return {...message,hasImage:Boolean(image)};
+      return {...message,hasImage:Boolean(image),hasAudio:Boolean(message.audio)};
     }), nextBefore };
   }
   context(actor, args) {

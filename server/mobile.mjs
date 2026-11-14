@@ -1,3 +1,4 @@
+import { audioPayload } from './audio.mjs';
 import { presentGamePage } from './game-presentation.mjs';
 import { enqueueChatNotice } from './chat-notices.mjs';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -45,17 +46,18 @@ export class MobileAccess {
   }
   send(who, direction, args) {
     if (this.humanActive(who)) fail('人类参赛期间，人机私聊不可用', 423);
-    const text = short(args?.text ?? '', 3000), image = this.image(args?.image);
+    const text = short(args?.text ?? '', 3000), image = this.image(args?.image), audio=audioPayload(args?.audio);
+    if(audio&&(image||args.forward))fail('语音不能与图片或合并记录同时发送');
     const actor=direction==='bot'?who:this.messageActions.owner(who);
     const content=this.messageActions.prepare(actor,'owner',who,args);
-    if (!text && !image && !content.forward) fail('不能发送空消息');
+    if (!text && !image && !audio && !content.forward) fail('不能发送空消息');
     const address = this.store.get('mobileProfile', who)?.address;
     if (direction === 'human' && !address) fail('首次发送前请填写桌宠对你的称呼');
     const recent = this.store.count('ownerMessages', 'owner=? AND kind=? AND at>?', [who, direction, new Date(this.clock() - 60000).toISOString()]);
     if (recent >= 12) fail('人机频道每分钟最多发送 12 条', 429);
     const prefix = direction === 'human' ? `以下消息为${address}通过星邮向你发送的消息` : '';
     const message = { id: randomUUID(), botId: who, direction, sender:actor, senderNickname:this.messageActions.profile(actor)?.nickname??'', address: address ?? '', text,
-      prefix, image, ...content, at: new Date(this.clock()).toISOString() };
+      prefix, image, audio, ...content, at: new Date(this.clock()).toISOString() };
     const saved = this.store.put('ownerMessages', message.id, message);
     this.onMessage(actor,message.at);
     if (direction === 'human') this.store.emit([who], 'owner.message', this.messageActions.view(saved), message.at);
@@ -144,6 +146,8 @@ export class MobileAccess {
       }
       case 'message.read': return this.messageActions.read(who,args);
       case 'message.image': return this.messageActions.image(who,args);
+      case 'message.audio': return this.messageActions.audio(who,args);
+      case 'owner.audio': return this.messageActions.audio(this.messageActions.owner(who),{...args,kind:'owner',target:who});
       case 'owner.recall': return this.messageActions.recall(this.messageActions.owner(who),{kind:'owner',target:who,messageId:args.messageId});
       case 'owner.read': return this.messageActions.read(this.messageActions.owner(who),{kind:'owner',target:who,messageId:args.messageId});
       case 'owner.send': return this.send(who, 'human', args);

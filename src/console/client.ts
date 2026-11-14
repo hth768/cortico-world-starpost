@@ -12,6 +12,7 @@ interface Snapshot {
 }
 interface Profile { accountTitle?: string; accountTitleStyle?: unknown; botId: string; nickname: string; bio: string; discoverable: boolean; avatarVersion?: string }
 interface ChatMessage {
+  audio?: {mime:string;mediaId:string;durationMs?:number};
   id: string; cursor: number; kind: 'private' | 'group'; target: string; sender: string; senderNickname: string; senderTitle?: string; senderTitleStyle?: unknown; senderAvatarVersion?: string;
   text: string; emoji: string; image?: { mime: string; base64: string }; mentions: string[]; at: string;
   quote?: { senderNickname: string; senderTitle?: string; senderTitleStyle?: unknown; text: string; hasImage?: boolean }; forward?: { count: number; preview: string[] }; recalled?: boolean;
@@ -107,6 +108,19 @@ const displayTime = (at: string) => at ? new Date(at).toLocaleString('zh-CN', { 
 
 function titleBadge(ctx:WebUiPanelContext,parent:HTMLElement,title?:string,style?:unknown){if(!title)return;const badge=ctx.ui.h('span','sp-account-title',`✦ ${title}`);badge.setAttribute('aria-label',`账号头衔：${title}`);badge.title='服务器授予的账号头衔';applyTitleStyle(badge,style);parent.append(badge);}
 function line(ctx: WebUiPanelContext, parent: HTMLElement, text: string, title?:string,style?:unknown) { const node=ctx.ui.h('div','msgline',text);titleBadge(ctx,node,title,style);parent.append(node); }
+function voice(ctx:WebUiPanelContext,parent:HTMLElement,m:ChatMessage,kind:string,target:string,messageId=m.id,itemIndex?:number){
+  if(!m.audio||m.recalled)return;
+  const play=ctx.ui.button(`▶ 语音${m.audio.durationMs?' · '+Math.ceil(m.audio.durationMs/1000)+'秒':''}`,{onClick:()=>{
+    play.disabled=true;
+    void ctx.invoke<{mime:string;base64:string}>('chatAudio',[kind,target,messageId,itemIndex]).then(value=>{
+      if(ctx.signal.aborted||!parent.isConnected)return;
+      if(!/^audio\/(mpeg|wav|ogg|webm|mp4)$/.test(value.mime)||value.base64.length>6990508)throw new Error('无效语音');
+      const audio=ctx.ui.h('audio');audio.controls=true;audio.style.maxWidth='100%';audio.src=`data:${value.mime};base64,${value.base64}`;parent.replaceChild(audio,play);
+      const observer=new MutationObserver(()=>{if(!audio.isConnected){audio.pause();audio.removeAttribute('src');observer.disconnect();}});observer.observe(parent.ownerDocument,{subtree:true,childList:true});
+      ctx.signal.addEventListener('abort',()=>{audio.pause();audio.removeAttribute('src');observer.disconnect()},{once:true});void audio.play().catch(()=>{});
+    }).catch(()=>{play.disabled=false;play.textContent='播放失败，点击重试';});
+  }});parent.append(play);
+}
 function image(ctx: WebUiPanelContext, parent: HTMLElement, value?: { mime: string; base64: string }) {
   if (!value || !['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(value.mime)
     || typeof value.base64 !== 'string' || value.base64.length > 1400000
@@ -134,7 +148,7 @@ async function forwardedRecord(ctx:WebUiPanelContext,kind:string,target:string,m
     if(ctx.signal.aborted||!dialog.isConnected)return;body.replaceChildren();
     if(page.message.recalled){line(ctx,body,'该记录已撤回');return;}
     line(ctx,body,'以下是转发时保存的记录，保留原作者和发送时间。');
-    for(const m of page.items??[]){const record=ui.h('div','sp-bubble');line(ctx,record,`${m.senderNickname} · ${m.sender} · ${displayTime(m.at)}`,m.senderTitle,m.senderTitleStyle);if(m.quote)line(ctx,record,`引用 ${m.quote.senderNickname}：${m.quote.text||'[图片]'}`);line(ctx,record,`${m.text||''}${m.emoji||''}`);image(ctx,record,m.image);body.append(record);}
+    for(const [itemIndex,m] of (page.items??[]).entries()){const record=ui.h('div','sp-bubble');line(ctx,record,`${m.senderNickname} · ${m.sender} · ${displayTime(m.at)}`,m.senderTitle,m.senderTitleStyle);if(m.quote)line(ctx,record,`引用 ${m.quote.senderNickname}：${m.quote.text||'[图片]'}`);line(ctx,record,`${m.text||''}${m.emoji||''}`);image(ctx,record,m.image);voice(ctx,record,m,kind,target,messageId,itemIndex);body.append(record);}
   }catch(error){if(dialog.isConnected){body.replaceChildren();line(ctx,body,String(error));}}
 }
 function avatarProfile(ctx:WebUiPanelContext,id:string) {
@@ -531,6 +545,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
         const words = [m.text, m.emoji, ...(m.mentions?.length ? [`@${m.mentions.join(' @')}`] : [])].filter(Boolean).join(' ');
         if (words) bubble.appendChild(ui.h('span', null, words));
         image(ctx, bubble, m.image);
+        voice(ctx,bubble,m,current.kind,current.target);
         if(m.forward&&!m.recalled)bubble.append(ui.button(`聊天记录 · ${m.forward.count} 条\n${m.forward.preview.join('\n')}\n查看完整聊天记录 →`,{onClick:()=>{void forwardedRecord(ctx,current.kind,current.target,m.id)}}));
         wrap.appendChild(bubble); row.appendChild(wrap); scroll.appendChild(row);
       }

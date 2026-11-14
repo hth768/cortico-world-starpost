@@ -38,7 +38,7 @@ export function readChatNotices(store,who,cursor) {
     if(!m||m.recalled||m.sender===who)continue;
     const sender=store.get('contactRemarks',who+':'+m.sender)?.remark||m.senderNickname||m.sender;
     const title=kind==='group'?(store.get('groups',target)?.name||'群聊'):sender;
-    const text=m.text||m.emoji||(m.image?'[图片]':m.forward?'[聊天记录]':'新消息');
+    const text=m.text||m.emoji||(m.image?'[图片]':m.audio?'[语音]':m.forward?'[聊天记录]':'新消息');
     items.push({kind,target,cursor:row.seq,title,mentioned,preview:((mentioned?'[有人 @ 你] ':'')+(kind==='group'?sender+'：':'')+text).slice(0,120)});
   }
   return {cursor:rows.at(-1)?.seq??cursor,items};

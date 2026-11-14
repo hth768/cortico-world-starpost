@@ -11,27 +11,50 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 
 @Composable
-internal fun OfferChatAlerts(ui:UiActions,state:ClientState){
+internal fun OfferChatAlerts(state:ClientState,onEnable:()->Unit,onNotice:(String)->Unit){
     val context=LocalContext.current
-    val alerts=remember{OwnerAlerts(context)}
-    var offer by remember { mutableStateOf(alerts.subscription==null && !alerts.prefs.getBoolean("offeredChats",false)) }
-    fun answered(){offer=false;alerts.prefs.edit().putBoolean("offeredChats",true).apply()}
-    val permission=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()){granted->
-        if(granted)ui.vm.enableOwnerAlerts() else ui.vm.notice("可在「我 → 聊天消息通知」重新开启")
+    val alerts=remember(context){OwnerAlerts(context)}
+    var offer by remember { mutableStateOf(alerts.shouldOffer) }
+    var pending by remember { mutableStateOf(alerts.pendingEnable) }
+    fun permitted() = (Build.VERSION.SDK_INT<33 || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED) && alerts.permitted()
+    var allowed by remember { mutableStateOf(permitted()) }
+    // Keep consent before login, but never retry a failed subscription on every refresh.
+    var attempted by rememberSaveable(state.signedIn,state.account.str("humanId")){mutableStateOf(false)}
+    DisposableEffect(alerts){
+        val listener=SharedPreferences.OnSharedPreferenceChangeListener{_,_->offer=alerts.shouldOffer;pending=alerts.pendingEnable}
+        alerts.prefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose{alerts.prefs.unregisterOnSharedPreferenceChangeListener(listener)}
     }
-    if(offer && !state.starting && state.signedIn && !state.account.optBoolean("needsEmail") &&
-        state.account.str("humanId").isNotEmpty() && state.activeGame.isEmpty() && !state.working){
-        AlertDialog(onDismissRequest=::answered,title={Text("开启聊天消息通知？")},text={Text("开启后，星邮会保持一条后台连接，在通知栏提醒你的私聊、群聊和专属 bot 回复。每个聊天都可单独免打扰。")},
-            confirmButton={TextButton(onClick={answered();alerts.channels()
+    LifecycleResumeEffect(Unit){
+        allowed=permitted()
+        onPauseOrDispose{}
+    }
+    LaunchedEffect(pending,allowed,state.starting,state.signedIn,state.account.str("humanId"),state.account.optBoolean("needsEmail"),state.activeGame,state.working){
+        if(pending && allowed && !attempted && !state.starting && state.signedIn &&
+            !state.account.optBoolean("needsEmail") && state.account.str("humanId").isNotEmpty() &&
+            state.activeGame.isEmpty() && !state.working){
+            attempted=true
+            onEnable()
+        }
+    }
+    val permission=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()){granted->
+        allowed=permitted()
+        if(!granted){alerts.answerOffer(false);onNotice("可在「我 → 聊天消息通知」重新开启")}
+    }
+    if(offer && state.activeGame.isEmpty() && !state.working){
+        AlertDialog(onDismissRequest={alerts.answerOffer(false)},title={Text("开启聊天消息通知？")},text={Text("允许后，登录即可自动接收私聊、群聊和「我的 bot」的新消息提醒。后台会显示一条常驻连接通知，每个聊天都可单独免打扰。")},
+            confirmButton={TextButton(onClick={alerts.channels();alerts.answerOffer(true);allowed=permitted()
                 if(Build.VERSION.SDK_INT>=33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)permission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                else ui.vm.enableOwnerAlerts()
-            }){Text("开启通知")}},dismissButton={TextButton(onClick=::answered){Text("暂不开启")}})
+                else if(!allowed){alerts.answerOffer(false);onNotice("请在系统设置中允许星邮的「聊天新消息」通知")}
+            }){Text("允许通知")}},dismissButton={TextButton(onClick={alerts.answerOffer(false)}){Text("暂不开启")}})
     }
 }
 
@@ -60,7 +83,7 @@ internal fun OwnerNotificationSetting(ui: UiActions, state: ClientState) {
         Switch(checked = enabled, enabled = !state.working, onCheckedChange = { on ->
             alerts.channels()
             when {
-                !on -> alerts.disable()
+                !on -> { alerts.answerOffer(false);alerts.disable() }
                 Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED ->
                     permission.launch(Manifest.permission.POST_NOTIFICATIONS)
                 !alerts.permitted() -> openSettings()

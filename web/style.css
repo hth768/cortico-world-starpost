@@ -1,3 +1,4 @@
+.voice-message{margin:8px 0;max-width:100%}.voice-message audio{width:260px;max-width:100%}.dialog-card>audio{display:block;width:100%;margin:16px 0}
 /* Material 3 Expressive. Tonal roles match the Android Compose theme. */
 .hero .hero-actions{flex-wrap:wrap;align-items:center}
 .client-link,.client-links a,.client-guide a{color:var(--primary);font-weight:650;text-decoration:underline;text-underline-offset:.22em}
@@ -101,4 +102,7 @@ input,textarea,select{color:var(--ink);background:var(--lowest);border:1px solid
 .history-context-message.anchor{border:2px solid var(--primary)}.history-context-message p{margin:0}.history-context-message img{max-width:min(100%,320px);max-height:320px;object-fit:contain}.history-search [role=status]:empty{display:none}
 @media(max-width:600px){.dialog:has(.history-search){padding:10px}.history-search{max-height:94dvh;padding:16px}.history-search h2{font-size:21px}}
 
-.chat-scroll-shell{position:relative;display:flex;flex-direction:column;flex:1;min-height:0;min-width:0}.chat-scroll-shell>.chat-log{overflow-anchor:none}.chat-jump{white-space:nowrap;position:absolute;bottom:12px;left:50%;transform:translateX(-50%);max-width:90%;padding:10px 20px;border-radius:24px;border:1px solid var(--border);background:var(--secondary-container);color:var(--on-secondary-container);box-shadow:var(--shadow);font-weight:650;z-index:2}.chat-jump[hidden]{display:none}
+.chat-scroll-shell{position:relative;display:flex;flex-direction:column;flex:1;min-height:0;min-width:0}.chat-scroll-shell>.chat-log{overflow-anchor:none}.chat-jump{position:static;align-self:flex-end;flex:none;white-space:nowrap;margin:4px 6px;min-height:30px;max-width:90%;padding:4px 12px;border-radius:18px;border:1px solid var(--border);background:var(--secondary-container);color:var(--on-secondary-container);font-size:12px;font-weight:650;box-shadow:none}.chat-jump[hidden]{display:none}
+
+.voice-hold{touch-action:none;user-select:none;-webkit-touch-callout:none;min-width:44px}.voice-hold.recording{background:var(--primary-container,#ded8ff)}.voice-recording-overlay{position:fixed;z-index:1000;left:50%;top:40%;transform:translate(-50%,-50%);display:grid;gap:12px;width:min(85vw,360px);padding:28px;border-radius:28px;background:#e5dfff;color:#20174a;box-shadow:0 12px 48px #0004;text-align:center;pointer-events:none}.voice-recording-overlay.cancel{background:#ffdad6;color:#410002}
+@media(max-width:760px){.app-content.chat-pane{height:calc(100dvh - 200px);min-height:0}.app-content.chat-pane .chat-log{min-height:80px;max-height:none}.app-content.chat-pane>.muted{margin:6px 0;font-size:12px}.chat-pane .composer{flex-shrink:0}.composer .voice-hold{padding:10px 14px}}
